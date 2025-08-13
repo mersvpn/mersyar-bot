@@ -136,11 +136,8 @@ async def add_user_get_expire(update: Update, context: ContextTypes.DEFAULT_TYPE
         return ADD_USER_EXPIRE
 
 async def add_user_create(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """
-    Final step: Creates the user via API, saves link, and notifies customer.
-    CORRECTED: Removes the UUID from the template proxies before creating
-    a new user to force Marzban to generate a new, unique UUID.
-    """
+    from . import display
+    
     query = update.callback_query
     await query.answer()
 
@@ -159,48 +156,31 @@ async def add_user_create(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     data_limit = user_info['data_limit_gb'] * GB_IN_BYTES if user_info['data_limit_gb'] > 0 else 0
     expire = int((datetime.datetime.now() + datetime.timedelta(days=user_info['expire_days'])).timestamp()) if user_info['expire_days'] > 0 else 0
     
-    # --- CRUCIAL FIX: Clean the template proxies ---
     proxies_from_template = template_config.get('proxies', {})
-    
-    # Remove the 'id' (UUID) from the vless proxy settings if it exists
     if 'vless' in proxies_from_template and 'id' in proxies_from_template['vless']:
         del proxies_from_template['vless']['id']
     
-    # You can add similar logic for other proxy types like 'vmess' if you use them
-    # if 'vmess' in proxies_from_template and 'id' in proxies_from_template['vmess']:
-    #     del proxies_from_template['vmess']['id']
-
     payload = {
         "username": user_info['username'],
         "inbounds": template_config.get('inbounds', {}),
         "expire": expire,
         "data_limit": data_limit,
-        "proxies": proxies_from_template, # Use the cleaned proxies
+        "proxies": proxies_from_template,
         "data_limit_reset_strategy": "no_reset",
         "status": "active"
     }
     
-    LOGGER.info(f"PAYLOAD for creating user '{user_info['username']}': {payload}")
-    
     success, result = await create_user_api(payload)
     
-    # ... (The rest of the function for sending messages remains exactly the same) ...
-    customer_id = context.user_data.get('customer_user_id')
-    admin_id = update.effective_user.id
     if success:
         new_user_data = result
         marzban_username = user_info['username']
-        final_customer_id = customer_id if customer_id else admin_id
-        admin_confirmation_text = f"✅ کاربر `{marzban_username}` با موفقیت در پنل ساخته شد."
-        admin_keyboard = None
-        if customer_id:
-            callback_string = f"fin_send_req:{final_customer_id}:{marzban_username}"
-            admin_keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("💰 ارسال اطلاعات پرداخت به مشتری", callback_data=callback_string)]])
-            admin_confirmation_text += "\n\nمی‌توانید اطلاعات پرداخت را برای مشتری ارسال کنید."
-        await query.edit_message_text(admin_confirmation_text, reply_markup=admin_keyboard, parse_mode=ParseMode.MARKDOWN)
+        customer_id = context.user_data.get('customer_user_id')
+        
         users_map = await load_users_map()
-        users_map[marzban_username] = final_customer_id
+        users_map[marzban_username] = customer_id if customer_id else update.effective_user.id
         await save_users_map(users_map)
+        
         if customer_id:
             subscription_url = new_user_data.get('subscription_url', '')
             if subscription_url:
@@ -214,20 +194,21 @@ async def add_user_create(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 bio.seek(0)
                 try:
                     await context.bot.send_photo(chat_id=customer_id, photo=bio, caption=customer_message, parse_mode=ParseMode.MARKDOWN)
+                    callback_string = f"fin_send_req:{customer_id}:{marzban_username}"
+                    admin_keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("💰 ارسال اطلاعات پرداخت به مشتری", callback_data=callback_string)]])
+                    await context.bot.send_message(chat_id=update.effective_user.id, text=f"پیام حاوی کانفیگ برای مشتری {customer_id} ارسال شد.", reply_markup=admin_keyboard)
                 except Exception as e:
                     LOGGER.warning(f"User created, but failed to send message to customer {customer_id}: {e}", exc_info=True)
-                    await query.message.reply_text(f"⚠️ کاربر ساخته شد، اما ارسال پیام به مشتری با خطا مواجه شد.\n`{subscription_url}`")
-            else:
-                LOGGER.warning(f"User {marzban_username} created but no subscription_url was returned.")
-                await query.message.reply_text("⚠️ کاربر ساخته شد اما لینک اشتراکی از پنل دریافت نشد.")
+                    await context.bot.send_message(chat_id=update.effective_user.id, text=f"⚠️ کاربر ساخته شد، اما ارسال پیام به مشتری با خطا مواجه شد.\n`{subscription_url}`")
+        
+        # Modify the callback query to directly show the user details
+        query.data = f"user_details_{marzban_username}"
+        await display.show_user_details(update, context)
+
     else:
         error_message = f"❌ **خطا در ساخت کاربر:**\n\n`{result}`"
         await query.edit_message_text(error_message, parse_mode=ParseMode.MARKDOWN)
-    await context.bot.send_message(
-        chat_id=admin_id,
-        text="به منوی مدیریت کاربران بازگشتید:",
-        reply_markup=get_user_management_keyboard()
-    )
+    
     context.user_data.clear()
     return ConversationHandler.END
 
