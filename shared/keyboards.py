@@ -26,9 +26,11 @@ def get_user_management_keyboard() -> ReplyKeyboardMarkup:
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
+# shared/keyboards.py
+
 def get_settings_and_tools_keyboard() -> ReplyKeyboardMarkup:
-    """طرح ۳: هرم اولویت"""
     keyboard = [
+        [KeyboardButton("🔐 مدیریت پنل مرزبان")], # <-- دکمه جدید
         [KeyboardButton("⏰ تنظیمات یادآور")],
         [KeyboardButton("⚙️ تنظیم کاربر الگو"), KeyboardButton("🔗 ایجاد لینک اتصال")],
         [KeyboardButton("🗒️ یادداشت روز"), KeyboardButton("📝 پیگیری‌های فعال")],

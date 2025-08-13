@@ -1,3 +1,6 @@
+# modules/marzban/handler.py
+# (کد کامل و بهینه شده)
+
 # ===== IMPORTS & DEPENDENCIES =====
 from telegram.ext import (
     Application, ConversationHandler, CommandHandler, CallbackQueryHandler,
@@ -5,11 +8,11 @@ from telegram.ext import (
 )
 
 # --- Local Imports ---
+# ماژول credentials به لیست ایمپورت‌ها اضافه شد
 from .actions import (
     add_user, display, modify_user, search, messaging,
-    note, template, linking
+    note, template, linking, credentials
 )
-# CORRECTED: Import cancel_conversation from the new shared location
 from shared.callbacks import cancel_conversation
 from modules.general.actions import start as back_to_main_menu
 from modules.auth import admin_only, admin_only_conv
@@ -19,7 +22,6 @@ def register(application: Application) -> None:
     """Registers all handlers for the Marzban (admin) module."""
 
     standard_fallbacks = [CommandHandler('cancel', cancel_conversation)]
-
     conv_settings = {
         "fallbacks": standard_fallbacks,
         "conversation_timeout": 600,
@@ -27,7 +29,11 @@ def register(application: Application) -> None:
         "per_user": True
     }
 
-    # --- Conversation Definitions ---
+    # --- 1. تعریف تمام مکالمه‌ها (Conversations) ---
+    # تمام ConversationHandler ها در این بخش تعریف می‌شوند
+
+    credential_conv = credentials.credential_conv # <-- مکالمه جدید اضافه شد
+
     add_user_conv = ConversationHandler(
         entry_points=[
             MessageHandler(filters.Regex('^➕ افزودن کاربر$'), admin_only_conv(add_user.add_user_start)),
@@ -69,14 +75,18 @@ def register(application: Application) -> None:
         **conv_settings
     )
 
-    # Register all conversations
+    # --- 2. ثبت تمام هندلرها (Handlers) ---
+    # تمام add_handler ها در این بخش ثبت می‌شوند
+
+    # ثبت مکالمه‌ها (گروه 0 برای ادمین)
+    application.add_handler(credential_conv, group=0)
     application.add_handler(add_user_conv, group=0)
     application.add_handler(search_conv, group=0)
     application.add_handler(add_data_conv, group=0)
     application.add_handler(add_days_conv, group=0)
     application.add_handler(messaging.messaging_conv, group=0)
 
-    # --- Standalone Handlers ---
+    # ثبت هندلرهای مستقل (Standalone)
     application.add_handler(MessageHandler(filters.Regex('^👤 مدیریت کاربران$'), display.show_user_management_menu), group=0)
     application.add_handler(MessageHandler(filters.Regex('^👥 نمایش کاربران$'), display.list_all_users_paginated), group=0)
     application.add_handler(MessageHandler(filters.Regex('^⌛️ کاربران رو به اتمام$'), display.list_warning_users_paginated), group=0)
