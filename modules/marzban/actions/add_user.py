@@ -201,17 +201,24 @@ async def add_user_create(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                     LOGGER.warning(f"User created, but failed to send message to customer {customer_id}: {e}", exc_info=True)
                     await context.bot.send_message(chat_id=update.effective_user.id, text=f"⚠️ کاربر ساخته شد، اما ارسال پیام به مشتری با خطا مواجه شد.\n`{subscription_url}`")
         
+        # ===== این بخش به طور کامل اصلاح شده است =====
+        # یک آبجکت ساختگی می‌سازیم که متدهای لازم را داشته باشد
         class FakeCallbackQuery:
-            def __init__(self, message, data):
-                self.message = message
+            def __init__(self, original_query, data):
+                self.message = original_query.message
                 self.data = data
-            async def answer(self):
-                pass
+                # متدهای لازم را شبیه‌سازی می‌کنیم
+                self.answer = original_query.answer
+                self.edit_message_text = original_query.edit_message_text
         
-        fake_query = FakeCallbackQuery(query.message, f"user_details_{marzban_username}")
-        fake_update = type('obj', (object,), {'callback_query': fake_query})
+        # آبجکت ساختگی را با دیتای جدید ایجاد می‌کنیم
+        fake_query = FakeCallbackQuery(query, f"user_details_{marzban_username}")
+        # یک آبجکت آپدیت ساختگی می‌سازیم
+        fake_update = Update(update.update_id, callback_query=fake_query)
         
+        # تابع نمایش جزئیات را با آپدیت ساختگی فراخوانی می‌کنیم
         await display.show_user_details(fake_update, context)
+        # ===============================================
 
     else:
         error_message = f"❌ **خطا در ساخت کاربر:**\n\n`{result}`"
