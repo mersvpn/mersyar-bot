@@ -1,54 +1,67 @@
 #!/bin/bash
-set -e # در صورت بروز خطا، اسکریپت متوقف می‌شود
+set -e # Exit immediately if a command exits with a non-zero status.
 
-# ==================== پیکربندی ثابت ====================
-# آدرس مخزن گیت‌هاب شما
-REPO_URL="https://github.com/mersvpn/mersyar-bot.git"
-# دامنه شما که به IP سرور متصل شده است
-DOMAIN="mersyar.dorsa.of.to"
-# آدرس ایمیل شما برای اطلاع‌رسانی‌های انقضای گواهی SSL
-ADMIN_EMAIL="kdamin07@gmail.com"
+# =================================================================
+#        Universal Bot Installer via GitHub Releases
+# =================================================================
 
-# ==================== شروع اسکریپت ====================
+# --- Static Configuration ---
+# These are determined by the project's structure on GitHub.
+GITHUB_USER="mersvpn"
+GITHUB_REPO="mersyar-bot"
+
+# --- Dynamic Configuration (Fetched from GitHub) ---
+# Fetches the tag name of the latest release (e.g., v1.0.0)
+LATEST_TAG=$(wget -qO- "https://api.github.com/repos/$GITHUB_USER/$GITHUB_REPO/releases/latest" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
+if [ -z "$LATEST_TAG" ]; then
+    echo "Error: Could not fetch the latest release tag. Please ensure a release exists on GitHub."
+    exit 1
+fi
+DOWNLOAD_URL="https://github.com/$GITHUB_USER/$GITHUB_REPO/archive/refs/tags/$LATEST_TAG.tar.gz"
 
 echo "==============================================="
-echo "  نصب تعاملی ربات مرزیار (Mersyar-Bot)  "
+echo "      Mersyar-Bot Universal Installer"
 echo "==============================================="
-echo "لطفاً اطلاعات زیر را با دقت وارد کنید."
+echo "Latest Version Found: $LATEST_TAG"
+echo "Please provide the following details:"
 echo ""
 
-# --- پرسیدن اطلاعات به صورت تعاملی ---
-read -p "1. توکن ربات تلگرام (TELEGRAM_BOT_TOKEN) را وارد کنید: " TELEGRAM_BOT_TOKEN
-read -p "2. آیدی عددی ادمین تلگرام را وارد کنید: " AUTHORIZED_USER_IDS
-read -p "3. یوزرنیم پشتیبانی را وارد کنید (اختیاری، برای رد کردن اینتر بزنید): " SUPPORT_USERNAME
+# --- Interactive User Input ---
+read -p "Enter your Domain/Subdomain (e.g., bot.example.com): " DOMAIN
+read -p "Enter your email for SSL certificate notifications: " ADMIN_EMAIL
+echo "---"
+read -p "Enter your Telegram Bot Token: " TELEGRAM_BOT_TOKEN
+read -p "Enter the numeric Telegram Admin User ID: " AUTHORIZED_USER_IDS
+read -p "Enter the Support Username (optional, press Enter to skip): " SUPPORT_USERNAME
 
 echo ""
-echo "✅ اطلاعات با موفقیت دریافت شد. شروع فرآیند نصب..."
+echo "✅ Configuration received. Starting the installation process..."
 sleep 2
 
-# متغیرهای داخلی اسکریپت
-PROJECT_DIR="/root/mersyar-bot"
-SERVICE_NAME="mersyar-bot"
+# --- Script Internal Variables ---
+PROJECT_DIR="/root/$GITHUB_REPO"
+SERVICE_NAME="$GITHUB_REPO"
 PYTHON_ALIAS="python3"
 WEBHOOK_SECRET_TOKEN=$(head /dev/urandom | tr -dc A-Za-z0-9 | head -c 32)
 
-# 1. آپدیت سیستم و نصب نیازمندی‌های پایه
-echo ">>> [1/6] آپدیت و نصب نیازمندی‌ها..."
+# 1. Update System and Install Core Dependencies
+echo ">>> [1/6] Updating system and installing dependencies (wget, tar, python, venv, nginx, certbot)..."
 apt-get update
-apt-get install -y git $PYTHON_ALIAS-pip $PYTHON_ALIAS-venv nginx python3-certbot-nginx
+apt-get install -y wget tar $PYTHON_ALIAS-pip $PYTHON_ALIAS-venv nginx python3-certbot-nginx
 
-# 2. کلون کردن پروژه از گیت‌هاب
-echo ">>> [2/6] دریافت پروژه از گیت‌هاب..."
-if [ -d "$PROJECT_DIR" ]; then
-    echo "پوشه پروژه وجود دارد. در حال دریافت آخرین تغییرات..."
-    git -C $PROJECT_DIR pull
-else
-    git clone $REPO_URL $PROJECT_DIR
-fi
-cd $PROJECT_DIR
+# 2. Download and Extract Latest Release
+echo ">>> [2/6] Downloading release $LATEST_TAG from GitHub..."
+wget -q "$DOWNLOAD_URL" -O "$LATEST_TAG.tar.gz"
+# Clean up previous installation if it exists
+rm -rf "$PROJECT_DIR"
+# Extract and move to the final destination
+tar -xzf "$LATEST_TAG.tar.gz"
+mv "$GITHUB_REPO-$LATEST_TAG" "$PROJECT_DIR"
+cd "$PROJECT_DIR"
+rm -f "/root/$LATEST_TAG.tar.gz" # Clean up the tarball
 
-# 3. ساخت فایل .env با اطلاعات دریافت شده
-echo ">>> [3/6] ساخت فایل .env..."
+# 3. Create .env file with provided credentials
+echo ">>> [3/6] Creating .env file..."
 cat << EOF > .env
 TELEGRAM_BOT_TOKEN="$TELEGRAM_BOT_TOKEN"
 AUTHORIZED_USER_IDS="$AUTHORIZED_USER_IDS"
@@ -57,15 +70,15 @@ WEBHOOK_SECRET_TOKEN="$WEBHOOK_SECRET_TOKEN"
 BOT_DOMAIN="$DOMAIN"
 EOF
 
-# 4. راه‌اندازی محیط مجازی پایتون و نصب کتابخانه‌ها
-echo ">>> [4/6] راه‌اندازی محیط پایتون..."
+# 4. Setup Python Virtual Environment and Install Requirements
+echo ">>> [4/6] Setting up Python virtual environment..."
 $PYTHON_ALIAS -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
 deactivate
 
-# 5. تنظیم وب‌سرور Nginx و دریافت گواهی SSL
-echo ">>> [5/6] پیکربندی Nginx و SSL..."
+# 5. Configure Nginx and Obtain SSL Certificate
+echo ">>> [5/6] Configuring Nginx and obtaining SSL certificate..."
 cat << EOF > /etc/nginx/sites-available/$SERVICE_NAME
 server {
     listen 80;
@@ -81,13 +94,13 @@ server {
 EOF
 ln -s -f /etc/nginx/sites-available/$SERVICE_NAME /etc/nginx/sites-enabled/
 systemctl restart nginx
-certbot --nginx -d $DOMAIN --non-interactive --agree-tos --email $ADMIN_EMAIL --redirect
+certbot --nginx -d "$DOMAIN" --non-interactive --agree-tos --email "$ADMIN_EMAIL" --redirect
 
-# 6. ساخت و فعال‌سازی سرویس systemd
-echo ">>> [6/6] ساخت سرویس دائمی برای ربات..."
+# 6. Create and Enable systemd Service
+echo ">>> [6/6] Creating and enabling systemd service..."
 cat << EOF > /etc/systemd/system/$SERVICE_NAME.service
 [Unit]
-Description=Mersyar Telegram Bot Service
+Description=$SERVICE_NAME Telegram Bot Service
 After=network.target
 [Service]
 User=root
@@ -103,5 +116,7 @@ systemctl daemon-reload
 systemctl enable $SERVICE_NAME
 systemctl start $SERVICE_NAME
 
-echo "✅✅✅ نصب با موفقیت انجام شد! ✅✅✅"
-echo "مهم: برای فعال‌سازی کامل، به ربات بروید و از منوی 'تنظیمات و ابزارها'، اطلاعات پنل مرزبان را وارد کنید."
+echo ""
+echo "✅✅✅ Installation Complete! ✅✅✅"
+echo "The bot (version $LATEST_TAG) is now running on https://$DOMAIN"
+echo "To check the service status, use: systemctl status $SERVICE_NAME"
