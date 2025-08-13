@@ -82,13 +82,18 @@ async def add_user_get_username(update: Update, context: ContextTypes.DEFAULT_TY
 
     await update.message.reply_text(f"در حال بررسی نام کاربری «{username}»...")
     existing_user = await get_user_data(username)
-    if existing_user:
+    
+    if existing_user and "error" not in existing_user:
         error_message = f"❌ **خطا: کاربری با نام `{username}` از قبل وجود دارد.**\n\nلطفاً یک نام کاربری دیگر وارد کنید."
         await update.message.reply_text(error_message, parse_mode=ParseMode.MARKDOWN)
         return ADD_USER_USERNAME
-
+    
     context.user_data['new_user']['username'] = username
-    await update.message.reply_text(f"✅ نام کاربری `{username}` تایید شد.\n\n**۲/۳:** لطفاً **حجم (GB)** را وارد کنید (برای نامحدود عدد `0` را وارد کنید).", parse_mode=ParseMode.MARKDOWN)
+    await update.message.reply_text(
+        f"✅ نام کاربری `{username}` قابل استفاده است.\n\n"
+        f"**۲/۳:** لطفاً **حجم (GB)** را وارد کنید (برای نامحدود عدد `0` را وارد کنید).",
+        parse_mode=ParseMode.MARKDOWN
+    )
     return ADD_USER_DATALIMIT
 
 async def add_user_get_datalimit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
