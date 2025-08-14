@@ -1,6 +1,7 @@
 # ===== IMPORTS & DEPENDENCIES =====
 import datetime
 import logging
+
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import ContextTypes, ConversationHandler
 from telegram.constants import ParseMode
@@ -64,43 +65,82 @@ async def reset_user_traffic(update: Update, context: ContextTypes.DEFAULT_TYPE)
     else:
         await query.answer(f"❌ {message}", show_alert=True)
 
+
 async def renew_user_smart(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     username = query.data.split('_', 1)[-1]
     await query.answer(f"در حال تمدید هوشمند کاربر {username}...")
+
+    # ۱. دریافت اطلاعات کامل کاربر
     user_data = await get_user_data(username)
-    if not user_data:
-        await query.edit_message_text(f"❌ خطا: کاربر `{username}` یافت نشد."); return
+    if not user_data or "error" in user_data:
+        await query.edit_message_text(f"❌ خطا: اطلاعات کاربر `{username}` یافت نشد یا خطای API رخ داد.")
+        return
+
+    # ۲. محاسبه طول دوره اشتراک قبلی
+    original_duration_days = DEFAULT_RENEW_DAYS  # مقدار پیش‌فرض
+    if user_data.get('expire') and user_data.get('created_at'):
+        try:
+            expire_date = datetime.datetime.fromtimestamp(user_data['expire'])
+            # تاریخ ایجاد از فرمت ISO است، باید آن را پارس کنیم
+            created_date_str = user_data['created_at'].split('.')[0] # حذف میکروثانیه‌ها
+            created_date = datetime.datetime.fromisoformat(created_date_str)
+            
+            duration = expire_date - created_date
+            if duration.days > 0:
+                original_duration_days = duration.days
+                LOGGER.info(f"Calculated original duration for {username}: {original_duration_days} days.")
+        except (ValueError, TypeError) as e:
+            LOGGER.warning(f"Could not calculate original duration for {username}. Falling back to default. Error: {e}")
+
+    # ۳. ریست کردن ترافیک
     await query.edit_message_text(f"در حال تمدید `{username}` (۱/۲: ریست ترافیک)...", parse_mode=ParseMode.MARKDOWN)
     success_reset, message_reset = await reset_user_traffic_api(username)
     if not success_reset:
-        await query.edit_message_text(f"⚠️ **تمدید ناموفق!**\n\nخطا در ریست ترافیک: `{message_reset}`", parse_mode=ParseMode.MARKDOWN); return
+        await query.edit_message_text(f"⚠️ **تمدید ناموفق!**\n\nخطا در ریست ترافیک: `{message_reset}`", parse_mode=ParseMode.MARKDOWN)
+        return
+        
+    # ۴. محاسبه و اعمال تاریخ انقضای جدید
     await query.edit_message_text(f"✅ ترافیک صفر شد.\nدر حال تمدید `{username}` (۲/۲: افزایش تاریخ)...", parse_mode=ParseMode.MARKDOWN)
-    current_expire = user_data.get('expire')
-    start_date = datetime.datetime.fromtimestamp(current_expire) if current_expire and current_expire > datetime.datetime.now().timestamp() else datetime.datetime.now()
-    new_expire_date = start_date + datetime.timedelta(days=DEFAULT_RENEW_DAYS)
+    
+    current_expire_ts = user_data.get('expire')
+    now_ts = datetime.datetime.now().timestamp()
+    
+    # تعیین تاریخ شروع برای تمدید
+    start_date_ts = current_expire_ts if current_expire_ts and current_expire_ts > now_ts else now_ts
+    start_date = datetime.datetime.fromtimestamp(start_date_ts)
+    
+    # افزودن طول دوره محاسبه شده
+    new_expire_date = start_date + datetime.timedelta(days=original_duration_days)
     new_expire_ts = int(new_expire_date.timestamp())
+
     success_expire, message_expire = await modify_user_api(username, {"expire": new_expire_ts})
     if not success_expire:
-        await query.edit_message_text(f"⚠️ **تمدید ناقص!**\n\nترافیک صفر شد، اما تاریخ تمدید نشد.\n**دلیل:** `{message_expire}`", parse_mode=ParseMode.MARKDOWN); return
+        await query.edit_message_text(f"⚠️ **تمدید ناقص!**\n\nترافیک صفر شد، اما تاریخ تمدید نشد.\n**دلیل:** `{message_expire}`", parse_mode=ParseMode.MARKDOWN)
+        return
+        
+    # ۵. نمایش پیام موفقیت‌آمیز
     data_limit_gb = (user_data.get('data_limit') or 0) / GB_IN_BYTES
     response_message = (f"✅ **تمدید هوشمند موفق**\n\n"
                         f"▫️ **کاربر:** `{username}`\n"
-                        f"▫️ **مدت:** `{DEFAULT_RENEW_DAYS}` روز\n"
+                        f"▫️ **مدت:** `{original_duration_days}` روز (بر اساس دوره قبلی)\n"
                         f"▫️ **حجم کل:** `{f'{data_limit_gb:.0f}' if data_limit_gb > 0 else 'نامحدود'}` GB\n"
                         f"▫️ **ترافیک:** صفر شد")
+                        
     back_button = InlineKeyboardButton("🔙 بازگشت", callback_data=f"user_details_{username}")
     await query.edit_message_text(response_message, reply_markup=InlineKeyboardMarkup([[back_button]]), parse_mode=ParseMode.MARKDOWN)
+    
+    # ۶. اطلاع‌رسانی به مشتری (در صورت وجود)
     users_map = await load_users_map()
     customer_id = users_map.get(normalize_username(username))
     if customer_id:
         try:
             await context.bot.send_message(chat_id=customer_id, text="✅ اشتراک شما با موفقیت تمدید شد!")
-            await query.message.reply_text(f"ℹ️ پیام تایید برای مشتری (ID: {customer_id}) ارسال شد.")
+            # ارسال پیام جداگانه به ادمین در چت ربات
+            await context.bot.send_message(chat_id=update.effective_chat.id, text=f"ℹ️ پیام تایید برای مشتری (ID: {customer_id}) ارسال شد.")
         except Exception as e:
             LOGGER.warning(f"User {username} renewed, but failed to notify customer {customer_id}: {e}")
-            await query.message.reply_text(f"⚠️ کاربر تمدید شد، اما ارسال پیام به مشتری (ID: {customer_id}) خطا داد.")
-
+            await context.bot.send_message(chat_id=update.effective_chat.id, text=f"⚠️ کاربر تمدید شد، اما ارسال پیام به مشتری (ID: {customer_id}) خطا داد.")
 async def prompt_for_add_data(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     username = query.data.split('_', 2)[-1]
