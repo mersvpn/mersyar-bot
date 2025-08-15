@@ -4,6 +4,8 @@ from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import ContextTypes, ConversationHandler
 from telegram.constants import ParseMode
 from telegram.helpers import escape_markdown
+from shared.keyboards import get_user_management_keyboard
+
 
 # ... (imports) ...
 # --- Local Imports ---
@@ -45,7 +47,6 @@ async def prompt_for_note(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     return NOTE_PROMPT
 
 async def save_user_note(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Saves or deletes a note for a user and ends the conversation."""
     username = context.user_data.get('note_username')
     if not username:
         await update.message.reply_text("خطا: نام کاربری یافت نشد. لطفاً دوباره تلاش کنید.")
@@ -53,21 +54,27 @@ async def save_user_note(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     note_text = update.message.text
     reminders = await load_reminders()
+    
+    confirmation_message = ""
 
     if note_text.strip().lower() in ['حذف', 'delete', 'del']:
         if username in reminders:
             del reminders[username]
             await save_reminders(reminders)
-            await update.message.reply_text(f"✅ یادداشت برای کاربر `{username}` با موفقیت حذف شد.", parse_mode=ParseMode.MARKDOWN)
+            confirmation_message = f"✅ یادداشت برای کاربر `{username}` با موفقیت حذف شد."
         else:
-            await update.message.reply_text(f"✖️ کاربر `{username}` یادداشت فعالی نداشت.", parse_mode=ParseMode.MARKDOWN)
+            confirmation_message = f"ℹ️ کاربر `{username}` یادداشتی نداشت."
     else:
         reminders[username] = note_text
         await save_reminders(reminders)
-        await update.message.reply_text(f"✅ یادداشت برای کاربر `{username}` با موفقیت ذخیره/به‌روزرسانی شد.", parse_mode=ParseMode.MARKDOWN)
-
-    # Return to the main admin menu
-    await update.message.reply_text("به منوی اصلی بازگشتید:", reply_markup=get_admin_main_menu_keyboard())
+        confirmation_message = f"✅ یادداشت برای کاربر `{username}` با موفقیت ذخیره شد."
+    
+    await update.message.reply_text(
+        confirmation_message,
+        parse_mode=ParseMode.MARKDOWN,
+        reply_markup=get_user_management_keyboard()
+    )
+    
     context.user_data.clear()
     return ConversationHandler.END
 

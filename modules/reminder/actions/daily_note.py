@@ -247,7 +247,7 @@ async def back_to_tools(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     return ConversationHandler.END
 
 daily_notes_conv = ConversationHandler(
-    entry_points=[MessageHandler(filters.Regex('^🗒️ مدیریت یادداشت‌ها$'), admin_only_conv(main_menu))],
+    entry_points=[MessageHandler(filters.Regex('^🗒️ یادداشت‌های روزانه$'), admin_only_conv(main_menu))],
     states={
         MAIN_MENU: [
             CallbackQueryHandler(add_prompt, pattern='^dnote_add_prompt$'),
