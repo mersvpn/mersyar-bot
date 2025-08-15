@@ -16,7 +16,7 @@ def register(application: Application) -> None:
         entry_points=[MessageHandler(filters.Regex('^🔧 تنظیمات ربات$'), admin_only_conv(start_bot_settings))],
         states={
             MENU_STATE: [
-                CallbackQueryHandler(toggle_bot_status, pattern=r'^bot_status_'),
+                CallbackQueryHandler(toggle_bot_status, pattern=r'^bot_status_(de)?activate$'),
                 CallbackQueryHandler(back_to_tools, pattern='^bot_status_back$'),
             ]
         },

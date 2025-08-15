@@ -4,6 +4,7 @@ import jdatetime
 from telegram.ext import ContextTypes, Application
 from telegram.constants import ParseMode
 from telegram.helpers import escape_markdown
+from telegram import InlineKeyboardMarkup, InlineKeyboardButton
 from modules.marzban.actions.data_manager import (
     load_settings, load_reminders, load_users_map,
     load_non_renewal_users, normalize_username
@@ -56,6 +57,8 @@ async def check_users_for_reminders(context: ContextTypes.DEFAULT_TYPE) -> None:
 
     try:
         settings = await load_settings()
+        users_map = await load_users_map()
+        
         daily_notes = settings.get("daily_admin_notes_list", [])
         manual_reminders = await load_reminders()
         all_users = await get_all_users()
@@ -78,23 +81,59 @@ async def check_users_for_reminders(context: ContextTypes.DEFAULT_TYPE) -> None:
 
             if not username or status != 'active' or normalized_name in non_renewal_list:
                 continue
-                
-            # --- This is the corrected and safe section ---
+            
+            is_expiring = False
+            is_low_data = False
+            expire_date = None
+
             expire_ts = user.get('expire')
-            if expire_ts: # expire can be None
+            if expire_ts:
                 expire_date = datetime.datetime.fromtimestamp(expire_ts)
                 now = datetime.datetime.now()
                 if now < expire_date < (now + datetime.timedelta(days=days_threshold)):
-                    expiring_users.append(user)
+                    is_expiring = True
 
-            data_limit = user.get('data_limit') or 0 # Safely handle None, convert to 0
+            data_limit = user.get('data_limit') or 0
             if data_limit > 0:
-                used_traffic = user.get('used_traffic') or 0 # Safely handle None
+                used_traffic = user.get('used_traffic') or 0
                 remaining_traffic = data_limit - used_traffic
                 if remaining_traffic < (data_gb_threshold * GB_IN_BYTES):
-                    if user not in expiring_users:
-                        low_data_users.append(user)
-            # --- End of corrected section ---
+                    is_low_data = True
+            
+            # --- This is the corrected and re-added section for customer notifications ---
+            customer_telegram_id = users_map.get(normalized_name)
+            if customer_telegram_id and (is_expiring or is_low_data):
+                try:
+                    customer_message = f"🔔 **یادآور اشتراک: `{username}`**\n\n"
+                    if is_expiring and expire_date:
+                        time_left = expire_date - datetime.datetime.now()
+                        customer_message += f"⏳ کمتر از **{time_left.days + 1} روز** تا پایان اشتراک شما باقی مانده است.\n"
+                    
+                    if is_low_data:
+                        remaining_gb = (data_limit - used_traffic) / GB_IN_BYTES
+                        customer_message += f"📉 کمتر از **{remaining_gb:.2f} گیگابایت** از حجم شما باقی مانده است.\n"
+                    
+                    customer_message += "\nبرای جلوگیری از هرگونه قطعی، لطفاً نسبت به تمدید اشتراک خود اقدام نمایید."
+                    
+                    keyboard = InlineKeyboardMarkup([
+                        [InlineKeyboardButton("✅ درخواست تمدید", callback_data=f"customer_renew_request_{username}")],
+                        [InlineKeyboardButton("❌ عدم تمدید این دوره", callback_data=f"customer_do_not_renew_{username}")]
+                    ])
+
+                    await context.bot.send_message(
+                        chat_id=customer_telegram_id,
+                        text=customer_message,
+                        reply_markup=keyboard,
+                        parse_mode=ParseMode.MARKDOWN
+                    )
+                except Exception as e:
+                    LOGGER.warning(f"Failed to send reminder to customer {customer_telegram_id} for user {username}: {e}")
+            # --- End of re-added section ---
+
+            if is_expiring:
+                expiring_users.append(user)
+            if is_low_data and user not in expiring_users:
+                low_data_users.append(user)
 
         should_send_report = any([expiring_users, low_data_users, manual_reminders, daily_notes])
         if not should_send_report:
