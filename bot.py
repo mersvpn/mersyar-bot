@@ -7,6 +7,7 @@ from telegram.ext import Application, ApplicationBuilder, ContextTypes
 
 # --- Local Imports ---
 from config import config
+from modules.bot_settings import handler as bot_settings_handler
 
 # Import module registers
 from modules.general import handler as general_handler
@@ -109,6 +110,9 @@ def main() -> None:
 
     LOGGER.info("Registering customer handlers (Public, Priority 1)...")
     customer_handler.register(application)
+
+    LOGGER.info("Registering bot_settings handlers (Admin-Only, Priority 0)...")
+    bot_settings_handler.register(application)
 
 
     # --- Job Scheduling ---

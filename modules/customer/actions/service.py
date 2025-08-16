@@ -74,43 +74,53 @@ async def display_service_details(update: Update, context: ContextTypes.DEFAULT_
     return DISPLAY_SERVICE
 
 async def handle_my_service(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Entry point for 'My Service'. Finds all active accounts linked to the user."""
+    """
+    Entry point for 'My Service'. Finds all active accounts linked to the user.
+    """
     user_id = update.effective_user.id
     loading_message = await update.message.reply_text("در حال بررسی سرویس‌های شما...")
 
     users_map = await load_users_map()
+    # Find all Marzban usernames linked to this Telegram ID
     linked_accounts = [username for username, t_id in users_map.items() if t_id == user_id]
 
     if not linked_accounts:
-        await loading_message.edit_text("سرویس فعالی برای شما یافت نشد."); return ConversationHandler.END
+        await loading_message.edit_text("سرویس فعالی برای شما یافت نشد.")
+        return ConversationHandler.END
 
-    all_marzban_users_list = await get_all_users()
-    if all_marzban_users_list is None:
-        await loading_message.edit_text("❌ خطا در ارتباط با پنل. لطفاً بعداً تلاش کنید."); return ConversationHandler.END
-
-    active_marzban_usernames = {normalize_username(user['username']) for user in all_marzban_users_list if user.get('status') == 'active'}
-    active_linked_accounts = [acc for acc in linked_accounts if acc in active_marzban_usernames]
+    active_linked_accounts = []
+    
+    # Check the status of each linked account directly from Marzban API
+    for account_username in linked_accounts:
+        user_info = await get_user_data(account_username)
+        if user_info and "error" not in user_info and user_info.get('status') == 'active':
+            active_linked_accounts.append(account_username)
+        else:
+            LOGGER.info(f"User {user_id} linked account {account_username} is not active or not found.")
 
     if not active_linked_accounts:
-        await loading_message.edit_text("هیچ سرویس فعالی در پنل برای شما یافت نشد."); return ConversationHandler.END
+        await loading_message.edit_text("هیچ سرویس فعالی در پنل برای شما یافت نشد.")
+        return ConversationHandler.END
 
     if len(active_linked_accounts) == 1:
+        # If only one service is found, display details immediately
         class DummyQuery:
             def __init__(self, message): self.message = message
         dummy_update = type('obj', (object,), {'callback_query': DummyQuery(loading_message)})
         return await display_service_details(dummy_update, context, active_linked_accounts[0])
 
-    # --- CORRECTED: Added a "Cancel" button to the keyboard ---
-    keyboard = [[InlineKeyboardButton(f"سرویس: {username}", callback_data=f"select_service_{username}")] for username in sorted(active_linked_accounts)]
+    # If multiple services, show a list to choose from
+    keyboard = []
+    for username in sorted(active_linked_accounts):
+        keyboard.append([InlineKeyboardButton(f"سرویس: {username}", callback_data=f"select_service_{username}")])
     
-    # Add the cancel button in its own row at the bottom
+    # Add the cancel button
     keyboard.append([InlineKeyboardButton("❌ انصراف و بازگشت", callback_data="customer_back_to_main_menu")])
     
     reply_markup = InlineKeyboardMarkup(keyboard)
     
     await loading_message.edit_text("شما چندین سرویس فعال دارید. لطفاً یکی را انتخاب کنید:", reply_markup=reply_markup)
     return CHOOSE_SERVICE
-
 async def choose_service(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Handles user's choice from the list of multiple services."""
     query = update.callback_query; await query.answer()

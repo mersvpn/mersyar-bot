@@ -97,42 +97,62 @@ async def switch_to_admin_view(update: Update, context: ContextTypes.DEFAULT_TYP
 # ===== USER LINKING LOGIC (DEEP LINK) =====
 
 async def handle_user_linking(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handles deep links like t.me/bot?start=link-someuser"""
+    from modules.marzban.actions.api import get_user_data
+    from modules.marzban.actions.data_manager import load_users_map, save_users_map, normalize_username
+
     user = update.effective_user
+    
     try:
         marzban_username_raw = context.args[0].split('-', 1)[1]
-        marzban_username = normalize_username(marzban_username_raw)
-    except IndexError:
-        await update.message.reply_text("لینک اتصال نامعتبر است.")
-        await start(update, context) # Show default menu
+    except (IndexError, AttributeError):
+        await update.message.reply_text("لینک اتصال نامعتبر است یا منقضی شده.")
+        await start(update, context)
         return
 
+    normalized_username = normalize_username(marzban_username_raw)
+    
+    # Send a loading message to the user
+    loading_msg = await update.message.reply_text(f"در حال اعتبارسنجی و اتصال سرویس `{marzban_username_raw}`...")
+
+    # Step 1: Verify user exists in Marzban
+    marzban_user_data = await get_user_data(normalized_username)
+    if not marzban_user_data or "error" in marzban_user_data:
+        await loading_msg.edit_text(
+            f"❌ **خطا در اتصال** ❌\n\n"
+            f"سرویسی با نام `{marzban_username_raw}` در پنل یافت نشد.\n"
+            "لطفاً با پشتیبانی تماس بگیرید."
+        )
+        return
+
+    # Step 2: Check if the Marzban account is already linked to another Telegram account
     users_map = await load_users_map()
-    if marzban_username in users_map and users_map[marzban_username] != user.id:
-        await update.message.reply_text(
+    if users_map.get(normalized_username) and users_map[normalized_username] != user.id:
+        await loading_msg.edit_text(
             f"❌ **خطا** ❌\n\n"
-            f"سرویس `{marzban_username}` قبلاً به یک حساب تلگرام دیگر متصل شده است.\n"
+            f"این سرویس قبلاً به یک حساب تلگرام دیگر متصل شده است.\n"
             "برای راهنمایی با پشتیبانی تماس بگیرید."
         )
         return
 
-    users_map[marzban_username] = user.id
+    # Step 3: Link the user and save the data
+    users_map[normalized_username] = user.id
     await save_users_map(users_map)
 
-    await update.message.reply_text(
-        f"✅ حساب شما با موفقیت به سرویس `{marzban_username}` متصل شد!\n\n"
+    await loading_msg.edit_text(
+        f"✅ حساب شما با موفقیت به سرویس `{normalized_username}` متصل شد!\n\n"
         "اکنون می‌توانید از دکمه «📊 سرویس من» برای مدیریت اشتراک خود استفاده کنید.",
         parse_mode=ParseMode.MARKDOWN
     )
 
+    # Step 4: Notify admins
     admin_message = (
         f"✅ **اتصال موفق** ✅\n\n"
-        f"کاربر مرزبان `{marzban_username}` به پروفایل تلگرام زیر متصل شد:\n\n"
+        f"کاربر مرزبان `{normalized_username}` به پروفایل تلگرام زیر متصل شد:\n\n"
         f"👤 **کاربر:** {user.full_name}\n"
         f"🆔 **Telegram ID:** `{user.id}`"
     )
     if user.username:
-        admin_message += f"\nUsername: @{user.username}"
+        admin_message += f"\n**Username:** @{user.username}"
 
     for admin_id in config.AUTHORIZED_USER_IDS:
         try:

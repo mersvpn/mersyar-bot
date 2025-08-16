@@ -1,7 +1,10 @@
 # ===== IMPORTS & DEPENDENCIES =====
 from telegram import Update
 from telegram.ext import CommandHandler, MessageHandler, filters, Application, ContextTypes
-
+from telegram import Update
+from telegram.ext import ContextTypes, Application, TypeHandler
+from storage.settings_manager import is_bot_active, get_maintenance_message
+from config import config
 # --- Local Imports ---
 from .actions import (
     start,
@@ -11,6 +14,18 @@ from .actions import (
     switch_to_customer_view,
     switch_to_admin_view
 )
+async def maintenance_mode_filter(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user = update.effective_user
+    if not user or user.id in config.AUTHORIZED_USER_IDS:
+        return
+        
+    bot_is_active = await is_bot_active()
+    if not bot_is_active:
+        maintenance_message = await get_maintenance_message()
+        if update.message:
+            await update.message.reply_text(maintenance_message)
+        # Stop further processing of the update
+        context.application.drop_update(update)
 
 # --- ROUTER FUNCTION for /start command ---
 async def start_router(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -31,6 +46,7 @@ def register(application: Application):
 
     # --- Command Handlers (group 1, general priority) ---
     # The "start" command points to the router to handle deep links
+    application.add_handler(TypeHandler(Update, maintenance_mode_filter), group=-1)
     application.add_handler(CommandHandler("start", start_router), group=1)
     application.add_handler(CommandHandler("help", handle_guide_button), group=1)
     application.add_handler(CommandHandler("myid", show_my_id), group=1)
