@@ -41,7 +41,6 @@
 
 ```bash
 wget -O install.sh https://raw.githubusercontent.com/mersvpn/mersyar-bot/main/install.sh && chmod +x install.sh && ./install.sh
-
 ```
 پیکربندی پس از نصب
 پس از اتمام نصب، ربات به صورت خودکار اجرا می‌شود. برای فعال‌سازی کامل، به عنوان ادمین وارد ربات خود شوید و مراحل زیر را دنبال کنید:
