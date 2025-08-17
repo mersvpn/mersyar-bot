@@ -48,11 +48,9 @@ apt-get install -y wget tar $PYTHON_ALIAS-pip $PYTHON_ALIAS-venv nginx python3-c
 echo ">>> [2/6] Downloading release $LATEST_TAG from GitHub..."
 wget -q "$DOWNLOAD_URL" -O "$TARBALL_NAME"
 
-# Clean up previous installation if it exists
 rm -rf "$PROJECT_DIR"
 tar -xzf "$TARBALL_NAME"
 
-# --- This is the key fix: Find the extracted folder name automatically ---
 EXTRACTED_FOLDER_NAME=$(tar -tzf "$TARBALL_NAME" | head -1 | cut -f1 -d"/")
 if [ -z "$EXTRACTED_FOLDER_NAME" ]; then
     echo "Error: Could not determine the extracted folder name from the tarball."
@@ -60,10 +58,9 @@ if [ -z "$EXTRACTED_FOLDER_NAME" ]; then
 fi
 echo "Extracted folder identified as: $EXTRACTED_FOLDER_NAME"
 mv "$EXTRACTED_FOLDER_NAME" "$PROJECT_DIR"
-# --- End of fix ---
 
 cd "$PROJECT_DIR"
-rm -f "/root/$TARBALL_NAME" # Clean up the tarball
+rm -f "/root/$TARBALL_NAME"
 
 # 3. Create .env file with provided credentials
 echo ">>> [3/6] Creating .env file..."
