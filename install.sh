@@ -104,19 +104,23 @@ cat << EOF > /etc/systemd/system/$SERVICE_NAME.service
 [Unit]
 Description=$SERVICE_NAME Telegram Bot Service
 After=network.target
+
 [Service]
+Type=simple
 User=root
 Group=root
 WorkingDirectory=$PROJECT_DIR
 ExecStart=$PROJECT_DIR/venv/bin/python3 $PROJECT_DIR/bot.py
 Restart=always
 RestartSec=10
+KillMode=process
+
 [Install]
 WantedBy=multi-user.target
 EOF
 systemctl daemon-reload
 systemctl enable $SERVICE_NAME
-systemctl start $SERVICE_NAME
+systemctl restart $SERVICE_NAME
 
 echo ""
 echo "✅✅✅ Installation Complete! ✅✅✅"

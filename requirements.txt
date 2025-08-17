@@ -1,6 +1,7 @@
 # ===== Core Bot Framework =====
-# The main library for building the Telegram bot, with job queue support.
-python-telegram-bot[job-queue]
+# [webhooks] installs dependencies for running the bot with a webhook.
+# [job-queue] installs dependencies for scheduled tasks like daily reminders.
+python-telegram-bot[webhooks,job-queue]
 
 # ===== Environment & Configuration =====
 # For loading environment variables from a .env file.
