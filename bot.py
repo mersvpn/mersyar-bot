@@ -13,6 +13,7 @@ from modules.marzban import handler as marzban_handler
 from modules.reminder import handler as reminder_handler
 from modules.financials import handler as financials_handler
 from modules.marzban.actions import api as marzban_api
+from database import db_manager
 
 LOG_FILE = "bot.log"
 LOGGER = logging.getLogger(__name__)
@@ -28,7 +29,7 @@ def setup_logging():
     file_handler.setLevel(logging.DEBUG)
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setFormatter(log_formatter)
-    console_handler.setLevel(logging.INFO)
+    console_handler.setLevel(logging.DEBUG)
     root_logger = logging.getLogger()
     root_logger.setLevel(logging.DEBUG)
     root_logger.addHandler(file_handler)
@@ -39,10 +40,15 @@ def setup_logging():
 async def heartbeat(context: ContextTypes.DEFAULT_TYPE):
     LOGGER.info("❤️ Heartbeat: Bot is alive and the JobQueue is running.")
 
+async def post_init(application: Application):
+    await db_manager.create_pool()
+
 async def post_shutdown(application: Application):
     LOGGER.info("Shutdown signal received. Closing resources...")
     await marzban_api.close_client()
     LOGGER.info("HTTPX client closed gracefully.")
+    await db_manager.close_pool()
+    LOGGER.info("Database pool closed gracefully.")
 
 def main() -> None:
     setup_logging()
@@ -54,6 +60,7 @@ def main() -> None:
         .token(config.TELEGRAM_BOT_TOKEN)
         .connect_timeout(30)
         .read_timeout(30)
+        .post_init(post_init)
         .post_shutdown(post_shutdown)
         .build()
     )
@@ -82,7 +89,7 @@ def main() -> None:
         webhook_url = f"https://{BOT_DOMAIN}/{WEBHOOK_SECRET_TOKEN}"
         LOGGER.info(f"Starting bot in Webhook mode. URL: {webhook_url}, Port: {PORT}")
         application.run_webhook(
-            listen="127.0.0.1",
+            listen="0.0.0.0",
             port=PORT,
             url_path=WEBHOOK_SECRET_TOKEN,
             webhook_url=webhook_url,

@@ -3,6 +3,7 @@ import logging
 from telegram import Update
 from telegram.ext import ContextTypes
 from telegram.constants import ParseMode
+from database import db_manager
 
 # --- Local Imports ---
 from config import config
@@ -21,10 +22,19 @@ LOGGER = logging.getLogger(__name__)
 # ===== CORE BUSINESS LOGIC =====
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
-    Greets the user and shows the appropriate main menu (admin or customer).
-    Can be called directly or as a fallback from other handlers.
+    Greets the user, saves their data to the database, and shows the main menu.
     """
     user = update.effective_user
+
+    # --- THIS IS THE NEW LINE TO ADD ---
+    # Save or update the user's information in the MySQL database
+    try:
+        await db_manager.add_or_update_user(user)
+        LOGGER.info(f"User {user.id} ({user.first_name}) data saved/updated in the database.")
+    except Exception as e:
+        LOGGER.error(f"Failed to save user {user.id} to the database: {e}", exc_info=True)
+    # --- END OF NEW CODE ---
+
     welcome_message = f"سلام {user.first_name} عزیز!\nبه ربات ما خوش آمدید."
 
     if user.id in config.AUTHORIZED_USER_IDS:
@@ -38,7 +48,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         try:
             await update.callback_query.message.delete()
         except Exception:
-            pass # Message might have been deleted already
+            pass
         await context.bot.send_message(chat_id=user.id, text=welcome_message, reply_markup=reply_markup)
     else:
         await update.message.reply_text(welcome_message, reply_markup=reply_markup)

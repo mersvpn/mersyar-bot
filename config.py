@@ -1,11 +1,26 @@
-# config.py
-# (کد کامل و جایگزین)
-
 import os
 import logging
+from pathlib import Path
 from dotenv import load_dotenv
 
-load_dotenv()
+# --- This is the key fix ---
+# Explicitly find and load the .env file from the project's root directory.
+# This makes the bot's startup independent of where the script is run from.
+try:
+    # This finds the root directory of the project (where bot.py is)
+    project_root = Path(__file__).parent.parent.resolve()
+    dotenv_path = project_root / '.env'
+    if dotenv_path.exists():
+        load_dotenv(dotenv_path=dotenv_path)
+    else:
+        # Fallback for environments where the structure might be different
+        load_dotenv()
+except Exception:
+    # Generic fallback if path resolution fails for any reason
+    load_dotenv()
+# --- End of fix ---
+
+
 LOGGER = logging.getLogger(__name__)
 
 class Config:
@@ -14,13 +29,6 @@ class Config:
     if not TELEGRAM_BOT_TOKEN:
         LOGGER.critical("CRITICAL: TELEGRAM_BOT_TOKEN is not set in the .env file.")
         raise ValueError("CRITICAL: TELEGRAM_BOT_TOKEN is not set in the .env file.")
-
-    # --- Marzban Panel Configuration (Now managed dynamically, not from .env) ---
-    # The following variables are no longer loaded from .env at startup.
-    # They will be loaded from marzban_credentials.json by the API functions.
-    # MARZBAN_BASE_URL = os.getenv("MARZBAN_BASE_URL")
-    # MARZBAN_USERNAME = os.getenv("MARZBAN_USERNAME")
-    # MARZBAN_PASSWORD = os.getenv("MARZBAN_PASSWORD")
 
     # --- Admin User IDs (Recommended) ---
     try:

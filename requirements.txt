@@ -1,24 +1,21 @@
 # ===== Core Bot Framework =====
-# [webhooks] installs dependencies for running the bot with a webhook.
-# [job-queue] installs dependencies for scheduled tasks like daily reminders.
 python-telegram-bot[webhooks,job-queue]
 
 # ===== Environment & Configuration =====
-# For loading environment variables from a .env file.
 python-dotenv
 
 # ===== Networking =====
-# A modern, asynchronous HTTP client for robust API communication.
-# [http2] is included for performance improvements.
 httpx[http2]
 
+# ===== Database Connector =====
+# For connecting to MySQL asynchronously
+aiomysql
+# Required by aiomysql for modern MySQL authentication
+cryptography
+
 # ===== Date & Time =====
-# For handling Jalali (Persian) calendar conversions.
 jdatetime
 
 # ===== Utilities =====
-# For generating QR codes for subscription links.
 qrcode
-
-# Required by the qrcode library for image processing.
 Pillow
