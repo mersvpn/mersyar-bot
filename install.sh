@@ -49,8 +49,8 @@ TARBALL_NAME="${LATEST_TAG}.tar.gz"
 DB_NAME="mersyar_bot_db"
 DB_USER="mersyar"
 # --- FIX: Generate URL-safe random strings for passwords and tokens ---
-DB_PASSWORD=$(openssl rand -base64 18 | tr -d '/+' | cut -c1-16)
-WEBHOOK_SECRET_TOKEN=$(openssl rand -base64 24 | tr -d '/+' | cut -c1-32)
+DB_PASSWORD=$(openssl rand -base64 18 | tr -dc 'a-zA-Z0-9' | head -c 16)
+WEBHOOK_SECRET_TOKEN=$(openssl rand -base64 24 | tr -dc 'a-zA-Z0-9' | head -c 32)
 
 
 # 1. Update System and Install Core Dependencies
