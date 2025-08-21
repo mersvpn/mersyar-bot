@@ -145,4 +145,4 @@ success "==============================================="
 success "✅✅✅ Installation Complete! ✅✅✅"
 success "The bot (version $LATEST_TAG) is now running on https://$DOMAIN"
 success "Database password (saved in .env): $DB_PASSWORD"
-info "To check the service status, use: systemctl status $SERVICE_NAME"```
+info "To check the service status, use: systemctl status $SERVICE_NAME"
