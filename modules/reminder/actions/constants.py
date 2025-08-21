@@ -1,0 +1,12 @@
+# ===== CONSTANTS for Reminder Module =====
+
+SETTINGS_FILE = "settings.json"
+
+# Default values for reminders
+DEFAULT_REMINDER_DAYS_THRESHOLD = 3
+DEFAULT_REMINDER_DATA_THRESHOLD_GB = 1
+DEFAULT_REMINDER_TIME_TEHRAN = "09:00"
+
+# Conversation States
+MENU_STATE = 0
+SET_TIME_PROMPT, SET_DAYS_PROMPT, SET_DATA_PROMPT = range(1, 4)

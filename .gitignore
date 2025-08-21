@@ -1,0 +1,38 @@
+# ===== Environment & Sensitive Data =====
+# Never commit the .env file which contains tokens and passwords
+.env
+
+# ===== Python Specific =====
+# Virtual environment folder. Very important to ignore.
+venv/
+.venv/
+*/venv/
+*/.venv/
+
+# Python cache files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# ===== Data & Log Files =====
+# These files change frequently and contain user data. They should not be in the repository.
+*.json
+*.log
+*.db
+*.sqlite3
+
+# ===== IDE & OS Specific Files =====
+# To keep the repository clean from editor-specific or OS-specific files
+
+# Visual Studio Code
+.vscode/
+
+# Jetbrains IDEs (PyCharm, etc.)
+.idea/
+
+# macOS
+.DS_Store
+
+# Windows
+Thumbs.db
