@@ -6,11 +6,18 @@ info() { echo -e "\e[34m[INFO]\e[0m $1"; }
 success() { echo -e "\e[32m[SUCCESS]\e[0m $1"; }
 error() { echo -e "\e[31m[ERROR]\e[0m $1"; }
 
+# --- Pre-flight Checks ---
+if [ "$(id -u)" -ne 0 ]; then
+    error "This script must be run as root. Please use 'sudo' or run as the root user."
+    exit 1
+fi
+
 # --- Static Configuration ---
 GITHUB_USER="mersvpn"
 GITHUB_REPO="mersyar-bot"
 
 # --- Dynamic Configuration (Fetched from GitHub) ---
+info "Fetching the latest release information from GitHub..."
 LATEST_TAG=$(wget -qO- "https://api.github.com/repos/$GITHUB_USER/$GITHUB_REPO/releases/latest" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
 if [ -z "$LATEST_TAG" ]; then
     error "Could not fetch the latest release tag. Please ensure a release exists on GitHub."
@@ -38,11 +45,13 @@ sleep 2
 PROJECT_DIR="/root/$GITHUB_REPO"
 SERVICE_NAME="$GITHUB_REPO"
 PYTHON_ALIAS="python3"
-WEBHOOK_SECRET_TOKEN="$TELEGRAM_BOT_TOKEN"
 TARBALL_NAME="${LATEST_TAG}.tar.gz"
 DB_NAME="mersyar_bot_db"
 DB_USER="mersyar"
-DB_PASSWORD=$(openssl rand -base64 16)
+# --- FIX: Generate URL-safe random strings for passwords and tokens ---
+DB_PASSWORD=$(openssl rand -base64 18 | tr -d '/+' | cut -c1-16)
+WEBHOOK_SECRET_TOKEN=$(openssl rand -base64 24 | tr -d '/+' | cut -c1-32)
+
 
 # 1. Update System and Install Core Dependencies
 info "[1/7] Updating system and installing dependencies..."
@@ -64,7 +73,7 @@ mv "$EXTRACTED_FOLDER_NAME" "$PROJECT_DIR"
 cd "$PROJECT_DIR"
 rm -f "/root/$TARBALL_NAME"
 
-# --- FIX: Run MySQL commands with sudo to avoid access denied errors ---
+# 3. Setting up MySQL Database and User
 info "[3/7] Setting up MySQL Database and User..."
 sudo mysql -e "CREATE DATABASE IF NOT EXISTS $DB_NAME;"
 sudo mysql -e "CREATE USER IF NOT EXISTS '$DB_USER'@'localhost' IDENTIFIED BY '$DB_PASSWORD';"
@@ -74,21 +83,22 @@ success "MySQL database '$DB_NAME' and user '$DB_USER' created."
 
 # 4. Create .env file with provided credentials
 info "[4/7] Creating .env file..."
+# --- FIX: Ensure all variables are correctly quoted and written to the .env file ---
 cat << EOF > .env
 # Telegram Bot Configuration
-TELEGRAM_BOT_TOKEN="$TELEGRAM_BOT_TOKEN"
-AUTHORIZED_USER_IDS="$AUTHORIZED_USER_IDS"
-SUPPORT_USERNAME="$SUPPORT_USERNAME"
+TELEGRAM_BOT_TOKEN="${TELEGRAM_BOT_TOKEN}"
+AUTHORIZED_USER_IDS="${AUTHORIZED_USER_IDS}"
+SUPPORT_USERNAME="${SUPPORT_USERNAME}"
 
 # Webhook Configuration
-WEBHOOK_SECRET_TOKEN="$WEBHOOK_SECRET_TOKEN"
-BOT_DOMAIN="$DOMAIN"
+BOT_DOMAIN="${DOMAIN}"
+WEBHOOK_SECRET_TOKEN="${WEBHOOK_SECRET_TOKEN}"
 
 # Database credentials
-DB_HOST=localhost
-DB_NAME=$DB_NAME
-DB_USER=$DB_USER
-DB_PASSWORD=$DB_PASSWORD
+DB_HOST="localhost"
+DB_NAME="${DB_NAME}"
+DB_USER="${DB_USER}"
+DB_PASSWORD="${DB_PASSWORD}"
 EOF
 
 # 5. Setup Python Virtual Environment and Install Requirements
@@ -139,10 +149,9 @@ WantedBy=multi-user.target
 EOF
 systemctl daemon-reload
 systemctl enable $SERVICE_NAME
-systemctl restart $SERVICE_NAME
+systemctl start $SERVICE_NAME
 
 success "==============================================="
 success "✅✅✅ Installation Complete! ✅✅✅"
 success "The bot (version $LATEST_TAG) is now running on https://$DOMAIN"
-success "Database password (saved in .env): $DB_PASSWORD"
 info "To check the service status, use: systemctl status $SERVICE_NAME"
