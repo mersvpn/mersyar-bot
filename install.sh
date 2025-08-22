@@ -48,8 +48,10 @@ PYTHON_ALIAS="python3"
 TARBALL_NAME="${LATEST_TAG}.tar.gz"
 DB_NAME="mersyar_bot_db"
 DB_USER="mersyar"
+# --- FIX: Generate URL-safe random strings for passwords and tokens ---
 DB_PASSWORD=$(openssl rand -base64 18 | tr -dc 'a-zA-Z0-9' | head -c 16)
 WEBHOOK_SECRET_TOKEN=$(openssl rand -base64 24 | tr -dc 'a-zA-Z0-9' | head -c 32)
+
 
 # 1. Update System and Install ALL Dependencies
 info "[1/8] Updating system and installing all dependencies..."
@@ -76,9 +78,11 @@ rm -f "/root/$TARBALL_NAME"
 info "[3/8] Setting up MySQL Database and User..."
 sudo mysql -e "CREATE DATABASE IF NOT EXISTS $DB_NAME;"
 sudo mysql -e "CREATE USER IF NOT EXISTS '$DB_USER'@'localhost' IDENTIFIED BY '$DB_PASSWORD';"
+# --- FIX: Set authentication method to be compatible with phpMyAdmin ---
+sudo mysql -e "ALTER USER '$DB_USER'@'localhost' IDENTIFIED WITH mysql_native_password BY '$DB_PASSWORD';"
 sudo mysql -e "GRANT ALL PRIVILEGES ON $DB_NAME.* TO '$DB_USER'@'localhost';"
 sudo mysql -e "FLUSH PRIVILEGES;"
-success "MySQL database and user created."
+success "MySQL database and user created successfully."
 
 # 4. Create .env file with ALL credentials
 info "[4/8] Creating .env file..."
@@ -174,4 +178,5 @@ success "==============================================="
 success "✅✅✅ Installation Complete! ✅✅✅"
 success "The bot (version $LATEST_TAG) is now running on https://$DOMAIN"
 success "phpMyAdmin is available at https://$DOMAIN/phpmyadmin"
+info "To log into phpMyAdmin, use username '${DB_USER}' and the password stored in the .env file."
 info "To check the bot service status, use: systemctl status $SERVICE_NAME"
