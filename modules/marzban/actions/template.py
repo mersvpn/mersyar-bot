@@ -4,11 +4,10 @@ from telegram import Update, ReplyKeyboardRemove
 from telegram.ext import ContextTypes, ConversationHandler
 from telegram.constants import ParseMode
 
-# ... (imports) ...
 # --- Local Imports ---
 from .constants import SET_TEMPLATE_USER_PROMPT
+# No change needed here, these functions now point to the database logic
 from .data_manager import load_template_config, save_template_config, normalize_username
-# CORRECTED: Import keyboards from the new shared location
 from shared.keyboards import get_settings_and_tools_keyboard
 from .api import get_user_data
 

@@ -1,3 +1,6 @@
+# FILE: modules/reminder/actions/jobs.py
+# (نسخه نهایی، کامل و کاملاً مقاوم‌سازی شده)
+
 import datetime
 import logging
 import jdatetime
@@ -52,7 +55,7 @@ async def schedule_daily_job(application: Application, time_obj: datetime.time):
 
 async def check_users_for_reminders(context: ContextTypes.DEFAULT_TYPE) -> None:
     admin_id = context.job.chat_id
-    bot_username = context.application.bot.username
+    bot_username = context.bot.username
     LOGGER.info(f"Executing daily reminder job for admin {admin_id}...")
 
     try:
@@ -76,10 +79,14 @@ async def check_users_for_reminders(context: ContextTypes.DEFAULT_TYPE) -> None:
 
         for user in all_users:
             username = user.get('username')
-            status = user.get('status')
-            normalized_name = normalize_username(username or '')
+            if not username:
+                LOGGER.warning(f"Skipping a user in daily job because they have no username. User data: {user}")
+                continue
 
-            if not username or status != 'active' or normalized_name in non_renewal_list:
+            status = user.get('status')
+            normalized_name = normalize_username(username)
+
+            if status != 'active' or normalized_name in non_renewal_list:
                 continue
             
             is_expiring = False
@@ -94,13 +101,12 @@ async def check_users_for_reminders(context: ContextTypes.DEFAULT_TYPE) -> None:
                     is_expiring = True
 
             data_limit = user.get('data_limit') or 0
+            used_traffic = user.get('used_traffic') or 0
             if data_limit > 0:
-                used_traffic = user.get('used_traffic') or 0
                 remaining_traffic = data_limit - used_traffic
                 if remaining_traffic < (data_gb_threshold * GB_IN_BYTES):
                     is_low_data = True
             
-            # --- This is the corrected and re-added section for customer notifications ---
             customer_telegram_id = users_map.get(normalized_name)
             if customer_telegram_id and (is_expiring or is_low_data):
                 try:
@@ -121,14 +127,11 @@ async def check_users_for_reminders(context: ContextTypes.DEFAULT_TYPE) -> None:
                     ])
 
                     await context.bot.send_message(
-                        chat_id=customer_telegram_id,
-                        text=customer_message,
-                        reply_markup=keyboard,
-                        parse_mode=ParseMode.MARKDOWN
+                        chat_id=customer_telegram_id, text=customer_message,
+                        reply_markup=keyboard, parse_mode=ParseMode.MARKDOWN
                     )
                 except Exception as e:
                     LOGGER.warning(f"Failed to send reminder to customer {customer_telegram_id} for user {username}: {e}")
-            # --- End of re-added section ---
 
             if is_expiring:
                 expiring_users.append(user)
@@ -152,7 +155,8 @@ async def check_users_for_reminders(context: ContextTypes.DEFAULT_TYPE) -> None:
             report_parts.append("\n" + "—" * 15 + "\n")
 
         def format_user_line(u, reason):
-            return f"▪️ <a href='https://t.me/{bot_username}?start=details_{u['username']}'>{u['username']}</a> - <i>{reason}</i>"
+            uname = u.get('username', 'USERNAME_MISSING')
+            return f"▪️ <a href='https://t.me/{bot_username}?start=details_{uname}'>{uname}</a> - <i>{reason}</i>"
 
         if expiring_users:
             report_parts.append("⏳ **کاربران در آستانه انقضا:**")
@@ -168,9 +172,13 @@ async def check_users_for_reminders(context: ContextTypes.DEFAULT_TYPE) -> None:
 
         if manual_reminders:
             report_parts.append("\n📝 **پیگیری‌های دستی:**")
-            for u, n in manual_reminders.items():
-                escaped_note = escape_markdown(n.replace('\n', ' '), 1)
-                report_parts.append(format_user_line({'username': u}, escaped_note))
+            # --- START OF FIX: Safely handle manual reminders that might be None ---
+            for u_str, n in manual_reminders.items():
+                # Ensure note text 'n' is a string before calling .replace()
+                note_text = str(n) if n is not None else "" 
+                escaped_note = escape_markdown(note_text.replace('\n', ' '), 1)
+                report_parts.append(format_user_line({'username': u_str}, escaped_note))
+            # --- END OF FIX ---
 
         message = "\n".join(report_parts)
         parse_mode = ParseMode.HTML if any([expiring_users, low_data_users, manual_reminders]) else ParseMode.MARKDOWN_V2
@@ -181,6 +189,7 @@ async def check_users_for_reminders(context: ContextTypes.DEFAULT_TYPE) -> None:
     except Exception as e:
         LOGGER.error(f"Critical error in daily reminder job: {e}", exc_info=True)
         try:
-            await context.bot.send_message(admin_id, f"❌ **خطای بحرانی** در اجرای جاب روزانه رخ داد: `{e}`")
+            error_message = f"❌ **خطای بحرانی** در اجرای جاب روزانه رخ داد: `{type(e).__name__}: {e}`"
+            await context.bot.send_message(admin_id, error_message)
         except Exception as notify_error:
             LOGGER.error(f"Failed to notify admin about the job failure: {notify_error}")

@@ -1,69 +1,118 @@
-# ===== IMPORTS & DEPENDENCIES =====
+# FILE: modules/customer/actions/receipt.py
+# (نسخه نهایی و ادغام شده)
+
 import logging
 from telegram import Update
-from telegram.ext import ContextTypes
+from telegram.ext import (
+    ContextTypes, ConversationHandler, CallbackQueryHandler,
+    MessageHandler, filters, CommandHandler
+)
+from telegram.constants import ParseMode
 
-# --- Local Imports ---
 from config import config
-from modules.marzban.actions.data_manager import load_users_map
+# --- UPDATED: Import the new database function instead of the old JSON loader ---
+from database.db_manager import get_linked_marzban_usernames
 
-# --- SETUP ---
 LOGGER = logging.getLogger(__name__)
 
-# ===== RECEIPT HANDLING LOGIC =====
+# --- Conversation States ---
+GET_RECEIPT_PHOTO = range(1)
 
-async def handle_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def start_receipt_upload(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """
-    Handles incoming photos from non-admin users, assuming they are payment receipts.
-    Forwards the receipt to all admins for verification.
+    Entry point for the receipt submission conversation.
+    Asks the user to send their payment receipt photo.
+    """
+    query = update.callback_query
+    await query.answer()
+    
+    await query.edit_message_text(
+        text="لطفاً تصویر واضح از رسید پرداخت خود را ارسال کنید.\n\nبرای انصراف، دستور /cancel را بفرستید.",
+        parse_mode=ParseMode.MARKDOWN
+    )
+    
+    return GET_RECEIPT_PHOTO
+
+async def handle_receipt_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """
+    Receives the photo, forwards it to the admin(s) with full details, and ends the conversation.
+    This function combines the logic from your original file with the new conversation structure.
     """
     user = update.effective_user
-    # This handler should only react to messages from non-admin users.
-    # This check is an extra layer of safety.
-    if user.id in config.AUTHORIZED_USER_IDS:
-        return
+    photo_file_id = update.message.photo[-1].file_id
 
-    # Acknowledge receipt to the customer
-    await update.message.reply_text(
-        "✅ رسید شما دریافت شد و برای بررسی به ادمین ارسال گردید.\n\n"
-        "از پرداخت شما متشکریم! لطفاً منتظر تایید ادمین بمانید."
-    )
-
-    # --- Prepare information for the admin ---
-    user_info = f"👤 **کاربر:** {user.full_name}"
-    if user.username:
-        user_info += f" (@{user.username})"
-    user_info += f"\n🆔 **ID تلگرام:** `{user.id}`"
-
-    # Try to find the associated Marzban username(s)
-    users_map = await load_users_map()
-    linked_accounts = [username for username, t_id in users_map.items() if t_id == user.id]
-    if linked_accounts:
-        user_info += "\n"
-        user_info += "▫️ **سرویس‌های متصل:**\n"
-        for acc in linked_accounts:
-            user_info += f"  - `{acc}`\n"
-
-    caption_for_admin = (
+    # --- Prepare detailed information for the admin (from your original logic) ---
+    caption = (
         f"🧾 **رسید پرداخت جدید دریافت شد** 🧾\n\n"
-        f"{user_info}"
+        f"👤 **از طرف:** {user.full_name}\n"
     )
+    if user.username:
+        caption += f"📧 **یوزرنیم:** @{user.username}\n"
+    caption += f"🆔 **آیدی تلگرام:** `{user.id}`\n"
 
-    # --- Forward the photo to all admins ---
-    if config.AUTHORIZED_USER_IDS:
-        for admin_id in config.AUTHORIZED_USER_IDS:
-            try:
-                # Forward the original message (which contains the photo)
-                await context.bot.forward_message(
-                    chat_id=admin_id,
-                    from_chat_id=user.id,
-                    message_id=update.message.message_id
-                )
-                # Send the user info as a separate message for clarity
-                await context.bot.send_message(
-                    chat_id=admin_id,
-                    text=caption_for_admin,
-                    parse_mode='Markdown'
-                )
-            except Exception as e:
-                LOGGER.error(f"Failed to forward receipt from {user.id} to admin {admin_id}: {e}", exc_info=True)
+    # Try to find the associated Marzban username(s) using the new database function
+    linked_accounts = await get_linked_marzban_usernames(user.id)
+    if linked_accounts:
+        caption += "▫️ **سرویس‌های متصل در دیتابیس:**\n"
+        for acc in linked_accounts:
+            caption += f"  - `{acc}`\n"
+    else:
+        caption += "▫️ **سرویس متصلی در دیتابیس یافت نشد.**\n"
+    
+    # --- Forward the photo and info to all admins ---
+    if not config.AUTHORIZED_USER_IDS:
+        LOGGER.warning("Receipt received, but no admin IDs are configured to forward to.")
+        await update.message.reply_text("متاسفانه در حال حاضر امکان پردازش رسید شما وجود ندارد. لطفاً با پشتیبانی تماس بگیرید.")
+        return ConversationHandler.END
+
+    num_sent = 0
+    for admin_id in config.AUTHORIZED_USER_IDS:
+        try:
+            await context.bot.send_photo(
+                chat_id=admin_id,
+                photo=photo_file_id,
+                caption=caption,
+                parse_mode=ParseMode.MARKDOWN
+            )
+            num_sent += 1
+        except Exception as e:
+            LOGGER.error(f"Failed to forward receipt to admin {admin_id}: {e}")
+
+    if num_sent > 0:
+        await update.message.reply_text(
+            "✅ رسید شما با موفقیت برای پشتیبانی ارسال شد.\n"
+            "لطفاً منتظر تایید از طرف ما بمانید."
+        )
+    else:
+        await update.message.reply_text("❌ خطا در ارسال رسید به پشتیبانی. لطفاً بعداً دوباره تلاش کنید.")
+
+    return ConversationHandler.END
+
+async def cancel_receipt_upload(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """
+    Cancels the receipt submission process.
+    """
+    # Try to edit the original message if possible
+    if context.user_data.get('panel_message_id'):
+        try:
+            await context.bot.edit_message_text(
+                chat_id=update.effective_chat.id,
+                message_id=context.user_data['panel_message_id'],
+                text="عملیات لغو شد. به پنل خرید و پرداخت بازگشتید."
+            )
+        except: pass # Ignore if message is old
+    else:
+        await update.message.reply_text("ارسال رسید لغو شد.")
+
+    context.user_data.clear()
+    return ConversationHandler.END
+
+# --- The ConversationHandler for the entire receipt flow ---
+receipt_conv = ConversationHandler(
+    entry_points=[CallbackQueryHandler(start_receipt_upload, pattern='^start_receipt_upload$')],
+    states={
+        GET_RECEIPT_PHOTO: [MessageHandler(filters.PHOTO & ~filters.COMMAND, handle_receipt_photo)]
+    },
+    fallbacks=[CommandHandler('cancel', cancel_receipt_upload)],
+    conversation_timeout=600 # 10 minutes for user to send the photo
+)

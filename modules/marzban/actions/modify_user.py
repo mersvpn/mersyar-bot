@@ -7,6 +7,7 @@ from telegram.ext import ContextTypes, ConversationHandler
 from telegram.constants import ParseMode
 
 # --- Local Imports ---
+from modules.financials.actions.payment import send_renewal_invoice_to_user
 from .constants import ADD_DATA_PROMPT, ADD_DAYS_PROMPT, GB_IN_BYTES, DEFAULT_RENEW_DAYS
 from shared.keyboards import get_user_management_keyboard
 from .data_manager import load_users_map, save_users_map, normalize_username
@@ -67,7 +68,8 @@ async def reset_user_traffic(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 
 async def renew_user_smart(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    from database.db_manager import get_user_note_and_duration # New import
+    # --- The import is changed to the new function ---
+    from database.db_manager import get_user_note
 
     query = update.callback_query
     username = query.data.split('_', 1)[-1]
@@ -78,12 +80,16 @@ async def renew_user_smart(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         await query.edit_message_text(f"❌ خطا: اطلاعات کاربر `{username}` یافت نشد یا خطای API رخ داد.")
         return
 
-    # --- New DB Interaction ---
+    # --- Database Interaction using the new function ---
     renewal_duration_days = DEFAULT_RENEW_DAYS
-    note_data = await get_user_note_and_duration(normalize_username(username))
-    if note_data and note_data.get('subscription_duration'):
-        renewal_duration_days = note_data['subscription_duration']
-    # --- End of New DB Interaction ---
+    subscription_price = 0  # Default price if not found
+    note_data = await get_user_note(normalize_username(username)) # <-- Function call changed here
+    if note_data:
+        if note_data.get('subscription_duration'):
+            renewal_duration_days = note_data['subscription_duration']
+        if note_data.get('subscription_price'):
+            subscription_price = note_data['subscription_price']
+    # --- End of Database Interaction ---
 
     await query.edit_message_text(f"در حال تمدید `{username}` (۱/۲: ریست ترافیک)...", parse_mode=ParseMode.MARKDOWN)
     success_reset, message_reset = await reset_user_traffic_api(username)
@@ -110,7 +116,7 @@ async def renew_user_smart(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     data_limit_gb = (user_data.get('data_limit') or 0) / GB_IN_BYTES
     response_message = (f"✅ **تمدید هوشمند موفق**\n\n"
                         f"▫️ **کاربر:** `{username}`\n"
-                        f"▫️ **مدت:** `{renewal_duration_days}` روز (بر اساس دوره قبلی)\n"
+                        f"▫️ **مدت:** `{renewal_duration_days}` روز\n"
                         f"▫️ **حجم کل:** `{f'{data_limit_gb:.0f}' if data_limit_gb > 0 else 'نامحدود'}` GB\n"
                         f"▫️ **ترافیک:** صفر شد")
                         
@@ -121,11 +127,22 @@ async def renew_user_smart(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     customer_id = users_map.get(normalize_username(username))
     if customer_id:
         try:
-            await context.bot.send_message(chat_id=customer_id, text="✅ اشتراک شما با موفقیت تمدید شد!")
-            await context.bot.send_message(chat_id=update.effective_chat.id, text=f"ℹ️ پیام تایید برای مشتری (ID: {customer_id}) ارسال شد.")
+            if subscription_price > 0:
+                await send_renewal_invoice_to_user(
+                    context=context,
+                    user_telegram_id=customer_id,
+                    username=username,
+                    renewal_days=renewal_duration_days,
+                    price=subscription_price
+                )
+                await context.bot.send_message(chat_id=update.effective_chat.id, text=f"ℹ️ صورتحساب تمدید برای مشتری (ID: {customer_id}) ارسال شد.")
+            else:
+                await context.bot.send_message(chat_id=customer_id, text="✅ اشتراک شما با موفقیت تمدید شد!")
+                await context.bot.send_message(chat_id=update.effective_chat.id, text=f"ℹ️ پیام تایید (بدون فاکتور) برای مشتری (ID: {customer_id}) ارسال شد.")
+
         except Exception as e:
             LOGGER.warning(f"User {username} renewed, but failed to notify customer {customer_id}: {e}")
-            await context.bot.send_message(chat_id=update.effective_chat.id, text=f"⚠️ کاربر تمدید شد، اما ارسال پیام به مشتری (ID: {customer_id}) خطا داد.")
+            await context.bot.send_message(chat_id=update.effective_chat.id, text=f"⚠️ کاربر تمدید شد، اما ارسال پیام/فاکتور به مشتری (ID: {customer_id}) خطا داد.")
             
 async def prompt_for_add_data(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query

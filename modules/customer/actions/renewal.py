@@ -15,10 +15,11 @@ LOGGER = logging.getLogger(__name__)
 async def handle_renewal_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
     Handles 'Renew Subscription' button click from a customer.
-    It notifies all admins about the renewal request.
+    It notifies all admins and then edits the original message to show a confirmation.
     """
     query = update.callback_query
-    await query.answer("✅ درخواست شما برای ادمین ارسال شد. لطفاً منتظر بمانید...")
+    # We answer the query immediately to stop the loading animation on the button
+    await query.answer()
 
     user = update.effective_user
     marzban_username = query.data.split('_')[-1] # customer_renew_request_{username}
@@ -41,6 +42,7 @@ async def handle_renewal_request(update: Update, context: ContextTypes.DEFAULT_T
             [InlineKeyboardButton(f"🔄 تمدید هوشمند برای {normalized_user}", callback_data=f"renew_{normalized_user}")]
         ])
 
+        num_sent = 0
         for admin_id in config.AUTHORIZED_USER_IDS:
             try:
                 await context.bot.send_message(
@@ -49,8 +51,18 @@ async def handle_renewal_request(update: Update, context: ContextTypes.DEFAULT_T
                     reply_markup=keyboard,
                     parse_mode=ParseMode.MARKDOWN
                 )
+                num_sent += 1
             except Exception as e:
                 LOGGER.error(f"Failed to send renewal notification to admin {admin_id} for user {normalized_user}: {e}", exc_info=True)
+        
+        # --- START OF FIX: Edit the original message after processing ---
+        if num_sent > 0:
+            confirmation_text = "✅ درخواست تمدید شما با موفقیت برای پشتیبانی ارسال شد. لطفاً منتظر بمانید."
+        else:
+            confirmation_text = "❌ مشکلی در ارسال درخواست رخ داد. لطفاً با پشتیبانی تماس بگیرید."
+            
+        await query.edit_message_text(text=confirmation_text)
+        # --- END OF FIX ---
 
 async def handle_do_not_renew(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """

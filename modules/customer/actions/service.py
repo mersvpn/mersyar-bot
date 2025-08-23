@@ -1,4 +1,5 @@
 # FILE: modules/customer/actions/service.py
+# (نسخه نهایی و کاملاً اصلاح‌شده)
 
 import datetime
 import jdatetime
@@ -9,15 +10,12 @@ from telegram.ext import ContextTypes, ConversationHandler
 from telegram.constants import ParseMode
 
 from shared.keyboards import get_customer_main_menu_keyboard
-# <--- اصلاح شد: این import دیگر لازم نیست و حذف می‌شود
-# from modules.marzban.actions.data_manager import load_users_map, normalize_username
-# --->
 from modules.marzban.actions.api import get_user_data, reset_subscription_url_api, get_all_users
 from modules.marzban.actions.constants import GB_IN_BYTES
 from modules.marzban.actions.data_manager import normalize_username
-# <--- اصلاح شد: تابع جدید از دیتابیس وارد می‌شود
-from database.db_manager import get_linked_marzban_usernames
-# --->
+# --- START OF FIX: Import the new database function ---
+from database.db_manager import get_linked_marzban_usernames, get_user_note
+# --- END OF FIX ---
 
 
 LOGGER = logging.getLogger(__name__)
@@ -25,7 +23,9 @@ LOGGER = logging.getLogger(__name__)
 CHOOSE_SERVICE, DISPLAY_SERVICE, CONFIRM_RESET_SUB, CONFIRM_DELETE = range(4)
 
 async def display_service_details(update: Update, context: ContextTypes.DEFAULT_TYPE, marzban_username: str) -> int:
-    from database.db_manager import get_user_note_and_duration
+    # --- START OF FIX: The import inside the function is no longer needed ---
+    # from database.db_manager import get_user_note_and_duration 
+    # --- END OF FIX ---
 
     target_message = update.callback_query.message if update.callback_query else update.message
     
@@ -47,7 +47,9 @@ async def display_service_details(update: Update, context: ContextTypes.DEFAULT_
     expire_str = "نامحدود"
     duration_str = "نامشخص"
 
-    note_data = await get_user_note_and_duration(normalize_username(marzban_username))
+    # --- START OF FIX: Use the new function 'get_user_note' ---
+    note_data = await get_user_note(normalize_username(marzban_username))
+    # --- END OF FIX ---
     if note_data and note_data.get('subscription_duration'):
         duration_str = f"{note_data['subscription_duration']} روزه"
 
@@ -86,13 +88,7 @@ async def handle_my_service(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     user_id = update.effective_user.id
     loading_message = await update.message.reply_text("در حال بررسی سرویس‌های شما از طریق دیتابیس...")
 
-    # <--- اصلاح شد: این بلاک کد به طور کامل با فراخوانی از دیتابیس جایگزین می‌شود
-    # users_map = await load_users_map()
-    # linked_accounts_usernames = [
-    #     username for username, t_id in users_map.items() if t_id == user_id
-    # ]
     linked_accounts_usernames = await get_linked_marzban_usernames(user_id)
-    # --->
     
     LOGGER.info(f"DEBUG (handle_my_service): User {user_id} is linked to these accounts in DATABASE: {linked_accounts_usernames}")
 
@@ -110,15 +106,13 @@ async def handle_my_service(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         for user in all_marzban_users_list
     }
     
-    # <--- اصلاح شد: نام متغیر برای خوانایی بهتر تغییر کرد
     normalized_linked_usernames = [normalize_username(u) for u in linked_accounts_usernames]
     
     active_linked_accounts = [
         all_marzban_users_dict[normalized_username] 
-        for normalized_username in normalized_linked_usernames # <--- از متغیر جدید استفاده شد
+        for normalized_username in normalized_linked_usernames
         if normalized_username in all_marzban_users_dict and all_marzban_users_dict[normalized_username].get('status') == 'active'
     ]
-    # --->
     
     active_usernames_for_log = [acc['username'] for acc in active_linked_accounts]
     LOGGER.info(f"DEBUG (handle_my_service): Found {len(active_linked_accounts)} active accounts in Marzban panel: {active_usernames_for_log}")

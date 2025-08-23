@@ -30,7 +30,7 @@ def get_settings_and_tools_keyboard() -> ReplyKeyboardMarkup:
 
 def get_customer_main_menu_keyboard() -> ReplyKeyboardMarkup:
     keyboard_layout = [
-        [KeyboardButton("💳 خرید اشتراک")],
+        [KeyboardButton("🛍️ پنل خرید و پرداخت")],
         [KeyboardButton("📊 سرویس من"), KeyboardButton("📱 دانلود و راهنمای اتصال")]
     ]
     if config.SUPPORT_USERNAME:
@@ -49,7 +49,7 @@ def get_customer_view_for_admin_keyboard() -> ReplyKeyboardMarkup:
 
 def get_notes_management_keyboard() -> ReplyKeyboardMarkup:
     keyboard = [
-        [KeyboardButton("🗒️ یادداشت‌های روزانه"), KeyboardButton("📝 پیگیری‌های فعال")],
+        [KeyboardButton("🗒️ یادداشت‌های روزانه"), KeyboardButton("👤 اشتراک‌های ثبت‌شده")],
         [KeyboardButton("🔙 بازگشت به منوی اصلی")]
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
