@@ -1,0 +1,21 @@
+{
+    "template_username": "dorsa",
+    "proxies": {
+        "vless": {
+            "id": "74f3cb67-547d-4ff7-a500-d585d40ec5e0",
+            "flow": ""
+        }
+    },
+    "inbounds": {
+        "vless": [
+            "VLESS XHTTP REALITY franc2",
+            "VLESS-XHTTP-NOTLS fastlly sw",
+            "VLESS-XHTTP-NOTLS fastlly far",
+            "VLESS WS TLS  fra",
+            "VLESS + GRPC + REALITY-ip4-nod-bot",
+            "VLESS TCP TLS",
+            "VLESS XHTTP REALITY franc",
+            "VLESS XHTTP REALITY us"
+        ]
+    }
+}

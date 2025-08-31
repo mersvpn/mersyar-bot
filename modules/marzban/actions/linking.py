@@ -1,5 +1,5 @@
 # ===== IMPORTS & DEPENDENCIES =====
-from telegram import Update, ReplyKeyboardRemove
+from telegram import Update, ReplyKeyboardRemove, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import ContextTypes, ConversationHandler
 from telegram.constants import ParseMode
 
@@ -58,3 +58,46 @@ async def generate_linking_url(update: Update, context: ContextTypes.DEFAULT_TYP
     )
 
     return ConversationHandler.END
+
+async def send_subscription_link(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Handles the 'Subscription Link' button click from the user details panel.
+    Fetches the user's data and displays their subscription URL.
+    """
+    query = update.callback_query
+    await query.answer()
+    
+    username = query.data.split('_', 2)[-1]
+    
+    await query.edit_message_text(f"در حال دریافت لینک اشتراک برای `{username}`...", parse_mode=ParseMode.MARKDOWN)
+    
+    user_data = await get_user_data(username)
+    
+    # Use .get() for safer access to the subscription URL
+    sub_url = user_data.get('subscription_url')
+    
+    if not user_data or not sub_url:
+        await query.edit_message_text(f"❌ خطایی در دریافت لینک اشتراک برای `{username}` رخ داد.")
+        # We need a back button here too for good UX
+        list_type = context.user_data.get('current_list_type', 'all')
+        page_number = context.user_data.get('current_page', 1)
+        back_callback = f"user_details_{username}_{list_type}_{page_number}"
+        keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 بازگشت به جزئیات", callback_data=back_callback)]])
+        await query.edit_message_text(f"❌ خطایی در دریافت لینک اشتراک برای `{username}` رخ داد.", reply_markup=keyboard)
+        return
+
+    message = (
+        f"🔗 **لینک اشتراک کاربر:** `{username}`\n\n"
+        f"`{sub_url}`"
+    )
+    
+    # --- Corrected Logic: Create only ONE back button with the correct context ---
+    list_type = context.user_data.get('current_list_type', 'all')
+    page_number = context.user_data.get('current_page', 1)
+    back_callback = f"user_details_{username}_{list_type}_{page_number}"
+    
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔙 بازگشت به جزئیات", callback_data=back_callback)]
+    ])
+    
+    await query.edit_message_text(message, reply_markup=keyboard, parse_mode=ParseMode.MARKDOWN)

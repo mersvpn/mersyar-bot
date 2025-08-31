@@ -19,3 +19,7 @@ jdatetime
 # ===== Utilities =====
 qrcode
 Pillow
+
+aiofiles
+
+python-telegram-bot

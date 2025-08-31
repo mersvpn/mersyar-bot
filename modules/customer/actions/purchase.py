@@ -1,50 +1,63 @@
-# ===== IMPORTS & DEPENDENCIES =====
+# FILE: modules/customer/actions/purchase.py
+# (نسخه نهایی با بازگشت صحیح به منوی اصلی و رفع خطای پارسر)
+
 import logging
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import ContextTypes, ConversationHandler
 from telegram.constants import ParseMode
+from telegram.helpers import escape_markdown
 
-# --- Local Imports ---
 from config import config
+# Import both admin and customer keyboards
+from shared.keyboards import get_customer_main_menu_keyboard, get_admin_main_menu_keyboard
+from . import panel
 
-# --- SETUP ---
 LOGGER = logging.getLogger(__name__)
 
-# --- CONSTANTS ---
-CONFIRM_PURCHASE = range(1)
+CONFIRM_PURCHASE = 0 # Simplified state machine
 
-# ===== PURCHASE CONVERSATION FUNCTIONS =====
+async def _send_final_menu_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Helper function to send the correct main menu (admin or customer) at the end of a conversation.
+    """
+    user_id = update.effective_user.id
+    
+    # Decide which keyboard to show based on user's role
+    if user_id in config.AUTHORIZED_USER_IDS:
+        final_keyboard = get_admin_main_menu_keyboard()
+        message_text = "شما به منوی اصلی ادمین بازگشتید."
+    else:
+        final_keyboard = get_customer_main_menu_keyboard()
+        message_text = "شما به منوی اصلی بازگشتید."
+
+    await context.bot.send_message(
+        chat_id=user_id,
+        text=message_text,
+        reply_markup=final_keyboard
+    )
 
 async def start_purchase(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """
-    Starts the purchase conversation, triggered by a main menu button
-    or a callback from a broadcast message.
+    Starts the purchase conversation by EDITING the customer panel message.
     """
+    query = update.callback_query
+    await query.answer()
+
     keyboard = [
         [InlineKeyboardButton("✅ بله، درخواست را ارسال کن", callback_data="confirm_purchase_request")],
-        [InlineKeyboardButton("❌ خیر، منصرف شدم", callback_data="cancel_purchase_request")]
+        [InlineKeyboardButton("❌ خیر، بازگشت", callback_data="back_to_customer_panel")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     text = "آیا از درخواست خرید اشتراک جدید اطمینان دارید؟"
 
-    query = update.callback_query
-    if query:
-        # Flow for CallbackQuery (e.g., from a broadcast button)
-        await query.answer()
-        # Send a new message, as we can't edit the original broadcast message
-        await context.bot.send_message(
-            chat_id=update.effective_chat.id,
-            text=text,
-            reply_markup=reply_markup
-        )
-    else:
-        # Flow for Message (from the main menu button)
-        await update.message.reply_text(text, reply_markup=reply_markup)
+    await query.edit_message_text(text=text, reply_markup=reply_markup)
 
     return CONFIRM_PURCHASE
 
 async def confirm_purchase(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Confirms the purchase request, notifies admins, and ends the conversation."""
+    """
+    Confirms the purchase, notifies admin, and properly ends the conversation by showing the main menu.
+    """
     query = update.callback_query
     await query.answer()
     user = update.effective_user
@@ -55,46 +68,57 @@ async def confirm_purchase(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     )
 
     if config.AUTHORIZED_USER_IDS:
-        user_info = f"کاربر {user.full_name}"
+        safe_full_name = escape_markdown(user.full_name, version=2)
+        user_info = f"کاربر {safe_full_name}"
         if user.username:
-            user_info += f" (@{user.username})"
+            safe_username = escape_markdown(user.username, version=2)
+            user_info += f" \(@{safe_username}\)"
+        
         user_info += f"\nUser ID: `{user.id}`"
 
         message_to_admin = (
-            f"🔔 **درخواست خرید جدید** 🔔\n\n"
+            f"🔔 *درخواست خرید جدید* 🔔\n\n"
             f"{user_info}\n\n"
-            "این کاربر قصد خرید اشتراک جدید را دارد."
+            "این کاربر قصد خرید اشتراک جدید را دارد\."
         )
-        # Provide a convenient button for the admin to create a config for this user
+        
         admin_keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton("➕ ساخت کانفیگ برای این کاربر", callback_data=f"create_user_for_{user.id}")]
         ])
 
+        # ======================== START: FIX for notification logic ========================
+        # The conditional "if admin_id != user.id" is removed to ensure the message is always sent.
         for admin_id in config.AUTHORIZED_USER_IDS:
             try:
                 await context.bot.send_message(
                     chat_id=admin_id,
                     text=message_to_admin,
                     reply_markup=admin_keyboard,
-                    parse_mode=ParseMode.MARKDOWN
+                    parse_mode=ParseMode.MARKDOWN_V2
                 )
             except Exception as e:
                 LOGGER.error(f"Failed to send purchase notification to admin {admin_id} for user {user.id}: {e}", exc_info=True)
+        # ========================= END: FIX for notification logic =========================
+
+    await _send_final_menu_message(update, context)
 
     return ConversationHandler.END
 
+
 async def cancel_purchase(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Cancels the purchase request and ends the conversation."""
+    """
+    Cancels the purchase request and properly ends the conversation by showing the main menu.
+    """
     query = update.callback_query
     await query.answer()
     await query.edit_message_text("درخواست خرید اشتراک لغو شد.")
+
+    await _send_final_menu_message(update, context)
+    
     return ConversationHandler.END
 
-# ===== OTHER ACTION FUNCTIONS =====
 async def handle_support_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handles the 'Support' button, providing a link to the support username."""
     if config.SUPPORT_USERNAME:
-        # Ensure the username is clean and doesn't have a leading '@'
         clean_username = config.SUPPORT_USERNAME.lstrip('@')
         support_link = f"https://t.me/{clean_username}"
         message = (
@@ -107,5 +131,4 @@ async def handle_support_button(update: Update, context: ContextTypes.DEFAULT_TY
             disable_web_page_preview=True
         )
     else:
-        # This case should ideally not be reached if the button isn't shown, but it's a good fallback.
         await update.message.reply_text("متاسفانه در حال حاضر امکان ارتباط با پشتیبانی وجود ندارد.")

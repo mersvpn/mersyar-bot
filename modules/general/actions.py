@@ -1,42 +1,62 @@
-# ===== IMPORTS & DEPENDENCIES =====
+# FILE: modules/general/actions.py
+
 import logging
-from telegram import Update
+from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import ContextTypes
 from telegram.constants import ParseMode
 from database import db_manager
-
-# --- Local Imports ---
+from shared.log_channel import send_log
+from telegram.helpers import escape_markdown
 from config import config
-# CORRECTED: Import keyboards from the new shared location
 from shared.keyboards import (
     get_customer_main_menu_keyboard,
     get_admin_main_menu_keyboard,
     get_customer_view_for_admin_keyboard
 )
-from modules.marzban.actions.data_manager import load_users_map, save_users_map, normalize_username
+from modules.marzban.actions.data_manager import link_user_to_telegram, normalize_username
 from modules.auth import admin_only
+# Import the helper function for two-column layout
 
-# --- SETUP ---
+
 LOGGER = logging.getLogger(__name__)
 
-# ===== CORE BUSINESS LOGIC =====
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    Greets the user, saves their data to the database, and shows the main menu.
-    """
     user = update.effective_user
-
-    # --- THIS IS THE NEW LINE TO ADD ---
-    # Save or update the user's information in the MySQL database
+    is_new_user = False
     try:
-        await db_manager.add_or_update_user(user)
-        LOGGER.info(f"User {user.id} ({user.first_name}) data saved/updated in the database.")
+        is_new_user = await db_manager.add_or_update_user(user)
+        
+        if is_new_user:
+            LOGGER.info(f"A new user has started the bot: {user.id} ({user.first_name})")
+            safe_full_name = escape_markdown(user.full_name, version=2)
+            user_info_markdown = f"کاربر {safe_full_name} \(ID: `{user.id}`\)"
+            if user.username:
+                safe_username = escape_markdown(user.username, version=2)
+                user_info_markdown += f" \(@{safe_username}\)"
+            
+            log_message = f"👤 *کاربر جدید*\n{user_info_markdown} ربات را استارت زد\."
+            await send_log(context.bot, log_message, parse_mode=ParseMode.MARKDOWN_V2)
+
+            user_info_pv = (
+                f"👤 **کاربر جدید ربات را استارت زد**\n\n"
+                f"**نام:** {user.first_name}\n"
+                f"**آیدی عددی:** `{user.id}`"
+            )
+            if user.username:
+                user_info_pv += f"\n**نام کاربری:** @{user.username}"
+            
+            for admin_id in config.AUTHORIZED_USER_IDS:
+                try:
+                    await context.bot.send_message(
+                        chat_id=admin_id, text=user_info_pv, parse_mode=ParseMode.MARKDOWN
+                    )
+                except Exception as e:
+                    LOGGER.error(f"Failed to send new user notification to admin {admin_id}: {e}")
+
     except Exception as e:
         LOGGER.error(f"Failed to save user {user.id} to the database: {e}", exc_info=True)
-    # --- END OF NEW CODE ---
 
     welcome_message = f"سلام {user.first_name} عزیز!\nبه ربات ما خوش آمدید."
-
     if user.id in config.AUTHORIZED_USER_IDS:
         reply_markup = get_admin_main_menu_keyboard()
         welcome_message += "\n\nداشبورد مدیریتی برای شما فعال است."
@@ -47,135 +67,140 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if update.callback_query:
         try:
             await update.callback_query.message.delete()
-        except Exception:
-            pass
+        except Exception: pass
         await context.bot.send_message(chat_id=user.id, text=welcome_message, reply_markup=reply_markup)
     else:
         await update.message.reply_text(welcome_message, reply_markup=reply_markup)
 
+
 async def handle_guide_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Shows the appropriate guide text for admins or customers."""
-    user = update.effective_user
-    if user.id in config.AUTHORIZED_USER_IDS:
-        guide_text = (
-            "** راهنمای ادمین **\n\n"
-            "**👤 مدیریت کاربران**: دسترسی به داشبورد کامل برای مدیریت کاربران مرزبان.\n\n"
-            "**⚙️ تنظیمات و ابزارها**: مدیریت یادآورها، کاربر الگو و ایجاد لینک اتصال.\n\n"
-            "**💻 ورود به پنل کاربری**: شبیه‌سازی محیط ربات از دید یک مشتری عادی."
-        )
-    else:
-        guide_text = (
-            "**📱 راهنمای دانلود و اتصال**\n\n"
-            "برای استفاده از سرویس، یکی از کلاینت‌های زیر را متناسب با سیستم عامل خود نصب کنید:\n\n"
-            "1️⃣ **Android (V2RayNG)**: [Google Play](https://play.google.com/store/apps/details?id=com.v2ray.ang)\n"
-            "2️⃣ **iOS (Streisand)**: [App Store](https://apps.apple.com/us/app/streisand/id6450534064)\n"
-            "3️⃣ **Windows (V2RayN)**: [GitHub](https://github.com/2dust/v2rayN/releases)\n\n"
-            "**نحوه اتصال:**\n"
-            "پس از خرید، از بخش «📊 سرویس من» لینک اشتراک را کپی و در کلاینت خود وارد کنید."
-        )
+    """Displays a menu of available guide sections to the user."""
+    sections = await db_manager.get_all_guide_sections()
+    
+    if not sections:
+        await update.message.reply_text("در حال حاضر هیچ راهنمایی تنظیم نشده است.")
+        return
+
+    buttons = [
+        InlineKeyboardButton(section['title'], callback_data=f"show_guide_{section['id']}")
+        for section in sections
+    ]
+    
+    # Use the helper to create a two-column layout
+    keyboard_layout = build_two_column_keyboard(buttons)
+    
     await update.message.reply_text(
-        guide_text,
-        parse_mode=ParseMode.MARKDOWN,
-        disable_web_page_preview=True
+        "📚 لطفاً یکی از راهنماهای زیر را انتخاب کنید:",
+        reply_markup=InlineKeyboardMarkup(keyboard_layout)
     )
 
+async def show_guide_section(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Shows the content of a selected guide section."""
+    query = update.callback_query
+    await query.answer()
+
+    try:
+        section_id = int(query.data.split('_')[-1])
+    except (ValueError, IndexError):
+        await query.edit_message_text("خطا: راهنمای نامعتبر.")
+        return
+
+    section = await db_manager.get_guide_section_by_id(section_id)
+    if not section:
+        await query.edit_message_text("خطا: این راهنما یافت نشد یا حذف شده است.")
+        return
+
+    # Delete the menu message for a cleaner UI
+    await query.message.delete()
+
+    photo_id = section.get('photo_id')
+    text = section.get('text') or "محتوایی برای این بخش تنظیم نشده است."
+    buttons = section.get('buttons', [])
+
+    keyboard = []
+    if buttons:
+        for button_data in buttons:
+            keyboard.append([InlineKeyboardButton(button_data['text'], url=button_data['url'])])
+    
+    reply_markup = InlineKeyboardMarkup(keyboard) if keyboard else None
+
+    if photo_id:
+        await context.bot.send_photo(
+            chat_id=query.message.chat_id,
+            photo=photo_id,
+            caption=text,
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=reply_markup
+        )
+    else:
+        await context.bot.send_message(
+            chat_id=query.message.chat_id,
+            text=text,
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=reply_markup,
+            disable_web_page_preview=True
+        )
+
+# ... (سایر توابع)
 async def show_my_id(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Shows the user their Telegram ID."""
     user_id = update.effective_user.id
     await update.message.reply_text(f"Your Telegram User ID is:\n`{user_id}`", parse_mode=ParseMode.MARKDOWN)
 
-# ===== VIEW SWITCHING LOGIC FOR ADMINS =====
-
 @admin_only
 async def switch_to_customer_view(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Switches the admin's keyboard to the customer panel."""
     await update.message.reply_text(
         "✅ شما اکنون در **نمای کاربری** هستید.",
-        reply_markup=get_customer_view_for_admin_keyboard(),
-        parse_mode=ParseMode.MARKDOWN
+        reply_markup=get_customer_view_for_admin_keyboard(), parse_mode=ParseMode.MARKDOWN
     )
 
 @admin_only
 async def switch_to_admin_view(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Switches the admin's keyboard back to the admin panel."""
     await update.message.reply_text(
         "✅ شما به **پنل ادمین** بازگشتید.",
-        reply_markup=get_admin_main_menu_keyboard(),
-        parse_mode=ParseMode.MARKDOWN
+        reply_markup=get_admin_main_menu_keyboard(), parse_mode=ParseMode.MARKDOWN
     )
-
-# ===== USER LINKING LOGIC (DEEP LINK) =====
-
+    
 async def handle_user_linking(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     from modules.marzban.actions.api import get_user_data
-    # --- FIX: Import the new specific function ---
-    from modules.marzban.actions.data_manager import load_users_map, link_user_to_telegram, normalize_username
-
+    from database.db_manager import add_user_to_managed_list
     user = update.effective_user
-    
     try:
         marzban_username_raw = context.args[0].split('-', 1)[1]
     except (IndexError, AttributeError):
-        await update.message.reply_text("لینک اتصال نامعتبر است یا منقضی شده.")
+        await update.message.reply_text("لینک اتصال نامعتبر است.")
         await start(update, context)
         return
-
     normalized_username = normalize_username(marzban_username_raw)
-    
-    loading_msg = await update.message.reply_text(f"در حال اعتبارسنجی و اتصال سرویس `{marzban_username_raw}`...")
-
-    # Step 1: Verify user exists in Marzban
+    loading_msg = await update.message.reply_text(f"در حال اتصال سرویس `{marzban_username_raw}`...")
     marzban_user_data = await get_user_data(normalized_username)
     if not marzban_user_data or "error" in marzban_user_data:
-        await loading_msg.edit_text(
-            f"❌ **خطا در اتصال** ❌\n\n"
-            f"سرویسی با نام `{marzban_username_raw}` در پنل یافت نشد.\n"
-            "لطفاً با پشتیبانی تماس بگیرید."
-        )
+        await loading_msg.edit_text(f"❌ **خطا:** سرویسی با نام `{marzban_username_raw}` در پنل یافت نشد.")
         return
-
-    # Step 2: Check if the Marzban account is already linked to ANOTHER Telegram account
-    users_map = await load_users_map()
-    if users_map.get(normalized_username) and users_map[normalized_username] != user.id:
-        await loading_msg.edit_text(
-            f"❌ **خطا** ❌\n\n"
-            f"این سرویس قبلاً به یک حساب تلگرام دیگر متصل شده است.\n"
-            "برای راهنمایی با پشتیبانی تماس بگیرید."
-        )
+    existing_link = await db_manager.get_telegram_id_from_marzban_username(normalized_username)
+    if existing_link and existing_link != user.id:
+        await loading_msg.edit_text("❌ **خطا:** این سرویس قبلاً به حساب تلگرام دیگری متصل شده است.")
         return
-
-    # --- FIX: Use the new, efficient database function ---
-    # Step 3: Link the user and save the data
-    success = await link_user_to_telegram(normalized_username, user.id)
-    if not success:
-        await loading_msg.edit_text("❌ **خطای پایگاه داده** ❌\n\nدر حین ذخیره اطلاعات خطایی رخ داد. لطفاً با پشتیبانی تماس بگیرید.")
+    success_link = await link_user_to_telegram(normalized_username, user.id)
+    if not success_link:
+        await loading_msg.edit_text("❌ **خطای پایگاه داده:** لطفاً با پشتیبانی تماس بگیرید.")
         return
-    # --- END OF FIX ---
-
-    await loading_msg.edit_text(
-        f"✅ حساب شما با موفقیت به سرویس `{normalized_username}` متصل شد!\n\n"
-        "اکنون می‌توانید از دکمه «📊 سرویس من» برای مدیریت اشتراک خود استفاده کنید.",
-        parse_mode=ParseMode.MARKDOWN
-    )
-
-    # Step 4: Notify admins
-    admin_message = (
-        f"✅ **اتصال موفق** ✅\n\n"
-        f"کاربر مرzban `{normalized_username}` به پروفایل تلگرام زیر متصل شد:\n\n"
-        f"👤 **کاربر:** {user.full_name}\n"
-        f"🆔 **Telegram ID:** `{user.id}`"
-    )
-    if user.username:
-        admin_message += f"\n**Username:** @{user.username}"
-
+    await add_user_to_managed_list(normalized_username)
+    await loading_msg.edit_text(f"✅ حساب شما با موفقیت به سرویس `{normalized_username}` متصل شد!")
+    admin_message = f"✅ **اتصال موفق:** کاربر `{normalized_username}` به {user.mention_markdown_v2()} متصل شد\."
     for admin_id in config.AUTHORIZED_USER_IDS:
         try:
-            await context.bot.send_message(
-                chat_id=admin_id,
-                text=admin_message,
-                parse_mode=ParseMode.MARKDOWN
-            )
+            await context.bot.send_message(chat_id=admin_id, text=admin_message, parse_mode=ParseMode.MARKDOWN_V2)
         except Exception as e:
-            LOGGER.error(f"Failed to send linking notification to admin {admin_id}: {e}", exc_info=True)
-
+            LOGGER.error(f"Failed to send linking notification to admin {admin_id}: {e}")
     await start(update, context)
+
+async def get_maintenance_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    message_text = (
+        "🛠 **ربات در حال تعمیر و به‌روزرسانی است** 🛠\n\n"
+        "در حال حاضر امکان پاسخگویی وجود ندارد. لطفاً کمی بعد دوباره تلاش کنید.\n\n"
+        "از شکیبایی شما سپاسگزاریم."
+    )
+    if update.message:
+        await update.message.reply_text(message_text, parse_mode=ParseMode.MARKDOWN)
+    elif update.callback_query:
+        await update.callback_query.answer(message_text, show_alert=True)

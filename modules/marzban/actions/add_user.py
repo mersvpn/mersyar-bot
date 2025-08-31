@@ -1,3 +1,5 @@
+# FILE: modules/marzban/actions/add_user.py (FIXED WITH LAZY IMPORTS)
+
 import datetime
 import qrcode
 import io
@@ -5,29 +7,38 @@ import logging
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardRemove
 from telegram.ext import ContextTypes, ConversationHandler
 from telegram.constants import ParseMode
+from shared.log_channel import send_log
+from telegram.helpers import escape_markdown
 
 from .constants import (
     ADD_USER_USERNAME, ADD_USER_DATALIMIT, ADD_USER_EXPIRE, ADD_USER_CONFIRM,
     GB_IN_BYTES
 )
-from .data_manager import (
-    load_template_config, load_users_map, save_users_map, normalize_username
-)
+# --- START OF FIX: The global import from db_manager is removed ---
+# from database.db_manager import (
+#     load_template_config_db, link_user_to_telegram, save_user_note
+# )
+# --- END OF FIX ---
+
 from shared.keyboards import get_user_management_keyboard
 from shared.callbacks import cancel_conversation
 from .api import create_user_api, get_user_data
-from modules.auth import admin_only_conv
+from .data_manager import normalize_username
 
 LOGGER = logging.getLogger(__name__)
 
-@admin_only_conv
 async def add_user_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    # --- LAZY IMPORT ---
+    from database.db_manager import load_template_config_db
+    # --- END LAZY IMPORT ---
+    
     context.user_data.pop('customer_user_id', None)
-    template_config = await load_template_config()
+    
+    template_config = await load_template_config_db()
     LOGGER.info(f"[Add User] Admin {update.effective_user.id} starting manual user creation.")
 
     if not template_config.get("template_username"):
-        LOGGER.warning("[Add User] Template check failed: 'template_username' not found.")
+        LOGGER.warning("[Add User] Template check failed: 'template_username' not found in DB.")
         await update.message.reply_text(
             "❌ **خطا: الگوی کاربری تنظیم نشده است.**\n"
             "لطفاً ابتدا یک کاربر را از طریق دکمه «⚙️ تنظیم کاربر الگو» به عنوان الگو انتخاب کنید.",
@@ -43,18 +54,21 @@ async def add_user_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     context.user_data['new_user'] = {}
     return ADD_USER_USERNAME
 
-@admin_only_conv
 async def add_user_for_customer_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    # --- LAZY IMPORT ---
+    from database.db_manager import load_template_config_db
+    # --- END LAZY IMPORT ---
+
     query = update.callback_query
     await query.answer()
     customer_user_id = int(query.data.split('_')[-1])
     context.user_data['customer_user_id'] = customer_user_id
 
-    template_config = await load_template_config()
+    template_config = await load_template_config_db()
     LOGGER.info(f"[Add User] Starting creation for customer {customer_user_id}.")
 
     if not template_config.get("template_username"):
-        LOGGER.warning("[Add User] Template check failed for customer request.")
+        LOGGER.warning("[Add User] Template check failed for customer request in DB.")
         await query.message.reply_text("❌ **خطا: الگوی کاربری تنظیم نشده است.**", parse_mode=ParseMode.MARKDOWN)
         return ConversationHandler.END
 
@@ -129,73 +143,80 @@ async def add_user_get_expire(update: Update, context: ContextTypes.DEFAULT_TYPE
         await update.message.reply_text("❌ ورودی نامعتبر. لطفاً فقط عدد صحیح و مثبت (یا صفر) وارد کنید.")
         return ADD_USER_EXPIRE
 
+# ==================== REPLACE THIS FUNCTION in modules/marzban/actions/add_user.py ====================
 async def add_user_create(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    from . import display
-    from database import db_manager # Use the main db_manager
+    import copy
+    from database.db_manager import (
+        load_template_config_db, link_user_to_telegram, save_user_note,
+        add_user_to_managed_list  # <-- وارد کردن تابع جدید
+    )
 
     query = update.callback_query
     await query.answer()
+    
+    admin_user = update.effective_user
 
-    template_config = await load_template_config()
+    template_config = await load_template_config_db()
     if not template_config.get("template_username"):
         await query.edit_message_text("❌ **خطا: الگوی کاربری تنظیم نشده است.**", parse_mode=ParseMode.MARKDOWN)
-        return await cancel_conversation(update, context)
+        context.user_data.clear()
+        return ConversationHandler.END
 
     user_info = context.user_data.get('new_user')
     if not user_info:
         await query.edit_message_text("خطا: اطلاعات کاربر در حافظه موقت یافت نشد.")
-        return await cancel_conversation(update, context)
+        context.user_data.clear()
+        return ConversationHandler.END
 
-    await query.edit_message_text(f"در حال ساخت کاربر `{user_info['username']}` در پنل مرزبان...")
+    await query.edit_message_text(f"در حال ساخت کاربر `{user_info['username']}` در پنل مرزبان...", parse_mode=ParseMode.MARKDOWN)
 
-    data_limit = user_info['data_limit_gb'] * GB_IN_BYTES if user_info['data_limit_gb'] > 0 else 0
+    data_limit_gb = user_info['data_limit_gb']
+    data_limit = data_limit_gb * GB_IN_BYTES if data_limit_gb > 0 else 0
     expire_days = user_info['expire_days']
     expire = int((datetime.datetime.now() + datetime.timedelta(days=expire_days)).timestamp()) if expire_days > 0 else 0
     
-    proxies_from_template = template_config.get('proxies', {})
-    if 'vless' in proxies_from_template and 'id' in proxies_from_template['vless']:
-        del proxies_from_template['vless']['id']
+    proxies_from_template = copy.deepcopy(template_config.get('proxies', {}))
+    if 'vless' in proxies_from_template and 'id' in proxies_from_template['vless']: del proxies_from_template['vless']['id']
+    if 'vmess' in proxies_from_template and 'id' in proxies_from_template['vmess']: del proxies_from_template['vmess']['id']
     
-    payload = {
-        "username": user_info['username'],
-        "inbounds": template_config.get('inbounds', {}),
-        "expire": expire,
-        "data_limit": data_limit,
-        "proxies": proxies_from_template,
-        "data_limit_reset_strategy": "no_reset",
-        "status": "active"
-    }
+    payload = { "username": user_info['username'], "inbounds": template_config.get('inbounds', {}), "expire": expire, "data_limit": data_limit, "proxies": proxies_from_template, "status": "active" }
     
     success, result = await create_user_api(payload)
     
     if success:
         new_user_data = result
         marzban_username = user_info['username']
+        normalized_username = normalize_username(marzban_username)
 
-        # --- FIX: Correctly save the subscription duration to the database ---
-        note_query = """
-            INSERT INTO user_notes (username, note, subscription_duration)
-            VALUES (%s, %s, %s)
-            ON DUPLICATE KEY UPDATE
-            note = VALUES(note),
-            subscription_duration = VALUES(subscription_duration);
-        """
-        # We insert an empty note '' and the duration
-        await db_manager.execute_query(note_query, (normalize_username(marzban_username), '', expire_days))
-        # --- END OF FIX ---
+        # --- ثبت مالکیت کاربر ---
+        await add_user_to_managed_list(normalized_username)
+        # --- پایان ثبت مالکیت ---
+        
+        note_data = {
+            'subscription_duration': expire_days, 
+            'subscription_data_limit_gb': data_limit_gb,
+            'subscription_price': 0
+        }
+        await save_user_note(normalized_username, note_data)
+        
+        admin_mention = escape_markdown(admin_user.full_name, version=2)
+        safe_username = escape_markdown(marzban_username, version=2)
+        log_message = (
+            f"➕ *اشتراک جدید ایجاد شد*\n\n"
+            f"▫️ **نام کاربری:** `{safe_username}`\n"
+            f"▫️ **حجم:** {data_limit_gb} GB\n"
+            f"▫️ **مدت:** {expire_days} روز\n"
+            f"👤 **توسط ادمین:** {admin_mention}"
+        )
+        await send_log(context.bot, log_message, parse_mode=ParseMode.MARKDOWN_V2)
 
         customer_id = context.user_data.get('customer_user_id')
-        
-        users_map = await load_users_map()
-        users_map[normalize_username(marzban_username)] = customer_id if customer_id else update.effective_user.id
-        await save_users_map(users_map)
-        
         if customer_id:
+            await link_user_to_telegram(normalized_username, customer_id)
             subscription_url = new_user_data.get('subscription_url', '')
             if subscription_url:
-                customer_message = (f"🎉 اشتراک شما با موفقیت ساخته شد! 🎉\n\n"
-                                    f"می‌توانید با کپی کردن لینک زیر یا اسکن QR Code، کانفیگ را به کلاینت خود اضافه کنید:\n\n"
-                                    f"`{subscription_url}`")
+                customer_message = (f"🎉 اشتراک شما با موفقیت ساخته شد!\n\n"
+                                    f"لینک اشتراک:\n`{subscription_url}`")
                 qr_image = qrcode.make(subscription_url)
                 bio = io.BytesIO()
                 bio.name = 'qrcode.png'
@@ -204,28 +225,24 @@ async def add_user_create(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 try:
                     await context.bot.send_photo(chat_id=customer_id, photo=bio, caption=customer_message, parse_mode=ParseMode.MARKDOWN)
                     callback_string = f"fin_send_req:{customer_id}:{marzban_username}"
-                    admin_keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("💰 ارسال اطلاعات پرداخت به مشتری", callback_data=callback_string)]])
+                    admin_keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("💰 ارسال اطلاعات پرداخت", callback_data=callback_string)]])
                     await context.bot.send_message(chat_id=update.effective_user.id, text=f"پیام حاوی کانفیگ برای مشتری {customer_id} ارسال شد.", reply_markup=admin_keyboard)
                 except Exception as e:
-                    LOGGER.warning(f"User created, but failed to send message to customer {customer_id}: {e}", exc_info=True)
-                    await context.bot.send_message(chat_id=update.effective_user.id, text=f"⚠️ کاربر ساخته شد، اما ارسال پیام به مشتری با خطا مواجه شد.\n`{subscription_url}`")
+                    LOGGER.warning(f"Failed to send message to customer {customer_id}: {e}")
+                    await context.bot.send_message(chat_id=update.effective_user.id, text=f"⚠️ کاربر ساخته شد, اما ارسال پیام به مشتری خطا داد.\n`{subscription_url}`")
         
-        class FakeCallbackQuery:
-            def __init__(self, original_query, data):
-                self.message = original_query.message
-                self.data = data
-                self.answer = original_query.answer
-                self.edit_message_text = original_query.edit_message_text
-        
-        fake_query = FakeCallbackQuery(query, f"user_details_{marzban_username}")
-        fake_update = Update(update.update_id, callback_query=fake_query)
-        await display.show_user_details(fake_update, context)
+        keyboard = InlineKeyboardMarkup([[
+            InlineKeyboardButton("مشاهده جزئیات کاربر", callback_data=f"user_details_{marzban_username}_all_1")
+        ]])
+        await query.edit_message_text(f"✅ کاربر `{marzban_username}` با موفقیت ساخته شد.", reply_markup=keyboard, parse_mode=ParseMode.MARKDOWN)
+
     else:
         error_message = f"❌ **خطا در ساخت کاربر:**\n\n`{result}`"
         await query.edit_message_text(error_message, parse_mode=ParseMode.MARKDOWN)
     
     context.user_data.clear()
     return ConversationHandler.END
+# ======================================================================================================
 
 async def cancel_add_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query

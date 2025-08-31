@@ -37,3 +37,31 @@ async def cancel_conversation(update: Update, context: ContextTypes.DEFAULT_TYPE
         reply_markup=get_admin_main_menu_keyboard()
     )
     return ConversationHandler.END
+
+# ==================== ADD THIS NEW FUNCTION to shared/callbacks.py ====================
+from .keyboards import get_helper_tools_keyboard
+
+async def cancel_to_helper_tools(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """
+    Cancels a conversation and returns the user to the helper tools menu.
+    """
+    LOGGER.debug(f"Conversation cancelled by user {update.effective_user.id}, returning to helper tools.")
+    context.user_data.clear()
+
+    message_text = "عملیات لغو شد."
+    target_message = update.message or (update.callback_query and update.callback_query.message)
+
+    if update.callback_query:
+        await update.callback_query.answer()
+        try:
+            await update.callback_query.message.delete()
+        except Exception as e:
+            LOGGER.warning(f"Could not delete message on cancel: {e}")
+    
+    await context.bot.send_message(
+        chat_id=target_message.chat_id,
+        text=f"{message_text}\nبه منوی ابزارهای کمکی بازگشتید.",
+        reply_markup=get_helper_tools_keyboard()
+    )
+    return ConversationHandler.END
+# =======================================================================================

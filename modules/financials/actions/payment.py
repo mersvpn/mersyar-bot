@@ -1,5 +1,5 @@
 # FILE: modules/financials/actions/payment.py
-# (نسخه کامل و نهایی با تمام توابع و فاصله‌گذاری صحیح)
+# (نسخه نهایی با حذف دکمه‌های کپی و بهبود متن و توابع جدید تایید رسید)
 
 import logging
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
@@ -17,6 +17,8 @@ from config import config
 LOGGER = logging.getLogger(__name__)
 
 GET_PRICE = 0
+
+# ... (تمام توابع قبلی از start_payment_request تا send_manual_invoice بدون تغییر باقی می‌مانند) ...
 
 async def start_payment_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
@@ -64,7 +66,6 @@ async def send_payment_details_to_user(update: Update, context: ContextTypes.DEF
     financials = await load_financials()
     card_holder = financials.get("card_holder")
     card_number = financials.get("card_number")
-    extra_text = "راهنمای پرداخت"
 
     if not all([card_holder, card_number]):
         await update.message.reply_text(
@@ -76,18 +77,19 @@ async def send_payment_details_to_user(update: Update, context: ContextTypes.DEF
     try:
         payment_message = (
             f"**پرداخت هزینه اشتراک**\n\n"
-            f"مبلغ قابل پرداخت: **{formatted_price} تومان**\n\n"
+            f"مبلغ قابل پرداخت: `{formatted_price}` تومان\n"
             f"▫️ **نام صاحب حساب:** {card_holder}\n"
             f"▫️ **شماره کارت:** `{card_number}`\n\n"
-            f"_{extra_text}_\n\n"
-            "⚠️ لطفاً پس از پرداخت، **عکس رسید** را در همین گفتگو ارسال نمایید."
+            "_💡 با کلیک بر روی شماره کارت و مبلغ، می‌توانید آن‌ها را کپی کنید._\n\n"
+            "⚠️ لطفاً پس از پرداخت، با استفاده از دکمه زیر رسید خود را ارسال نمایید."
         )
         keyboard = InlineKeyboardMarkup([
             [
-                InlineKeyboardButton("💳 کپی شماره کارت", callback_data=f"copy_text:{card_number}"),
-                InlineKeyboardButton("💰 کپی مبلغ", callback_data=f"copy_text:{price_int}")
+                InlineKeyboardButton("💳 ارسال رسید پرداخت", callback_data="start_receipt_upload")
             ],
-            [InlineKeyboardButton("🔙 بازگشت به منو", callback_data="payment_back_to_menu")]
+            [
+                InlineKeyboardButton("🔙 بازگشت به منو", callback_data="payment_back_to_menu")
+            ]
         ])
         
         await context.bot.send_message(
@@ -123,11 +125,10 @@ payment_request_conv = ConversationHandler(
     per_chat=True
 )
 
-async def send_renewal_invoice_to_user(context: ContextTypes.DEFAULT_TYPE, user_telegram_id: int, username: str, renewal_days: int, price: int):
-    """
-    Sends an invoice to the user after the admin renews their service.
-    This version has updated text and a direct action button.
-    """
+async def send_renewal_invoice_to_user(context: ContextTypes.DEFAULT_TYPE, user_telegram_id: int, username: str, renewal_days: int, price: int, data_limit_gb: int):
+    from telegram.helpers import escape_markdown
+    from telegram.error import Forbidden
+
     financials = await load_financials()
     card_holder = financials.get("card_holder", "تنظیم نشده")
     card_number = financials.get("card_number", "تنظیم نشده")
@@ -136,14 +137,20 @@ async def send_renewal_invoice_to_user(context: ContextTypes.DEFAULT_TYPE, user_
         LOGGER.warning(f"Attempted to send invoice for {username} but financials are not set.")
         return
 
-    formatted_price = f"{price:,}"
+    safe_username = escape_markdown(username, version=2)
+    safe_days = escape_markdown(str(renewal_days), version=2)
+    safe_price = escape_markdown(f"{price:,}", version=2)
+    safe_card_number = escape_markdown(card_number, version=2)
+    safe_card_holder = escape_markdown(card_holder, version=2)
+    safe_data_limit = escape_markdown(str(data_limit_gb), version=2)
+
     invoice_text = (
-        f"✅ سرویس شما با نام کاربری `{username}` با موفقیت برای **{renewal_days} روز** دیگر تمدید شد.\n\n"
-        f"🧾 **صورتحساب:**\n"
-        f" - مبلغ قابل پرداخت: `{formatted_price}` تومان\n"
-        f" - شماره کارت: `{card_number}`\n"
-        f" - به نام: `{card_holder}`\n\n"
-        f"لطفاً پس از واریز، با استفاده از دکمه زیر، رسید خود را برای ما ارسال کنید."
+        f"✅ سرویس شما با نام کاربری `{safe_username}` با موفقیت برای *{safe_days} روز* دیگر تمدید شد و حجم آن به *{safe_data_limit} GB* افزایش یافت\.\n\n"
+        f"🧾 *صورتحساب:*\n"
+        f" \- مبلغ قابل پرداخت: `{safe_price}` تومان\n"
+        f" \- شماره کارت: `{safe_card_number}`\n"
+        f" \- به نام: `{safe_card_holder}`\n\n"
+        f"لطفاً پس از واریز، با استفاده از دکمه زیر، رسید خود را برای ما ارسال کنید\."
     )
     customer_keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("💳 ارسال رسید پرداخت", callback_data="start_receipt_upload")]
@@ -153,12 +160,16 @@ async def send_renewal_invoice_to_user(context: ContextTypes.DEFAULT_TYPE, user_
         await context.bot.send_message(
             chat_id=user_telegram_id,
             text=invoice_text,
-            parse_mode=ParseMode.MARKDOWN,
+            parse_mode=ParseMode.MARKDOWN_V2,
             reply_markup=customer_keyboard
         )
         LOGGER.info(f"Renewal invoice sent to user {user_telegram_id} for username {username}.")
+    except Forbidden:
+        LOGGER.info(f"Could not send renewal invoice to {user_telegram_id} because bot is blocked.")
+        raise
     except Exception as e:
         LOGGER.error(f"Failed to send renewal invoice to {user_telegram_id} for user {username}: {e}")
+        raise
 
 async def handle_copy_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
@@ -176,63 +187,103 @@ async def handle_payment_back_button(update: Update, context: ContextTypes.DEFAU
     )
 
 async def send_manual_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    Sends a pre-filled invoice to a customer based on their saved subscription details.
-    Triggered by the admin from the user details panel.
-    """
+    query = update.callback_query
+    await query.answer()
+    username = query.data.split('_', 2)[-1]
+    admin_chat_id = update.effective_chat.id
+    try:
+        from database.db_manager import get_user_note, get_telegram_id_from_marzban_username
+        from modules.marzban.actions.data_manager import normalize_username
+        
+        customer_id = await get_telegram_id_from_marzban_username(normalize_username(username))
+        if not customer_id:
+            await context.bot.send_message(admin_chat_id, f"❌ **خطا:** کاربر تلگرام برای `{username}` یافت نشد.", parse_mode=ParseMode.MARKDOWN)
+            return
+        note_data = await get_user_note(normalize_username(username))
+        price = note_data.get('subscription_price')
+        duration = note_data.get('subscription_duration')
+        if not price or not duration:
+            await context.bot.send_message(admin_chat_id, f"❌ **خطا:** اطلاعات اشتراک برای `{username}` ثبت نشده است.", parse_mode=ParseMode.MARKDOWN)
+            return
+        financials = await load_financials()
+        card_holder = financials.get("card_holder", "تنظیم نشده")
+        card_number = financials.get("card_number", "تنظیم نشده")
+        if card_number == "تنظیم نشده":
+            await context.bot.send_message(admin_chat_id, "❌ **خطا:** اطلاعات مالی تنظیم نشده است.", parse_mode=ParseMode.MARKDOWN)
+            return
+        formatted_price = f"{price:,}"
+        invoice_text = (
+            f"🧾 **صورتحساب اشتراک**\n\n"
+            f"▫️ **سرویس:** `{username}`\n▫️ **دوره:** {duration} روزه\n"
+            f"▫️ **مبلغ قابل پرداخت:** `{formatted_price}` تومان\n\n"
+            f"**پرداخت به:**\n - شماره کارت: `{card_number}`\n - به نام: `{card_holder}`\n\n"
+            "_💡 با کلیک بر روی شماره کارت و مبلغ، می‌توانید آن‌ها را کپی کنید._\n\n"
+            f"لطفاً پس از واریز، با استفاده از دکمه زیر، رسید خود را برای ما ارسال کنید."
+        )
+        keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("💳 ارسال رسید پرداخت", callback_data="start_receipt_upload")]])
+        await context.bot.send_message(chat_id=customer_id, text=invoice_text, parse_mode=ParseMode.MARKDOWN, reply_markup=keyboard)
+        await context.bot.send_message(admin_chat_id, f"✅ صورتحساب با موفقیت برای کاربر `{username}` (ID: {customer_id}) ارسال شد.", parse_mode=ParseMode.MARKDOWN)
+    except Exception as e:
+        LOGGER.error(f"Failed to send manual invoice for user {username}: {e}", exc_info=True)
+        try:
+            await context.bot.send_message(admin_chat_id, f"❌ **خطای ناشناخته**.", parse_mode=ParseMode.MARKDOWN)
+        except Exception as notify_error:
+            LOGGER.error(f"Failed to even notify admin about the invoice failure: {notify_error}")
+
+# ==================== START: NEW FUNCTIONS FOR RECEIPT HANDLING ====================
+async def approve_payment(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handles the 'Approve Payment' button click from an admin."""
     query = update.callback_query
     await query.answer()
 
-    username = query.data.split('_', 2)[-1]
-
-    from modules.marzban.actions.data_manager import load_users_map, normalize_username
-    users_map = await load_users_map()
-    customer_id = users_map.get(normalize_username(username))
-    if not customer_id:
-        await query.answer(f"❌ کاربر تلگرام برای {username} یافت نشد.", show_alert=True)
+    try:
+        customer_id = int(query.data.split('_')[-1])
+    except (IndexError, ValueError):
+        await query.edit_message_caption(caption=query.message.caption + "\n\n❌ **خطا:** آیدی کاربر نامعتبر است.")
         return
-
-    from database.db_manager import get_user_note
-    note_data = await get_user_note(normalize_username(username))
-    price = note_data.get('subscription_price')
-    duration = note_data.get('subscription_duration')
-
-    if not price or not duration:
-        await query.answer("❌ اطلاعات اشتراک (قیمت و مدت) برای این کاربر ثبت نشده است.", show_alert=True)
-        return
-
-    financials = await load_financials()
-    card_holder = financials.get("card_holder", "تنظیم نشده")
-    card_number = financials.get("card_number", "تنظیم نشده")
-    
-    if card_number == "تنظیم نشده":
-        await query.answer("❌ اطلاعات مالی (شماره کارت) در ربات تنظیم نشده است.", show_alert=True)
-        return
-
-    formatted_price = f"{price:,}"
-    invoice_text = (
-        f"🧾 **صورتحساب اشتراک**\n\n"
-        f"▫️ **سرویس:** `{username}`\n"
-        f"▫️ **دوره:** {duration} روزه\n"
-        f"▫️ **مبلغ قابل پرداخت:** `{formatted_price}` تومان\n\n"
-        f"**پرداخت به:**\n"
-        f" - شماره کارت: `{card_number}`\n"
-        f" - به نام: `{card_holder}`\n\n"
-        f"لطفاً پس از واریز، با استفاده از دکمه زیر، رسید خود را برای ما ارسال کنید."
-    )
-    
-    keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("💳 ارسال رسید پرداخت", callback_data="start_receipt_upload")]
-    ])
 
     try:
         await context.bot.send_message(
             chat_id=customer_id,
-            text=invoice_text,
-            parse_mode=ParseMode.MARKDOWN,
-            reply_markup=keyboard
+            text="✅ پرداخت شما توسط ادمین تایید شد. از خرید شما سپاسگزاریم!"
         )
-        await query.answer("✅ صورتحساب با موفقیت برای کاربر ارسال شد.", show_alert=True)
+        # Remove the buttons and update the caption for the admin
+        await query.edit_message_caption(
+            caption=query.message.caption + "\n\n**✅ پرداخت تایید شد.**",
+            parse_mode=ParseMode.MARKDOWN
+        )
     except Exception as e:
-        LOGGER.error(f"Failed to send manual invoice to customer {customer_id} for user {username}: {e}")
-        await query.answer(f"❌ خطا در ارسال پیام به کاربر. (ID: {customer_id})", show_alert=True)
+        LOGGER.error(f"Failed to notify customer {customer_id} about payment approval: {e}")
+        await query.edit_message_caption(
+            caption=query.message.caption + f"\n\n**⚠️ خطا در ارسال پیام به کاربر (ID: {customer_id}).**",
+            parse_mode=ParseMode.MARKDOWN
+        )
+
+async def reject_payment(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handles the 'Reject Payment' button click from an admin."""
+    query = update.callback_query
+    await query.answer()
+    
+    try:
+        customer_id = int(query.data.split('_')[-1])
+    except (IndexError, ValueError):
+        await query.edit_message_caption(caption=query.message.caption + "\n\n❌ **خطا:** آیدی کاربر نامعتبر است.")
+        return
+
+    try:
+        await context.bot.send_message(
+            chat_id=customer_id,
+            text="❌ متاسفانه پرداخت شما توسط ادمین رد شد. لطفاً با پشتیبانی تماس بگیرید."
+        )
+        # Remove the buttons and update the caption for the admin
+        await query.edit_message_caption(
+            caption=query.message.caption + "\n\n**❌ پرداخت رد شد.**",
+            parse_mode=ParseMode.MARKDOWN
+        )
+    except Exception as e:
+        LOGGER.error(f"Failed to notify customer {customer_id} about payment rejection: {e}")
+        await query.edit_message_caption(
+            caption=query.message.caption + f"\n\n**⚠️ خطا در ارسال پیام به کاربر (ID: {customer_id}).**",
+            parse_mode=ParseMode.MARKDOWN
+        )
+# ===================== END: NEW FUNCTIONS FOR RECEIPT HANDLING =====================

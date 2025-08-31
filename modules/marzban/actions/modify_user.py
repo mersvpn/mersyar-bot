@@ -1,45 +1,66 @@
-# ===== IMPORTS & DEPENDENCIES =====
+# FILE: modules/marzban/actions/modify_user.py (نسخه نهایی کامل و صحیح)
+
 import datetime
 import logging
-
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import ContextTypes, ConversationHandler
 from telegram.constants import ParseMode
+from shared.log_channel import send_log
+from telegram.helpers import escape_markdown
 
-# --- Local Imports ---
+# وارد کردن تابع جدید از ماژول display
+from .display import show_user_details_panel
 from modules.financials.actions.payment import send_renewal_invoice_to_user
-from .constants import ADD_DATA_PROMPT, ADD_DAYS_PROMPT, GB_IN_BYTES, DEFAULT_RENEW_DAYS
-from shared.keyboards import get_user_management_keyboard
-from .data_manager import load_users_map, save_users_map, normalize_username
+from .constants import GB_IN_BYTES, DEFAULT_RENEW_DAYS
+from .data_manager import normalize_username
 from .api import (
     get_user_data, modify_user_api, delete_user_api,
-    reset_user_traffic_api, reset_subscription_url_api
+    reset_user_traffic_api
 )
 
-# --- SETUP ---
 LOGGER = logging.getLogger(__name__)
 
-# --- ADMIN-FACING DELETION HANDLERS ---
+ADD_DAYS_PROMPT, ADD_DATA_PROMPT = range(2)
+
+
+# ==================== مدیریت درخواست حذف از طرف مشتری (توابع بازگردانده شده) ====================
 async def admin_confirm_delete(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    from database.db_manager import cleanup_marzban_user_data
     query = update.callback_query
     await query.answer()
+    
+    admin_user = update.effective_user
     parts = query.data.split('_')
     username, customer_id = parts[3], int(parts[4])
-    await query.edit_message_text(f"در حال حذف سرویس `{username}`...", parse_mode=ParseMode.MARKDOWN)
+    
+    await query.edit_message_text(f"در حال حذف کانفیگ `{username}` از پنل مرزبان...", parse_mode=ParseMode.MARKDOWN)
+    
     success, message = await delete_user_api(username)
     if success:
-        users_map = await load_users_map()
-        if username in users_map:
-            del users_map[username]
-            await save_users_map(users_map)
-        await query.edit_message_text(f"✅ سرویس `{username}` با موفقیت حذف شد.", parse_mode=ParseMode.MARKDOWN)
+        await cleanup_marzban_user_data(username)
+        
+        # --- بخش اصلاح شده نهایی ---
+        admin_name = admin_user.full_name
+        admin_mention = escape_markdown(admin_name, version=2).replace('(', '\\(').replace(')', '\\)')
+        safe_username = escape_markdown(username, version=2)
+        
+        log_message = (
+            f"🗑️ *اشتراک حذف شد (بنا به درخواست مشتری)*\n\n"
+            f"▫️ **نام کاربری:** `{safe_username}`\n"
+            f"👤 **تایید شده توسط ادمین:** {admin_mention}"
+        )
+        await send_log(context.bot, log_message, parse_mode=ParseMode.MARKDOWN_V2)
+        # --- پایان اصلاح ---
+
+        await query.edit_message_text(f"✅ کانفیگ `{username}` و تمام اطلاعات مرتبط با آن با موفقیت حذف شد.", parse_mode=ParseMode.MARKDOWN)
         try:
-            await context.bot.send_message(chat_id=customer_id, text=f"✅ سرویس `{username}` شما طبق درخواستتان حذف شد.", parse_mode=ParseMode.MARKDOWN)
+            await context.bot.send_message(chat_id=customer_id, text=f"✅ سرویس `{username}` شما طبق درخواستتان حذف شد.")
         except Exception as e:
-            LOGGER.warning(f"User {username} deleted, but failed to notify customer {customer_id}: {e}")
-            await query.message.reply_text(f"⚠️ کاربر حذف شد، اما ارسال پیام به مشتری (ID: {customer_id}) خطا داد.")
+            LOGGER.warning(f"Config deleted, but failed to notify customer {customer_id}: {e}")
+            await query.message.reply_text(f"⚠️ کانفیگ حذف شد، اما ارسال پیام به مشتری (ID: {customer_id}) خطا داد.")
     else:
-        await query.edit_message_text(f"❌ خطا در حذف: {message}", parse_mode=ParseMode.MARKDOWN)
+        await query.edit_message_text(f"❌ خطا در حذف از پنل مرزبان: {message}", parse_mode=ParseMode.MARKDOWN)
+
 
 async def admin_reject_delete(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
@@ -48,177 +69,308 @@ async def admin_reject_delete(update: Update, context: ContextTypes.DEFAULT_TYPE
     username, customer_id = parts[3], int(parts[4])
     await query.edit_message_text(f"❌ درخواست حذف سرویس `{username}` توسط شما رد شد.", parse_mode=ParseMode.MARKDOWN)
     try:
-        await context.bot.send_message(chat_id=customer_id, text=f"❌ درخواست شما برای حذف سرویس `{username}` توسط ادمین رد شد.", parse_mode=ParseMode.MARKDOWN)
+        await context.bot.send_message(chat_id=customer_id, text=f"❌ درخواست شما برای حذف سرویس `{username}` توسط ادمین رد شد.")
     except Exception as e:
         LOGGER.warning(f"Deletion for {username} rejected, but failed to notify customer {customer_id}: {e}")
-        await query.message.reply_text(f"⚠️ درخواست رد شد، اما ارسال پیام به مشتری (ID: {customer_id}) خطا داد.")
 
-# ===== USER MODIFICATION ACTIONS (from admin panel) =====
+
+# ==================== مکالمه افزودن روز ====================
+async def prompt_for_add_days(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    username = query.data.split('_', 2)[-1]
+    context.user_data['modify_user_info'] = {
+        'username': username,
+        'chat_id': query.message.chat_id,
+        'message_id': query.message.message_id,
+        'list_type': context.user_data.get('current_list_type', 'all'),
+        'page_number': context.user_data.get('current_page', 1)
+    }
+    await query.answer()
+    await query.edit_message_text(
+        text=f"🗓️ لطفاً تعداد روزهایی که می‌خواهید به اشتراک کاربر `{username}` اضافه شود را وارد کنید:",
+        parse_mode=ParseMode.MARKDOWN
+    )
+    return ADD_DAYS_PROMPT
+
+async def do_add_days(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    modify_info = context.user_data.get('modify_user_info')
+    if not modify_info:
+        await update.message.reply_text("خطا: اطلاعات گفتگو منقضی شده. لطفاً دوباره امتحان کنید.")
+        return ConversationHandler.END
+
+    try:
+        days_to_add = int(update.message.text)
+        if days_to_add <= 0:
+            await update.message.reply_text("❌ لطفاً یک عدد مثبت وارد کنید.")
+            return ADD_DAYS_PROMPT
+    except (ValueError, TypeError):
+        await update.message.reply_text("❌ ورودی نامعتبر است. لطفاً فقط عدد وارد کنید.")
+        return ADD_DAYS_PROMPT
+
+    await update.message.delete()
+    
+    username = modify_info['username']
+    user_data = await get_user_data(username)
+    if not user_data:
+        await context.bot.edit_message_text(
+            chat_id=modify_info['chat_id'], message_id=modify_info['message_id'],
+            text=f"❌ خطا: اطلاعات کاربر `{username}` یافت نشد."
+        )
+        return ConversationHandler.END
+
+    current_expire_ts = user_data.get('expire') or 0
+    now_ts = datetime.datetime.now().timestamp()
+    start_date_ts = max(current_expire_ts, now_ts)
+    new_expire_date = datetime.datetime.fromtimestamp(start_date_ts) + datetime.timedelta(days=days_to_add)
+    
+    success, message = await modify_user_api(username, {"expire": int(new_expire_date.timestamp())})
+    
+    success_msg = f"✅ با موفقیت {days_to_add} روز به اشتراک اضافه شد." if success else f"❌ خطا در افزودن روز: {message}"
+
+    await show_user_details_panel(context=context, **modify_info, success_message=success_msg)
+    
+    context.user_data.pop('modify_user_info', None)
+    return ConversationHandler.END
+
+
+# ==================== مکالمه افزایش حجم ====================
+async def prompt_for_add_data(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    username = query.data.split('_', 2)[-1]
+    context.user_data['modify_user_info'] = {
+        'username': username,
+        'chat_id': query.message.chat_id,
+        'message_id': query.message.message_id,
+        'list_type': context.user_data.get('current_list_type', 'all'),
+        'page_number': context.user_data.get('current_page', 1)
+    }
+    await query.answer()
+    await query.edit_message_text(
+        text=f"➕ لطفاً مقدار حجمی که می‌خواهید به کاربر `{username}` اضافه شود را به **گیگابایت (GB)** وارد کنید:",
+        parse_mode=ParseMode.MARKDOWN
+    )
+    return ADD_DATA_PROMPT
+
+async def do_add_data(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    modify_info = context.user_data.get('modify_user_info')
+    if not modify_info:
+        await update.message.reply_text("خطا: اطلاعات گفتگو منقضی شده. لطفاً دوباره امتحان کنید.")
+        return ConversationHandler.END
+
+    try:
+        gb_to_add = int(update.message.text)
+        if gb_to_add <= 0:
+            await update.message.reply_text("❌ لطفاً یک عدد مثبت وارد کنید.")
+            return ADD_DATA_PROMPT
+    except (ValueError, TypeError):
+        await update.message.reply_text("❌ ورودی نامعتبر است. لطفاً فقط عدد وارد کنید.")
+        return ADD_DATA_PROMPT
+
+    await update.message.delete()
+    
+    username = modify_info['username']
+    user_data = await get_user_data(username)
+    if not user_data:
+        await context.bot.edit_message_text(
+            chat_id=modify_info['chat_id'], message_id=modify_info['message_id'],
+            text=f"❌ خطا: اطلاعات کاربر `{username}` یافت نشد."
+        )
+        return ConversationHandler.END
+
+    current_data_limit = user_data.get('data_limit', 0)
+    new_data_limit = current_data_limit + (gb_to_add * GB_IN_BYTES)
+    
+    success, message = await modify_user_api(username, {"data_limit": new_data_limit})
+    
+    success_msg = f"✅ با موفقیت {gb_to_add} گیگابایت به حجم کل اضافه شد." if success else f"❌ خطا در افزایش حجم: {message}"
+    
+    await show_user_details_panel(context=context, **modify_info, success_message=success_msg)
+        
+    context.user_data.pop('modify_user_info', None)
+    return ConversationHandler.END
+
+
+# ==================== توابع مستقل (بدون مکالمه) ====================
 async def reset_user_traffic(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     username = query.data.split('_', 2)[-1]
-    await query.answer()
+    await query.answer(f"در حال ریست ترافیک کاربر {username}...")
+    
     success, message = await reset_user_traffic_api(username)
+    
+    success_msg = "✅ ترافیک کاربر با موفقیت صفر شد." if success else f"❌ خطا: {message}"
+
+    await show_user_details_panel(
+        context=context,
+        chat_id=query.message.chat_id,
+        message_id=query.message.message_id,
+        username=username,
+        list_type=context.user_data.get('current_list_type', 'all'),
+        page_number=context.user_data.get('current_page', 1),
+        success_message=success_msg
+    )
+
+async def confirm_delete_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    username = query.data.split('_', 1)[-1]
+    list_type = context.user_data.get('current_list_type', 'all')
+    page_number = context.user_data.get('current_page', 1)
+    await query.answer()
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("✅ بله، حذف کن", callback_data=f"do_delete_{username}")],
+        [InlineKeyboardButton("❌ خیر", callback_data=f"user_details_{username}_{list_type}_{page_number}")]
+    ])
+    await query.edit_message_text(f"⚠️ آیا از حذف کامل کانفیگ `{username}` مطمئن هستید؟ این عمل غیرقابل بازگشت است.", reply_markup=keyboard, parse_mode=ParseMode.MARKDOWN)
+
+async def do_delete_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    from database.db_manager import cleanup_marzban_user_data
+    query = update.callback_query
+    
+    admin_user = update.effective_user
+    username = query.data.split('_', 2)[-1]
+    
+    await query.answer()
+    await query.edit_message_text(f"در حال حذف `{username}` از پنل مرزبان...", parse_mode=ParseMode.MARKDOWN)
+    
+    success, message = await delete_user_api(username)
     if success:
-        back_button = InlineKeyboardButton("🔙 بازگشت", callback_data=f"user_details_{username}")
-        keyboard = InlineKeyboardMarkup([[back_button]])
-        await query.edit_message_text(f"✅ ترافیک مصرفی کاربر `{username}` صفر شد.", reply_markup=keyboard, parse_mode=ParseMode.MARKDOWN)
+        await cleanup_marzban_user_data(username)
+        
+        # --- بخش اصلاح شده نهایی ---
+        admin_name = admin_user.full_name
+        admin_mention = escape_markdown(admin_name, version=2).replace('(', '\\(').replace(')', '\\)')
+        safe_username = escape_markdown(username, version=2)
+        
+        log_message = (
+            f"🗑️ *اشتراک حذف شد (به صورت دستی توسط ادمین)*\n\n"
+            f"▫️ **نام کاربری:** `{safe_username}`\n"
+            f"👤 **توسط ادمین:** {admin_mention}"
+        )
+        await send_log(context.bot, log_message, parse_mode=ParseMode.MARKDOWN_V2)
+        # --- پایان اصلاح ---
+        
+        await query.edit_message_text(f"🗑 کانفیگ `{username}` و تمام اطلاعات مرتبط با آن با موفقیت حذف شد.", parse_mode=ParseMode.MARKDOWN)
     else:
-        await query.answer(f"❌ {message}", show_alert=True)
+        await query.edit_message_text(f"❌ {message}", parse_mode=ParseMode.MARKDOWN)
 
 
+# ==================== تابع تمدید هوشمند ====================
 async def renew_user_smart(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    # --- The import is changed to the new function ---
-    from database.db_manager import get_user_note
+    from database.db_manager import get_user_note, get_telegram_id_from_marzban_username
 
     query = update.callback_query
     username = query.data.split('_', 1)[-1]
-    await query.answer(f"در حال تمدید هوشمند کاربر {username}...")
+    admin_user = update.effective_user
+    await query.answer(f"در حال تمدید هوشمند کانفیگ {username}...")
 
     user_data = await get_user_data(username)
-    if not user_data or "error" in user_data:
-        await query.edit_message_text(f"❌ خطا: اطلاعات کاربر `{username}` یافت نشد یا خطای API رخ داد.")
+    if not user_data:
+        await query.edit_message_text(f"❌ خطا: اطلاعات کانفیگ `{username}` یافت نشد.", parse_mode=ParseMode.MARKDOWN)
         return
 
-    # --- Database Interaction using the new function ---
+    note_data = await get_user_note(normalize_username(username))
+    
     renewal_duration_days = DEFAULT_RENEW_DAYS
-    subscription_price = 0  # Default price if not found
-    note_data = await get_user_note(normalize_username(username)) # <-- Function call changed here
+    data_limit_gb = (user_data.get('data_limit') or 0) / GB_IN_BYTES
+    subscription_price = 0
+
     if note_data:
-        if note_data.get('subscription_duration'):
-            renewal_duration_days = note_data['subscription_duration']
-        if note_data.get('subscription_price'):
-            subscription_price = note_data['subscription_price']
-    # --- End of Database Interaction ---
+        renewal_duration_days = note_data.get('subscription_duration') or renewal_duration_days
+        if note_data.get('subscription_data_limit_gb') is not None:
+            data_limit_gb = note_data.get('subscription_data_limit_gb')
+        subscription_price = note_data.get('subscription_price') or 0
 
     await query.edit_message_text(f"در حال تمدید `{username}` (۱/۲: ریست ترافیک)...", parse_mode=ParseMode.MARKDOWN)
     success_reset, message_reset = await reset_user_traffic_api(username)
     if not success_reset:
-        await query.edit_message_text(f"⚠️ **تمدید ناموفق!**\n\nخطا در ریست ترافیک: `{message_reset}`", parse_mode=ParseMode.MARKDOWN)
+        await query.edit_message_text(f"⚠️ **تمدید ناموفق!** خطا در ریست ترافیک: `{message_reset}`", parse_mode=ParseMode.MARKDOWN)
         return
         
-    await query.edit_message_text(f"✅ ترافیک صفر شد.\nدر حال تمدید `{username}` (۲/۲: افزایش تاریخ)...", parse_mode=ParseMode.MARKDOWN)
+    await query.edit_message_text(f"✅ ترافیک صفر شد. در حال تمدید `{username}` (۲/۲: آپدیت حجم و تاریخ)...", parse_mode=ParseMode.MARKDOWN)
     
-    current_expire_ts = user_data.get('expire')
+    current_expire_ts = user_data.get('expire') or 0
     now_ts = datetime.datetime.now().timestamp()
+    start_date_ts = max(current_expire_ts, now_ts)
+    new_expire_date = datetime.datetime.fromtimestamp(start_date_ts) + datetime.timedelta(days=renewal_duration_days)
     
-    start_date_ts = current_expire_ts if current_expire_ts and current_expire_ts > now_ts else now_ts
-    start_date = datetime.datetime.fromtimestamp(start_date_ts)
+    payload_to_modify = {
+        "expire": int(new_expire_date.timestamp()),
+        "data_limit": int(data_limit_gb * GB_IN_BYTES)
+    }
     
-    new_expire_date = start_date + datetime.timedelta(days=renewal_duration_days)
-    new_expire_ts = int(new_expire_date.timestamp())
-
-    success_expire, message_expire = await modify_user_api(username, {"expire": new_expire_ts})
-    if not success_expire:
-        await query.edit_message_text(f"⚠️ **تمدید ناقص!**\n\nترافیک صفر شد، اما تاریخ تمدید نشد.\n**دلیل:** `{message_expire}`", parse_mode=ParseMode.MARKDOWN)
+    success_modify, message_modify = await modify_user_api(username, payload_to_modify)
+    if not success_modify:
+        await query.edit_message_text(f"⚠️ **تمدید ناقص!** ترافیک صفر شد، اما حجم و تاریخ آپدیت نشد. دلیل: `{message_modify}`", parse_mode=ParseMode.MARKDOWN)
         return
         
-    data_limit_gb = (user_data.get('data_limit') or 0) / GB_IN_BYTES
+    admin_name = admin_user.full_name
+    admin_mention = escape_markdown(admin_name, version=2).replace('(', '\\(').replace(')', '\\)')
+    safe_username = escape_markdown(username, version=2)
+    log_message = (
+        f"🔄 *اشتراک تمدید شد*\n\n"
+        f"▫️ **نام کاربری:** `{safe_username}`\n"
+        f"▫️ **حجم جدید:** {int(data_limit_gb)} GB\n"
+        f"▫️ **مدت تمدید:** {renewal_duration_days} روز\n"
+        f"👤 **توسط ادمین:** {admin_mention}"
+    )
+    await send_log(context.bot, log_message, parse_mode=ParseMode.MARKDOWN_V2)
+
     response_message = (f"✅ **تمدید هوشمند موفق**\n\n"
-                        f"▫️ **کاربر:** `{username}`\n"
+                        f"▫️ **کانفیگ:** `{username}`\n"
                         f"▫️ **مدت:** `{renewal_duration_days}` روز\n"
-                        f"▫️ **حجم کل:** `{f'{data_limit_gb:.0f}' if data_limit_gb > 0 else 'نامحدود'}` GB\n"
+                        f"▫️ **حجم کل:** `{int(data_limit_gb)}` GB\n"
                         f"▫️ **ترافیک:** صفر شد")
                         
-    back_button = InlineKeyboardButton("🔙 بازگشت", callback_data=f"user_details_{username}")
+    list_type = context.user_data.get('current_list_type', 'all')
+    page_number = context.user_data.get('current_page', 1)
+    back_button = InlineKeyboardButton("🔙 بازگشت به لیست", callback_data=f"show_users_page_{list_type}_{page_number}")
     await query.edit_message_text(response_message, reply_markup=InlineKeyboardMarkup([[back_button]]), parse_mode=ParseMode.MARKDOWN)
     
-    users_map = await load_users_map()
-    customer_id = users_map.get(normalize_username(username))
-    if customer_id:
-        try:
-            if subscription_price > 0:
-                await send_renewal_invoice_to_user(
-                    context=context,
-                    user_telegram_id=customer_id,
-                    username=username,
-                    renewal_days=renewal_duration_days,
-                    price=subscription_price
-                )
-                await context.bot.send_message(chat_id=update.effective_chat.id, text=f"ℹ️ صورتحساب تمدید برای مشتری (ID: {customer_id}) ارسال شد.")
-            else:
-                await context.bot.send_message(chat_id=customer_id, text="✅ اشتراک شما با موفقیت تمدید شد!")
-                await context.bot.send_message(chat_id=update.effective_chat.id, text=f"ℹ️ پیام تایید (بدون فاکتور) برای مشتری (ID: {customer_id}) ارسال شد.")
+    customer_id = await get_telegram_id_from_marzban_username(normalize_username(username))
+    if not customer_id:
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=f"⚠️ کاربر `{username}` به ربات متصل نیست. پیام تمدید برای او ارسال نشد.",
+            parse_mode=ParseMode.MARKDOWN
+        )
+        return
 
-        except Exception as e:
-            LOGGER.warning(f"User {username} renewed, but failed to notify customer {customer_id}: {e}")
-            await context.bot.send_message(chat_id=update.effective_chat.id, text=f"⚠️ کاربر تمدید شد، اما ارسال پیام/فاکتور به مشتری (ID: {customer_id}) خطا داد.")
-            
-async def prompt_for_add_data(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    query = update.callback_query
-    username = query.data.split('_', 2)[-1]
-    await query.answer()
-    context.user_data['action_username'] = username
-    await query.edit_message_text(f"لطفاً مقدار حجم برای افزودن به `{username}` را به **گیگابایت (GB)** وارد کنید:", parse_mode=ParseMode.MARKDOWN)
-    return ADD_DATA_PROMPT
-
-async def process_add_data(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    username = context.user_data.get('action_username')
-    if not username: return ConversationHandler.END
     try:
-        gb_to_add = float(update.message.text)
-        if gb_to_add <= 0:
-            await update.message.reply_text("❌ حجم باید یک عدد مثبت باشد."); return ADD_DATA_PROMPT
-        await update.message.reply_text(f"در حال افزودن `{gb_to_add}` GB به `{username}`...")
-        user_data = await get_user_data(username)
-        if not user_data:
-            await update.message.reply_text(f"❌ خطا: کاربر `{username}` یافت نشد."); return ConversationHandler.END
-        current_limit = user_data.get('data_limit') or 0
-        new_limit = int(current_limit + (gb_to_add * GB_IN_BYTES))
-        success, message = await modify_user_api(username, {"data_limit": new_limit})
-        reply_text = f"✅ `{gb_to_add}` GB با موفقیت به `{username}` اضافه شد." if success else f"❌ {message}"
-        await update.message.reply_text(reply_text, reply_markup=get_user_management_keyboard(), parse_mode=ParseMode.MARKDOWN)
-    except (ValueError, TypeError):
-        await update.message.reply_text("❌ ورودی نامعتبر. لطفاً فقط عدد وارد کنید."); return ADD_DATA_PROMPT
-    context.user_data.clear()
-    return ConversationHandler.END
+        success_message_to_customer = (
+            f"✅ **سرویس شما با موفقیت تمدید شد!**\n\n"
+            f"▫️ **نام کاربری:** `{username}`\n"
+            f"▫️ **حجم جدید:** {int(data_limit_gb)} GB\n"
+            f"▫️ **مدت تمدید:** {renewal_duration_days} روز\n\n"
+            f"از همراهی شما سپاسگزاریم."
+        )
+        await context.bot.send_message(
+            chat_id=customer_id,
+            text=success_message_to_customer,
+            parse_mode=ParseMode.MARKDOWN
+        )
+        LOGGER.info(f"Successfully sent renewal confirmation to customer {customer_id} for user {username}.")
 
-async def prompt_for_add_days(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    query = update.callback_query
-    username = query.data.split('_', 2)[-1]
-    await query.answer()
-    context.user_data['action_username'] = username
-    await query.edit_message_text(f"لطفاً تعداد روز برای افزودن به انقضای `{username}` را وارد کنید:", parse_mode=ParseMode.MARKDOWN)
-    return ADD_DAYS_PROMPT
+        if subscription_price > 0:
+            await send_renewal_invoice_to_user(
+                context=context, user_telegram_id=customer_id, username=username,
+                renewal_days=renewal_duration_days, 
+                price=subscription_price,
+                data_limit_gb=int(data_limit_gb)
+            )
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id, 
+                text=f"ℹ️ پیام تایید و صورتحساب برای مشتری (ID: {customer_id}) ارسال شد."
+            )
+        else:
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id, 
+                text=f"ℹ️ پیام تایید تمدید برای مشتری (ID: {customer_id}) ارسال شد (صورتحساب ارسال نشد چون قیمتی ثبت نشده بود)."
+            )
 
-async def process_add_days(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    username = context.user_data.get('action_username')
-    if not username: return ConversationHandler.END
-    try:
-        days_to_add = int(update.message.text)
-        if days_to_add <= 0:
-            await update.message.reply_text("❌ تعداد روز باید عدد مثبت باشد."); return ADD_DAYS_PROMPT
-        await update.message.reply_text(f"در حال افزودن `{days_to_add}` روز به `{username}`...")
-        user_data = await get_user_data(username)
-        if not user_data:
-            await update.message.reply_text(f"❌ خطا: کاربر `{username}` یافت نشد."); return ConversationHandler.END
-        current_expire_ts = user_data.get('expire')
-        start_date = datetime.datetime.fromtimestamp(current_expire_ts) if current_expire_ts and current_expire_ts > datetime.datetime.now().timestamp() else datetime.datetime.now()
-        new_expire = int((start_date + datetime.timedelta(days=days_to_add)).timestamp())
-        success, message = await modify_user_api(username, {"expire": new_expire})
-        reply_text = f"✅ `{days_to_add}` روز با موفقیت به `{username}` اضافه شد." if success else f"❌ {message}"
-        await update.message.reply_text(reply_text, reply_markup=get_user_management_keyboard(), parse_mode=ParseMode.MARKDOWN)
-    except (ValueError, TypeError):
-        await update.message.reply_text("❌ ورودی نامعتبر. فقط عدد صحیح وارد کنید."); return ADD_DAYS_PROMPT
-    context.user_data.clear()
-    return ConversationHandler.END
-
-async def confirm_delete_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    query = update.callback_query; username = query.data.split('_', 1)[-1]
-    await query.answer()
-    keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("✅ بله، حذف کن", callback_data=f"do_delete_{username}"), InlineKeyboardButton("❌ خیر", callback_data=f"user_details_{username}")]])
-    await query.edit_message_text(f"⚠️ آیا از حذف کامل `{username}` مطمئن هستید؟", reply_markup=keyboard, parse_mode=ParseMode.MARKDOWN)
-
-async def do_delete_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    query = update.callback_query; username = query.data.split('_', 2)[-1]
-    await query.answer()
-    await query.edit_message_text(f"در حال حذف `{username}`...", parse_mode=ParseMode.MARKDOWN)
-    success, message = await delete_user_api(username)
-    if success:
-        users_map = await load_users_map()
-        if username in users_map:
-            del users_map[username]
-            await save_users_map(users_map)
-        await query.edit_message_text(f"🗑 کاربر `{username}` با موفقیت حذف شد.", parse_mode=ParseMode.MARKDOWN)
-    else:
-        await query.edit_message_text(f"❌ {message}", parse_mode=ParseMode.MARKDOWN)
+    except Exception as e:
+        LOGGER.error(f"User {username} renewed, but failed to notify customer {customer_id}: {e}")
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id, 
+            text=f"⚠️ **خطا:** کانفیگ `{username}` تمدید شد، اما ارسال پیام به مشتری (ID: {customer_id}) با خطا مواجه شد. لطفاً دستی به او اطلاع دهید.",
+            parse_mode=ParseMode.MARKDOWN
+        )

@@ -1,47 +1,58 @@
 # FILE: modules/customer/actions/receipt.py
-# (نسخه نهایی و ادغام شده)
+# (نسخه نهایی با بازگشت صحیح به منوی اصلی)
 
 import logging
-from telegram import Update
+from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import (
     ContextTypes, ConversationHandler, CallbackQueryHandler,
     MessageHandler, filters, CommandHandler
 )
 from telegram.constants import ParseMode
+from telegram.error import BadRequest
 
 from config import config
-# --- UPDATED: Import the new database function instead of the old JSON loader ---
 from database.db_manager import get_linked_marzban_usernames
+# --- NEW: Import the customer main menu keyboard ---
+from shared.keyboards import get_customer_main_menu_keyboard
 
 LOGGER = logging.getLogger(__name__)
 
 # --- Conversation States ---
-GET_RECEIPT_PHOTO = range(1)
+GET_RECEIPT_PHOTO = 0 
 
 async def start_receipt_upload(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """
     Entry point for the receipt submission conversation.
-    Asks the user to send their payment receipt photo.
+    Deletes the previous message and sends a new one asking for the photo.
     """
     query = update.callback_query
     await query.answer()
     
-    await query.edit_message_text(
-        text="لطفاً تصویر واضح از رسید پرداخت خود را ارسال کنید.\n\nبرای انصراف، دستور /cancel را بفرستید.",
-        parse_mode=ParseMode.MARKDOWN
+    try:
+        await query.delete_message()
+    except BadRequest as e:
+        LOGGER.warning(f"Could not delete message in start_receipt_upload: {e}")
+
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("❌ لغو عملیات", callback_data="cancel_receipt_upload")]
+    ])
+    
+    await context.bot.send_message(
+        chat_id=update.effective_chat.id,
+        text="✅ بسیار خب! لطفاً تصویر واضح از رسید پرداخت خود را ارسال کنید.",
+        reply_markup=keyboard
     )
     
     return GET_RECEIPT_PHOTO
 
 async def handle_receipt_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """
-    Receives the photo, forwards it to the admin(s) with full details, and ends the conversation.
-    This function combines the logic from your original file with the new conversation structure.
+    Receives the photo, forwards it to the admin(s) with approval buttons,
+    and properly ends the conversation for the user.
     """
     user = update.effective_user
     photo_file_id = update.message.photo[-1].file_id
 
-    # --- Prepare detailed information for the admin (from your original logic) ---
     caption = (
         f"🧾 **رسید پرداخت جدید دریافت شد** 🧾\n\n"
         f"👤 **از طرف:** {user.full_name}\n"
@@ -50,7 +61,6 @@ async def handle_receipt_photo(update: Update, context: ContextTypes.DEFAULT_TYP
         caption += f"📧 **یوزرنیم:** @{user.username}\n"
     caption += f"🆔 **آیدی تلگرام:** `{user.id}`\n"
 
-    # Try to find the associated Marzban username(s) using the new database function
     linked_accounts = await get_linked_marzban_usernames(user.id)
     if linked_accounts:
         caption += "▫️ **سرویس‌های متصل در دیتابیس:**\n"
@@ -59,11 +69,19 @@ async def handle_receipt_photo(update: Update, context: ContextTypes.DEFAULT_TYP
     else:
         caption += "▫️ **سرویس متصلی در دیتابیس یافت نشد.**\n"
     
-    # --- Forward the photo and info to all admins ---
     if not config.AUTHORIZED_USER_IDS:
         LOGGER.warning("Receipt received, but no admin IDs are configured to forward to.")
         await update.message.reply_text("متاسفانه در حال حاضر امکان پردازش رسید شما وجود ندارد. لطفاً با پشتیبانی تماس بگیرید.")
         return ConversationHandler.END
+
+    # ======================== START: FIX - Add Approval Buttons ========================
+    keyboard = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("✅ تایید پرداخت", callback_data=f"approve_receipt_{user.id}"),
+            InlineKeyboardButton("❌ رد پرداخت", callback_data=f"reject_receipt_{user.id}")
+        ]
+    ])
+    # ========================= END: FIX - Add Approval Buttons =========================
 
     num_sent = 0
     for admin_id in config.AUTHORIZED_USER_IDS:
@@ -72,7 +90,8 @@ async def handle_receipt_photo(update: Update, context: ContextTypes.DEFAULT_TYP
                 chat_id=admin_id,
                 photo=photo_file_id,
                 caption=caption,
-                parse_mode=ParseMode.MARKDOWN
+                parse_mode=ParseMode.MARKDOWN,
+                reply_markup=keyboard  # <-- Pass the keyboard here
             )
             num_sent += 1
         except Exception as e:
@@ -86,33 +105,74 @@ async def handle_receipt_photo(update: Update, context: ContextTypes.DEFAULT_TYP
     else:
         await update.message.reply_text("❌ خطا در ارسال رسید به پشتیبانی. لطفاً بعداً دوباره تلاش کنید.")
 
+    # --- Use the helper function for returning to main menu ---
+    # Note: You might need to create this helper or just use the direct code
+    # For now, I'll assume the direct code is fine.
+    
+    final_keyboard = get_customer_main_menu_keyboard()
+    final_text = "شما به منوی اصلی بازگشتید."
+    # Check if the user is an admin in customer view
+    if user.id in config.AUTHORIZED_USER_IDS:
+        from shared.keyboards import get_admin_main_menu_keyboard
+        final_keyboard = get_admin_main_menu_keyboard()
+        final_text = "شما به منوی اصلی ادمین بازگشتید."
+
+    await context.bot.send_message(
+        chat_id=update.effective_chat.id,
+        text=final_text,
+        reply_markup=final_keyboard
+    )
+
     return ConversationHandler.END
+
+async def warn_for_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """
+    Handles cases where the user sends text instead of a photo.
+    """
+    await update.message.reply_text(
+        "❌ ورودی نامعتبر است. لطفاً به جای متن، **عکس رسید** خود را ارسال کنید یا عملیات را لغو نمایید."
+    )
+    return GET_RECEIPT_PHOTO
 
 async def cancel_receipt_upload(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """
-    Cancels the receipt submission process.
+    Cancels the receipt submission process and returns the user to the main menu.
     """
-    # Try to edit the original message if possible
-    if context.user_data.get('panel_message_id'):
+    chat_id = update.effective_chat.id
+    
+    if update.callback_query:
+        query = update.callback_query
+        await query.answer()
         try:
-            await context.bot.edit_message_text(
-                chat_id=update.effective_chat.id,
-                message_id=context.user_data['panel_message_id'],
-                text="عملیات لغو شد. به پنل خرید و پرداخت بازگشتید."
-            )
-        except: pass # Ignore if message is old
-    else:
-        await update.message.reply_text("ارسال رسید لغو شد.")
-
+            # Delete the "Please send a photo" message
+            await query.delete_message()
+        except BadRequest:
+            pass
+    
+    # --- START OF FIX: Always send a final message with the main menu ---
+    await context.bot.send_message(
+        chat_id=chat_id, 
+        text="عملیات ارسال رسید لغو شد و شما به منوی اصلی بازگشتید.",
+        reply_markup=get_customer_main_menu_keyboard()
+    )
+    # --- END OF FIX ---
+    
+    # Clear any lingering user_data from the conversation
     context.user_data.clear()
     return ConversationHandler.END
 
-# --- The ConversationHandler for the entire receipt flow ---
+# The ConversationHandler for the entire receipt flow
 receipt_conv = ConversationHandler(
     entry_points=[CallbackQueryHandler(start_receipt_upload, pattern='^start_receipt_upload$')],
     states={
-        GET_RECEIPT_PHOTO: [MessageHandler(filters.PHOTO & ~filters.COMMAND, handle_receipt_photo)]
+        GET_RECEIPT_PHOTO: [
+            MessageHandler(filters.PHOTO & ~filters.COMMAND, handle_receipt_photo),
+            MessageHandler(filters.TEXT & ~filters.COMMAND, warn_for_photo)
+        ]
     },
-    fallbacks=[CommandHandler('cancel', cancel_receipt_upload)],
-    conversation_timeout=600 # 10 minutes for user to send the photo
+    fallbacks=[
+        CommandHandler('cancel', cancel_receipt_upload),
+        CallbackQueryHandler(cancel_receipt_upload, pattern='^cancel_receipt_upload$')
+    ],
+    conversation_timeout=600 
 )

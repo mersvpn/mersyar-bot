@@ -1,3 +1,5 @@
+# FILE: shared/keyboards.py (نسخه اصلاح شده)
+
 from telegram import ReplyKeyboardMarkup, KeyboardButton
 from config import config
 
@@ -6,7 +8,9 @@ def get_admin_main_menu_keyboard() -> ReplyKeyboardMarkup:
         [KeyboardButton("👤 مدیریت کاربران")],
         [KeyboardButton("📓 مدیریت یادداشت‌ها"), KeyboardButton("⚙️ تنظیمات و ابزارها")],
         [KeyboardButton("📨 ارسال پیام"), KeyboardButton("💻 ورود به پنل کاربری")],
-        [KeyboardButton("ℹ️ راهنما")]
+        # ======================== START: MODIFICATION ========================
+        [KeyboardButton("📚 تنظیمات آموزش")] # Changed from "ℹ️ راهنما"
+        # ========================= END: MODIFICATION =========================
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
@@ -22,11 +26,21 @@ def get_settings_and_tools_keyboard() -> ReplyKeyboardMarkup:
     keyboard = [
         [KeyboardButton("🔐 مدیریت پنل مرزبان")],
         [KeyboardButton("🔧 تنظیمات ربات"), KeyboardButton("💰 تنظیمات مالی")],
-        [KeyboardButton("⏰ تنظیمات یادآور"), KeyboardButton("⚙️ تنظیم کاربر الگو")],
-        [KeyboardButton("🔗 ایجاد لینک اتصال")],
+        [KeyboardButton("📣 تنظیم کانال گزارش")],
+        [KeyboardButton("🛠️ ابزارهای کمکی"), KeyboardButton("📊 آمار ربات")],
         [KeyboardButton("🔙 بازگشت به منوی اصلی")]
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+
+# ==================== تابع اصلاح شده ====================
+def get_helper_tools_keyboard() -> ReplyKeyboardMarkup:
+    keyboard = [
+        [KeyboardButton("⚙️ اتوماسیون روزانه"), KeyboardButton("⚙️ تنظیم کاربر الگو")],
+        [KeyboardButton("🔗 ایجاد لینک اتصال")],
+        [KeyboardButton("🔙 بازگشت به تنظیمات")]
+    ]
+    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+# =======================================================
 
 def get_customer_main_menu_keyboard() -> ReplyKeyboardMarkup:
     keyboard_layout = [
