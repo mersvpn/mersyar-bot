@@ -43,25 +43,24 @@ sleep 2
 
 # --- Script Internal Variables ---
 PROJECT_DIR="/root/$GITHUB_REPO"
-SERVICE_NAME="$GITHUB_REPO"
+SERVICE_NAME="mersyar-bot" # نام سرویس را ثابت نگه می‌داریم
 PYTHON_ALIAS="python3"
 TARBALL_NAME="${LATEST_TAG}.tar.gz"
 DB_NAME="mersyar_bot_db"
 DB_USER="mersyar"
-# --- FIX: Generate URL-safe random strings for passwords and tokens ---
 DB_PASSWORD=$(openssl rand -base64 18 | tr -dc 'a-zA-Z0-9' | head -c 16)
 WEBHOOK_SECRET_TOKEN=$(openssl rand -base64 24 | tr -dc 'a-zA-Z0-9' | head -c 32)
 
 
 # 1. Update System and Install ALL Dependencies
-info "[1/8] Updating system and installing all dependencies..."
+info "[1/9] Updating system and installing all dependencies..."
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
 apt-get install -y wget tar $PYTHON_ALIAS-pip $PYTHON_ALIAS-venv nginx mysql-server python3-certbot-nginx \
 phpmyadmin php-fpm php-mysql php-mbstring php-zip php-gd php-json php-curl
 
 # 2. Download and Extract Latest Release
-info "[2/8] Downloading release $LATEST_TAG from GitHub..."
+info "[2/9] Downloading release $LATEST_TAG from GitHub..."
 wget -q "$DOWNLOAD_URL" -O "$TARBALL_NAME"
 rm -rf "$PROJECT_DIR"
 tar -xzf "$TARBALL_NAME"
@@ -75,17 +74,15 @@ cd "$PROJECT_DIR"
 rm -f "/root/$TARBALL_NAME"
 
 # 3. Setting up MySQL Database and User
-info "[3/8] Setting up MySQL Database and User..."
-sudo mysql -e "CREATE DATABASE IF NOT EXISTS $DB_NAME;"
-sudo mysql -e "CREATE USER IF NOT EXISTS '$DB_USER'@'localhost' IDENTIFIED BY '$DB_PASSWORD';"
-# --- FIX: Set authentication method to be compatible with phpMyAdmin ---
-sudo mysql -e "ALTER USER '$DB_USER'@'localhost' IDENTIFIED WITH mysql_native_password BY '$DB_PASSWORD';"
-sudo mysql -e "GRANT ALL PRIVILEGES ON $DB_NAME.* TO '$DB_USER'@'localhost';"
-sudo mysql -e "FLUSH PRIVILEGES;"
+info "[3/9] Setting up MySQL Database and User..."
+mysql -e "CREATE DATABASE IF NOT EXISTS $DB_NAME;"
+mysql -e "CREATE USER IF NOT EXISTS '$DB_USER'@'localhost' IDENTIFIED WITH mysql_native_password BY '$DB_PASSWORD';"
+mysql -e "GRANT ALL PRIVILEGES ON $DB_NAME.* TO '$DB_USER'@'localhost';"
+mysql -e "FLUSH PRIVILEGES;"
 success "MySQL database and user created successfully."
 
 # 4. Create .env file with ALL credentials
-info "[4/8] Creating .env file..."
+info "[4/9] Creating .env file..."
 cat << EOF > .env
 # Telegram Bot Configuration
 TELEGRAM_BOT_TOKEN="${TELEGRAM_BOT_TOKEN}"
@@ -104,14 +101,14 @@ DB_PASSWORD="${DB_PASSWORD}"
 EOF
 
 # 5. Setup Python Virtual Environment
-info "[5/8] Setting up Python virtual environment..."
+info "[5/9] Setting up Python virtual environment..."
 $PYTHON_ALIAS -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
 deactivate
 
 # 6. Setup phpMyAdmin
-info "[6/8] Configuring phpMyAdmin..."
+info "[6/9] Configuring phpMyAdmin..."
 ln -s -f /usr/share/phpmyadmin /var/www/html/phpmyadmin
 PHP_FPM_SOCK=$(ls /var/run/php/php*-fpm.sock | head -n 1)
 if [ -z "$PHP_FPM_SOCK" ]; then
@@ -120,24 +117,21 @@ if [ -z "$PHP_FPM_SOCK" ]; then
 fi
 success "phpMyAdmin configured with PHP socket: $PHP_FPM_SOCK"
 
-# 7. Configure Nginx (for Bot and phpMyAdmin) and Obtain SSL Certificate
-info "[7/8] Configuring Nginx for Bot & phpMyAdmin, then obtaining SSL..."
+# 7. Configure Nginx and Obtain SSL Certificate
+info "[7/9] Configuring Nginx and obtaining SSL..."
 cat << EOF > /etc/nginx/sites-available/$SERVICE_NAME
 server {
     listen 80;
     server_name $DOMAIN;
     root /var/www/html;
-
     location /.well-known/acme-challenge/ { allow all; }
-
     location /phpmyadmin {
-        index index.php index.html;
+        index index.php;
         location ~ \.php$ {
             include snippets/fastcgi-php.conf;
             fastcgi_pass unix:${PHP_FPM_SOCK};
         }
     }
-
     location / {
         proxy_pass http://127.0.0.1:8080;
         proxy_set_header Host \$host;
@@ -151,7 +145,7 @@ systemctl restart nginx
 certbot --nginx -d "$DOMAIN" --non-interactive --agree-tos --email "$ADMIN_EMAIL" --redirect
 
 # 8. Create and Enable systemd Service
-info "[8/8] Creating and enabling the bot service..."
+info "[8/9] Creating and enabling the bot service..."
 cat << EOF > /etc/systemd/system/$SERVICE_NAME.service
 [Unit]
 Description=$SERVICE_NAME Telegram Bot Service
@@ -160,12 +154,10 @@ After=network.target mysql.service
 [Service]
 Type=simple
 User=root
-Group=root
 WorkingDirectory=$PROJECT_DIR
 ExecStart=$PROJECT_DIR/venv/bin/python3 $PROJECT_DIR/bot.py
 Restart=on-failure
 RestartSec=10
-KillMode=process
 
 [Install]
 WantedBy=multi-user.target
@@ -174,9 +166,21 @@ systemctl daemon-reload
 systemctl enable $SERVICE_NAME
 systemctl start $SERVICE_NAME
 
+# --- 🟢 9. Install Mersyar CLI Tool 🟢 ---
+info "[9/9] Installing 'mersyar' command-line tool..."
+if [ -f "$PROJECT_DIR/mersyar" ]; then
+    chmod +x "$PROJECT_DIR/mersyar"
+    ln -sf "$PROJECT_DIR/mersyar" /usr/local/bin/mersyar
+    success "'mersyar' tool installed successfully."
+else
+    error "'mersyar' script not found in the project. Skipping installation of CLI tool."
+fi
+
+
 success "==============================================="
 success "✅✅✅ Installation Complete! ✅✅✅"
 success "The bot (version $LATEST_TAG) is now running on https://$DOMAIN"
 success "phpMyAdmin is available at https://$DOMAIN/phpmyadmin"
 info "To log into phpMyAdmin, use username '${DB_USER}' and the password stored in the .env file."
+info "To manage the bot, you can now simply type ${YELLOW}mersyar${NC} in your terminal."
 info "To check the bot service status, use: systemctl status $SERVICE_NAME"
