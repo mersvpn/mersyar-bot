@@ -5,6 +5,7 @@ set -e
 info() { echo -e "\e[34m[INFO]\e[0m $1"; }
 success() { echo -e "\e[32m[SUCCESS]\e[0m $1"; }
 error() { echo -e "\e[31m[ERROR]\e[0m $1"; }
+warning() { echo -e "\e[33m[WARN]\e[0m $1"; }
 
 # --- Pre-flight Checks ---
 if [ "$(id -u)" -ne 0 ]; then
@@ -12,7 +13,7 @@ if [ "$(id -u)" -ne 0 ]; then
     exit 1
 fi
 
-# --- 🟢 FIX: Static Configuration (Variable was missing) 🟢 ---
+# --- Static Configuration ---
 GITHUB_USER="mersvpn"
 GITHUB_REPO="mersyar-bot"
 
@@ -39,7 +40,7 @@ DB_NAME="mersyar_bot_db"
 DB_USER="mersyar"
 
 # --- Interactive User Input ---
-# هوشمندانه عمل می‌کند: اگر فایل .env وجود داشت، دیگر سوال نمی‌پرسد
+# This block runs only if the .env file does not exist, making updates seamless.
 if [ ! -f "$PROJECT_DIR/.env" ]; then
     read -p "Enter your Domain/Subdomain (e.g., bot.example.com): " DOMAIN
     read -p "Enter your email for SSL certificate notifications: " ADMIN_EMAIL
@@ -49,8 +50,9 @@ if [ ! -f "$PROJECT_DIR/.env" ]; then
     read -p "Enter the Support Username (optional, press Enter to skip): " SUPPORT_USERNAME
 else
     info "Existing .env file found. Skipping user input for credentials."
+    # We still need the domain for nginx/certbot checks
     DOMAIN=$(grep -E "^BOT_DOMAIN=" "$PROJECT_DIR/.env" | cut -d '=' -f2- | tr -d '"')
-    ADMIN_EMAIL="info@$DOMAIN"
+    ADMIN_EMAIL="info@$DOMAIN" # Fallback email
 fi
 
 info "✅ Starting the installation/update process..."
@@ -70,14 +72,21 @@ wget -q "$DOWNLOAD_URL" -O "/tmp/$TARBALL_NAME"
 # --- 3. Smart Update/Install Logic ---
 if [ -d "$PROJECT_DIR" ]; then
     info "[3/9] Existing installation found. Performing an update..."
-    tar -xzf "/tmp/$TARBALL_NAME" --strip-components=1 -C "$PROJECT_DIR"
 else
     info "[3/9] No existing installation found. Performing a fresh install..."
     mkdir -p "$PROJECT_DIR"
-    tar -xzf "/tmp/$TARBALL_NAME" --strip-components=1 -C "$PROJECT_DIR"
-    cd "$PROJECT_DIR"
-    
-    info "   -> Setting up MySQL Database and User..."
+fi
+
+# Extract files into the project directory
+tar -xzf "/tmp/$TARBALL_NAME" --strip-components=1 -C "$PROJECT_DIR"
+rm -f "/tmp/$TARBALL_NAME"
+
+# --- 🟢 IMPROVEMENT: Move all subsequent operations inside the project directory ---
+cd "$PROJECT_DIR" || { error "Failed to enter project directory: $PROJECT_DIR"; exit 1; }
+
+# --- 3.1. Setup Database and .env (ONLY for fresh install) ---
+if [ ! -f ".env" ]; then
+    info "   -> Setting up MySQL Database and User for the first time..."
     DB_PASSWORD=$(openssl rand -base64 18 | tr -dc 'a-zA-Z0-9' | head -c 16)
     mysql -e "CREATE DATABASE IF NOT EXISTS $DB_NAME;"
     mysql -e "CREATE USER IF NOT EXISTS '$DB_USER'@'localhost' IDENTIFIED WITH mysql_native_password BY '$DB_PASSWORD';"
@@ -101,8 +110,6 @@ DB_USER="${DB_USER}"
 DB_PASSWORD="${DB_PASSWORD}"
 EOF
 fi
-cd "$PROJECT_DIR"
-rm -f "/tmp/$TARBALL_NAME"
 
 # --- 4. Setup Python Virtual Environment ---
 info "[4/9] Setting up Python virtual environment..."
@@ -113,25 +120,35 @@ deactivate
 
 # --- 5. Setup phpMyAdmin ---
 info "[5/9] Configuring phpMyAdmin..."
+# Ensure the symlink is correct, even after updates
 ln -s -f /usr/share/phpmyadmin /var/www/html/phpmyadmin
 PHP_FPM_SOCK=$(ls /var/run/php/php*-fpm.sock | head -n 1)
 
 # --- 6. Configure Nginx and Obtain SSL Certificate ---
 info "[6/9] Configuring Nginx and obtaining SSL..."
+# Check if nginx config needs to be created
 if [ ! -f "/etc/nginx/sites-available/$SERVICE_NAME" ]; then
     cat << EOF > /etc/nginx/sites-available/$SERVICE_NAME
 server {
     listen 80; server_name $DOMAIN; root /var/www/html;
     location /.well-known/acme-challenge/ { allow all; }
     location /phpmyadmin { index index.php; location ~ \.php$ { include snippets/fastcgi-php.conf; fastcgi_pass unix:${PHP_FPM_SOCK}; } }
-    location / { proxy_pass http://127.0.0.1:8080; proxy_set_header Host \$host; proxy_set_header X-Real-IP \$remote_addr; proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for; }
+    # All other requests are proxied to the bot
+    location / { 
+        proxy_pass http://127.0.0.1:8080; 
+        proxy_set_header Host \$host; 
+        proxy_set_header X-Real-IP \$remote_addr; 
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for; 
+    }
 }
 EOF
     ln -s -f /etc/nginx/sites-available/$SERVICE_NAME /etc/nginx/sites-enabled/
     systemctl restart nginx
-    certbot --nginx -d "$DOMAIN" --non-interactive --agree-tos --email "$ADMIN_EMAIL"
+    certbot --nginx -d "$DOMAIN" --non-interactive --agree-tos --email "$ADMIN_EMAIL" --redirect
 else
-    info "Nginx configuration already exists. Skipping."
+    info "Nginx configuration already exists. Skipping creation."
+    # Ensure certbot renewal is set up
+    certbot renew --quiet
 fi
 
 # --- 7. Create and Enable systemd Service ---
@@ -141,22 +158,25 @@ cat << EOF > /etc/systemd/system/$SERVICE_NAME.service
 Description=$SERVICE_NAME Telegram Bot Service
 After=network.target mysql.service
 [Service]
-Type=simple User=root
+Type=simple
+User=root
 WorkingDirectory=$PROJECT_DIR
 ExecStart=$PROJECT_DIR/venv/bin/python3 $PROJECT_DIR/bot.py
-Restart=on-failure RestartSec=10
+Restart=on-failure
+RestartSec=10
 [Install]
 WantedBy=multi-user.target
 EOF
 
 # --- 8. Install Mersyar CLI Tool ---
 info "[8/9] Installing 'mersyar' command-line tool..."
-if [ -f "$PROJECT_DIR/mersyar" ]; then
-    chmod +x "$PROJECT_DIR/mersyar"
+# Now this command is guaranteed to run from inside the project directory
+if [ -f "mersyar" ]; then
+    chmod +x "mersyar"
     ln -sf "$PROJECT_DIR/mersyar" /usr/local/bin/mersyar
     success "'mersyar' tool installed successfully."
 else
-    error "'mersyar' script not found in the downloaded files. Skipping installation of CLI tool."
+    warning "'mersyar' script not found in the downloaded files. Skipping installation of CLI tool."
 fi
 
 # --- 9. Finalizing ---
@@ -168,5 +188,5 @@ systemctl restart $SERVICE_NAME
 success "==============================================="
 success "✅✅✅ Update/Install Complete! ✅✅✅"
 info "The bot (version $LATEST_TAG) is now running."
-info "To manage the bot, you can now simply type ${YELLOW}mersyar${NC} in your terminal."
+info "To manage the bot, you can now simply type: mersyar"
 info "To check the bot service status, use: systemctl status $SERVICE_NAME"
