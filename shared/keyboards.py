@@ -1,16 +1,18 @@
-# FILE: shared/keyboards.py (نسخه اصلاح شده)
+# FILE: shared/keyboards.py (نسخه نهایی شده)
 
-from telegram import ReplyKeyboardMarkup, KeyboardButton
+from telegram import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
 from config import config
+
+# =============================================================================
+#  بخش کیبوردهای اصلی (بدون تغییر)
+# =============================================================================
 
 def get_admin_main_menu_keyboard() -> ReplyKeyboardMarkup:
     keyboard = [
         [KeyboardButton("👤 مدیریت کاربران")],
         [KeyboardButton("📓 مدیریت یادداشت‌ها"), KeyboardButton("⚙️ تنظیمات و ابزارها")],
         [KeyboardButton("📨 ارسال پیام"), KeyboardButton("💻 ورود به پنل کاربری")],
-        # ======================== START: MODIFICATION ========================
-        [KeyboardButton("📚 تنظیمات آموزش")] # Changed from "ℹ️ راهنما"
-        # ========================= END: MODIFICATION =========================
+        [KeyboardButton("📚 تنظیمات آموزش")]
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
@@ -32,7 +34,6 @@ def get_settings_and_tools_keyboard() -> ReplyKeyboardMarkup:
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
-# ==================== تابع اصلاح شده ====================
 def get_helper_tools_keyboard() -> ReplyKeyboardMarkup:
     keyboard = [
         [KeyboardButton("⚙️ اتوماسیون روزانه"), KeyboardButton("⚙️ تنظیم کاربر الگو")],
@@ -40,7 +41,6 @@ def get_helper_tools_keyboard() -> ReplyKeyboardMarkup:
         [KeyboardButton("🔙 بازگشت به تنظیمات")]
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
-# =======================================================
 
 def get_customer_main_menu_keyboard() -> ReplyKeyboardMarkup:
     keyboard_layout = [
@@ -67,3 +67,50 @@ def get_notes_management_keyboard() -> ReplyKeyboardMarkup:
         [KeyboardButton("🔙 بازگشت به منوی اصلی")]
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+
+
+# =============================================================================
+#  بخش جدید: کیبوردهای مربوط به پنل خرید دلخواه و تنظیمات مالی جدید
+# =============================================================================
+
+# FILE: shared/keyboards.py (فقط این تابع را جایگزین کنید)
+
+def get_customer_purchase_menu_keyboard() -> InlineKeyboardMarkup:
+    """
+    کیبورد شیشه‌ای جدید برای منوی "پنل خرید و پرداخت" مشتری.
+    """
+    keyboard = [
+        [InlineKeyboardButton("👨‍💻 ارسال درخواست خرید", callback_data="customer_manual_purchase")],
+        [
+            # --- FIX: Changed callback_data to match the ConversationHandler's entry_point ---
+            InlineKeyboardButton("💡 ساخت پلن دلخواه", callback_data="customer_custom_purchase"),
+            InlineKeyboardButton("🧾 ارسال رسید پرداخت", callback_data="customer_send_receipt")
+        ],
+        [InlineKeyboardButton("✖️ بستن", callback_data="close_panel")]
+    ]
+    return InlineKeyboardMarkup(keyboard)
+def get_financial_settings_keyboard() -> ReplyKeyboardMarkup:
+    """
+    کیبورد معمولی جدید برای منوی "تنظیمات مالی" ادمین.
+    """
+    keyboard = [
+        [KeyboardButton("💳 تنظیمات پرداخت"), KeyboardButton("💰 تنظیم قیمت‌گذاری دلخواه")],
+        [KeyboardButton("🔙 بازگشت به تنظیمات")]
+    ]
+    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+
+def get_payment_methods_keyboard() -> InlineKeyboardMarkup:
+    """
+    کیبورد شیشه‌ای برای زیرمنوی "تنظیمات پرداخت" ادمین.
+    """
+    keyboard = [
+        [
+            InlineKeyboardButton("💳 تنظیم کارت به کارت", callback_data="admin_set_card_info"),
+            InlineKeyboardButton("🅿️ تنظیم درگاه پرداخت (بزودی)", callback_data="coming_soon")
+        ],
+        [
+            InlineKeyboardButton("₿ تنظیم پرداخت با رمز ارز (بزودی)", callback_data="coming_soon")
+        ],
+        [InlineKeyboardButton("🔙 بازگشت به تنظیمات مالی", callback_data="back_to_financial_settings")]
+    ]
+    return InlineKeyboardMarkup(keyboard)

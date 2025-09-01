@@ -1,5 +1,7 @@
-# FILE: modules/marzban/actions/display.py (نسخه نهایی با لیست کاربران زیبا و تراز شده)
+# FILE: modules/marzban/actions/display.py (نسخه نهایی کامل با اصلاحات)
 
+import qrcode
+import io
 import time
 import math
 import datetime
@@ -270,12 +272,40 @@ async def show_user_details_panel(
     except Exception as e:
         LOGGER.error(f"Failed to edit user details panel for {username}: {e}")
 
+
+# FILE: modules/marzban/actions/display.py
+# فقط این تابع را با نسخه نهایی و کاملاً صحیح زیر جایگزین کنید
+
 async def show_user_details(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
 
-    parts = query.data.split('_')
-    username, list_type, page_number = parts[2], parts[3], int(parts[4])
+    # --- 🟢 راه حل نهایی و قطعی برای نام کاربری‌های شامل آندرلاین 🟢 ---
+    try:
+        callback_data = query.data
+        
+        # ۱. جدا کردن دو بخش آخر (list_type و page_number) از سمت راست
+        # مثال: 'user_details_moh123_913_warning_1'
+        # نتیجه rsplit: ['user_details_moh123_913', 'warning', '1']
+        prefix_and_username, list_type, page_number_str = callback_data.rsplit('_', 2)
+        page_number = int(page_number_str)
+
+        # ۲. جدا کردن پیشوند ثابت برای استخراج نام کاربری خالص
+        prefix_to_remove = "user_details_"
+        if not prefix_and_username.startswith(prefix_to_remove):
+             raise ValueError(f"Callback data does not start with the correct prefix: {callback_data}")
+        
+        # نتیجه: 'moh123_913'
+        username = prefix_and_username[len(prefix_to_remove):]
+        
+        if not username: # اگر نام کاربری خالی بود
+            raise ValueError("Extracted username is empty.")
+
+    except (ValueError, IndexError) as e:
+        LOGGER.error(f"CRITICAL: Could not parse complex user_details callback_data '{query.data}': {e}")
+        await query.edit_message_text("❌ خطا: اطلاعات دکمه نامعتبر است. لطفاً دوباره لیست کاربران را باز کنید.")
+        return
+    # --- -------------------------------------------------------------------- ---
     
     context.user_data['current_list_type'] = list_type
     context.user_data['current_page'] = page_number
@@ -302,13 +332,11 @@ async def close_pagination_message(update: Update, context: ContextTypes.DEFAULT
     )
 
 async def handle_deep_link_details(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    # ======================== START: FIX for duplicate panel ========================
     now = time.time()
     last_call = context.user_data.get('last_deeplink_call', 0)
-    if now - last_call < 2:  # 2 seconds cooldown
-        return  # Ignore rapid-fire calls
+    if now - last_call < 2:
+        return
     context.user_data['last_deeplink_call'] = now
-    # ========================= END: FIX for duplicate panel =========================
 
     user = update.effective_user
     if user.id not in config.AUTHORIZED_USER_IDS:
@@ -334,4 +362,89 @@ async def handle_deep_link_details(update: Update, context: ContextTypes.DEFAULT
         username=username,
         list_type='all',
         page_number=1
+    )
+
+def format_subscription_links(user_data: dict) -> str:
+    """
+    Generates a formatted string of subscription links from user data.
+    This is a reusable helper function.
+    """
+    links_text = ""
+    
+    subscription_url = user_data.get('subscription_url')
+    if subscription_url:
+        links_text += f"▫️ **لینک کلی:**\n`{subscription_url}`\n\n"
+
+    inbounds = user_data.get('inbounds', {})
+    if inbounds:
+        for protocol, link_list in inbounds.items():
+            if link_list:
+                links_text += f"▫️ **لینک‌های {protocol.upper()}:**\n"
+                for i, link in enumerate(link_list, 1):
+                    links_text += f"`{link}`\n"
+                links_text += "\n"
+                
+    if not links_text:
+        return "هیچ لینک اتصالی برای این کاربر یافت نشد."
+        
+    return links_text.strip()
+    
+async def send_subscription_qr_code_and_link(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Handles the 'Subscription Link' button press.
+    Fetches the user's subscription URL, generates a QR code, and sends it as a photo with a caption.
+    """
+    query = update.callback_query
+    await query.answer()
+
+    try:
+        username = query.data.split('_')[2]
+    except IndexError:
+        await query.edit_message_text("❌ خطای داخلی: نام کاربری یافت نشد.")
+        return
+
+    user_data = await get_user_data(username)
+    subscription_url = user_data.get('subscription_url')
+
+    if not subscription_url:
+        await query.edit_message_text(
+            text=f"⚠️ لینکی برای کاربر `{username}` یافت نشد.",
+            parse_mode=ParseMode.MARKDOWN
+        )
+        return
+
+    # --- Generate QR Code ---
+    qr_image = qrcode.make(subscription_url)
+    bio = io.BytesIO()
+    bio.name = 'qrcode.png'
+    qr_image.save(bio, 'PNG')
+    bio.seek(0)
+
+    # --- Create Caption ---
+    caption = (
+        f"📱 **لینک اشتراک کاربر:** `{username}`\n\n"
+        f"🔗 **لینک اتصال (برای کپی):**\n"
+        f"`{subscription_url}`\n\n"
+        f"👇 *برای اتصال، QR کد زیر را اسکن کنید یا لینک بالا را در برنامه خود وارد نمایید.*"
+    )
+
+    # --- Create 'Back' Button ---
+    list_type = context.user_data.get('current_list_type', 'all')
+    page_number = context.user_data.get('current_page', 1)
+    
+    back_button_callback = f"user_details_{username}_{list_type}_{page_number}"
+    keyboard = InlineKeyboardMarkup([[
+        InlineKeyboardButton("🔙 بازگشت به جزئیات کاربر", callback_data=back_button_callback)
+    ]])
+    
+    # Delete the user list/details panel
+    await query.message.delete()
+    
+    # Send the QR code as a new message
+    await context.bot.send_photo(
+        chat_id=query.message.chat_id,
+        photo=bio,
+        caption=caption,
+        reply_markup=keyboard,
+        parse_mode=ParseMode.MARKDOWN
     )

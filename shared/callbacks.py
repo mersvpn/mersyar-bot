@@ -65,3 +65,17 @@ async def cancel_to_helper_tools(update: Update, context: ContextTypes.DEFAULT_T
     )
     return ConversationHandler.END
 # =======================================================================================
+# FILE: shared/callbacks.py (فقط تابع جدید برای اضافه شدن)
+
+# ... (کدهای قبلی فایل سر جای خود باقی بمانند) ...
+
+# ==================== تابع جدید برای قابلیت "بزودی" ====================
+async def show_coming_soon(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Shows a 'Coming Soon' alert to the user for features not yet implemented.
+    This is used for placeholder buttons.
+    """
+    query = update.callback_query
+    if query:
+        await query.answer(text="⏳ این قابلیت به زودی اضافه خواهد شد.", show_alert=True)
+# ========================================================================

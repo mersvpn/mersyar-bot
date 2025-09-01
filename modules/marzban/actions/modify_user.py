@@ -1,4 +1,4 @@
-# FILE: modules/marzban/actions/modify_user.py (نسخه نهایی کامل و صحیح)
+# FILE: modules/marzban/actions/modify_user.py (نسخه نهایی، کاملاً صحیح و بازبینی شده)
 
 import datetime
 import logging
@@ -8,9 +8,7 @@ from telegram.constants import ParseMode
 from shared.log_channel import send_log
 from telegram.helpers import escape_markdown
 
-# وارد کردن تابع جدید از ماژول display
 from .display import show_user_details_panel
-from modules.financials.actions.payment import send_renewal_invoice_to_user
 from .constants import GB_IN_BYTES, DEFAULT_RENEW_DAYS
 from .data_manager import normalize_username
 from .api import (
@@ -22,62 +20,12 @@ LOGGER = logging.getLogger(__name__)
 
 ADD_DAYS_PROMPT, ADD_DATA_PROMPT = range(2)
 
-
-# ==================== مدیریت درخواست حذف از طرف مشتری (توابع بازگردانده شده) ====================
-async def admin_confirm_delete(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    from database.db_manager import cleanup_marzban_user_data
-    query = update.callback_query
-    await query.answer()
-    
-    admin_user = update.effective_user
-    parts = query.data.split('_')
-    username, customer_id = parts[3], int(parts[4])
-    
-    await query.edit_message_text(f"در حال حذف کانفیگ `{username}` از پنل مرزبان...", parse_mode=ParseMode.MARKDOWN)
-    
-    success, message = await delete_user_api(username)
-    if success:
-        await cleanup_marzban_user_data(username)
-        
-        # --- بخش اصلاح شده نهایی ---
-        admin_name = admin_user.full_name
-        admin_mention = escape_markdown(admin_name, version=2).replace('(', '\\(').replace(')', '\\)')
-        safe_username = escape_markdown(username, version=2)
-        
-        log_message = (
-            f"🗑️ *اشتراک حذف شد (بنا به درخواست مشتری)*\n\n"
-            f"▫️ **نام کاربری:** `{safe_username}`\n"
-            f"👤 **تایید شده توسط ادمین:** {admin_mention}"
-        )
-        await send_log(context.bot, log_message, parse_mode=ParseMode.MARKDOWN_V2)
-        # --- پایان اصلاح ---
-
-        await query.edit_message_text(f"✅ کانفیگ `{username}` و تمام اطلاعات مرتبط با آن با موفقیت حذف شد.", parse_mode=ParseMode.MARKDOWN)
-        try:
-            await context.bot.send_message(chat_id=customer_id, text=f"✅ سرویس `{username}` شما طبق درخواستتان حذف شد.")
-        except Exception as e:
-            LOGGER.warning(f"Config deleted, but failed to notify customer {customer_id}: {e}")
-            await query.message.reply_text(f"⚠️ کانفیگ حذف شد، اما ارسال پیام به مشتری (ID: {customer_id}) خطا داد.")
-    else:
-        await query.edit_message_text(f"❌ خطا در حذف از پنل مرزبان: {message}", parse_mode=ParseMode.MARKDOWN)
-
-
-async def admin_reject_delete(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    query = update.callback_query
-    await query.answer()
-    parts = query.data.split('_')
-    username, customer_id = parts[3], int(parts[4])
-    await query.edit_message_text(f"❌ درخواست حذف سرویس `{username}` توسط شما رد شد.", parse_mode=ParseMode.MARKDOWN)
-    try:
-        await context.bot.send_message(chat_id=customer_id, text=f"❌ درخواست شما برای حذف سرویس `{username}` توسط ادمین رد شد.")
-    except Exception as e:
-        LOGGER.warning(f"Deletion for {username} rejected, but failed to notify customer {customer_id}: {e}")
-
-
 # ==================== مکالمه افزودن روز ====================
 async def prompt_for_add_days(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
-    username = query.data.split('_', 2)[-1]
+    # روش صحیح و امن برای استخراج نام کاربری
+    username = query.data.removeprefix('add_days_')
+
     context.user_data['modify_user_info'] = {
         'username': username,
         'chat_id': query.message.chat_id,
@@ -136,7 +84,9 @@ async def do_add_days(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
 # ==================== مکالمه افزایش حجم ====================
 async def prompt_for_add_data(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
-    username = query.data.split('_', 2)[-1]
+    # روش صحیح و امن برای استخراج نام کاربری
+    username = query.data.removeprefix('add_data_')
+        
     context.user_data['modify_user_info'] = {
         'username': username,
         'chat_id': query.message.chat_id,
@@ -193,11 +143,12 @@ async def do_add_data(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
 # ==================== توابع مستقل (بدون مکالمه) ====================
 async def reset_user_traffic(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
-    username = query.data.split('_', 2)[-1]
+    # روش صحیح و امن برای استخراج نام کاربری
+    username = query.data.removeprefix('reset_traffic_')
+
     await query.answer(f"در حال ریست ترافیک کاربر {username}...")
     
     success, message = await reset_user_traffic_api(username)
-    
     success_msg = "✅ ترافیک کاربر با موفقیت صفر شد." if success else f"❌ خطا: {message}"
 
     await show_user_details_panel(
@@ -212,7 +163,9 @@ async def reset_user_traffic(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 async def confirm_delete_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
-    username = query.data.split('_', 1)[-1]
+    # روش صحیح و امن برای استخراج نام کاربری
+    username = query.data.removeprefix('delete_')
+        
     list_type = context.user_data.get('current_list_type', 'all')
     page_number = context.user_data.get('current_page', 1)
     await query.answer()
@@ -223,43 +176,59 @@ async def confirm_delete_user(update: Update, context: ContextTypes.DEFAULT_TYPE
     await query.edit_message_text(f"⚠️ آیا از حذف کامل کانفیگ `{username}` مطمئن هستید؟ این عمل غیرقابل بازگشت است.", reply_markup=keyboard, parse_mode=ParseMode.MARKDOWN)
 
 async def do_delete_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    from database.db_manager import cleanup_marzban_user_data
+    from database.db_manager import cleanup_marzban_user_data, get_telegram_id_from_marzban_username
     query = update.callback_query
-    
     admin_user = update.effective_user
-    username = query.data.split('_', 2)[-1]
-    
+    # روش صحیح و امن برای استخراج نام کاربری
+    username = query.data.removeprefix('do_delete_')
+
     await query.answer()
+    
+    # تشخیص میدهیم که این یک درخواست از طرف مشتری بوده یا خیر
+    is_customer_request = "درخواست حذف سرویس" in query.message.text
+    
     await query.edit_message_text(f"در حال حذف `{username}` از پنل مرزبان...", parse_mode=ParseMode.MARKDOWN)
     
+    customer_id = await get_telegram_id_from_marzban_username(normalize_username(username))
+
     success, message = await delete_user_api(username)
     if success:
         await cleanup_marzban_user_data(username)
         
-        # --- بخش اصلاح شده نهایی ---
         admin_name = admin_user.full_name
         admin_mention = escape_markdown(admin_name, version=2).replace('(', '\\(').replace(')', '\\)')
         safe_username = escape_markdown(username, version=2)
         
+        log_title = "🗑️ اشتراک حذف شد (بنا به درخواست مشتری)" if is_customer_request else "🗑️ اشتراک حذف شد (دستی توسط ادمین)"
         log_message = (
-            f"🗑️ *اشتراک حذف شد (به صورت دستی توسط ادمین)*\n\n"
+            f"{log_title}\n\n"
             f"▫️ **نام کاربری:** `{safe_username}`\n"
             f"👤 **توسط ادمین:** {admin_mention}"
         )
         await send_log(context.bot, log_message, parse_mode=ParseMode.MARKDOWN_V2)
-        # --- پایان اصلاح ---
         
         await query.edit_message_text(f"🗑 کانفیگ `{username}` و تمام اطلاعات مرتبط با آن با موفقیت حذف شد.", parse_mode=ParseMode.MARKDOWN)
+
+        # اگر مشتری به ربات متصل بود به او اطلاع بده
+        if customer_id:
+             try:
+                await context.bot.send_message(chat_id=customer_id, text=f"✅ سرویس `{username}` شما طبق درخواستتان حذف شد.")
+             except Exception as e:
+                LOGGER.warning(f"Config deleted, but failed to notify customer {customer_id}: {e}")
+
     else:
         await query.edit_message_text(f"❌ {message}", parse_mode=ParseMode.MARKDOWN)
 
 
 # ==================== تابع تمدید هوشمند ====================
 async def renew_user_smart(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    from modules.financials.actions.payment import send_renewal_invoice_to_user
     from database.db_manager import get_user_note, get_telegram_id_from_marzban_username
 
     query = update.callback_query
-    username = query.data.split('_', 1)[-1]
+    # روش صحیح و امن برای استخراج نام کاربری
+    username = query.data.removeprefix('renew_')
+    
     admin_user = update.effective_user
     await query.answer(f"در حال تمدید هوشمند کانفیگ {username}...")
 

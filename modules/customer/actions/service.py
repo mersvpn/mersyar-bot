@@ -252,6 +252,7 @@ async def request_delete_service(update: Update, context: ContextTypes.DEFAULT_T
     await query.edit_message_text(text, reply_markup=keyboard, parse_mode=ParseMode.MARKDOWN)
     return CONFIRM_DELETE
 
+
 async def confirm_delete_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     from config import config
     query = update.callback_query
@@ -273,10 +274,17 @@ async def confirm_delete_request(update: Update, context: ContextTypes.DEFAULT_T
             f"نام کاربری در پنل: `{username}`\n\n"
             "این کاربر درخواست حذف کامل این سرویس را دارد."
         )
+        
+        # --- 🟢 بخش اصلاح شده 🟢 ---
+        # در callback_data فقط نام کاربری را قرار می‌دهیم
         admin_keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("✅ تایید حذف", callback_data=f"admin_confirm_delete_{username}_{user.id}")],
-            [InlineKeyboardButton("❌ رد درخواست", callback_data=f"admin_reject_delete_{username}_{user.id}")]
+            [InlineKeyboardButton("✅ تایید حذف", callback_data=f"delete_{username}")],
+            # برای دکمه رد کردن، می‌توانیم یک الگوی متفاوت برای جلوگیری از تداخل داشته باشیم
+            # اما فعلا نیازی نیست، چون هیچ تابعی آن را پردازش نمی‌کند.
+            # [InlineKeyboardButton("❌ رد درخواست", callback_data=f"admin_reject_delete_{username}")]
         ])
+        # --- ------------------- ---
+
         for admin_id in config.AUTHORIZED_USER_IDS:
             try:
                 await context.bot.send_message(

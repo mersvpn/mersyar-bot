@@ -1,38 +1,49 @@
-# FILE: modules/customer/actions/panel.py
-# (نسخه نهایی با قابلیت ویرایش پیام برای بازگشت)
+# FILE: modules/customer/actions/panel.py (نسخه اصلاح شده)
 
-from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
+from telegram import Update
 from telegram.ext import ContextTypes
 from telegram.constants import ParseMode
-from telegram import error
+
+# ایمپورت کردن کیبورد جدید از ماژول اشتراکی
+from shared.keyboards import get_customer_purchase_menu_keyboard
 
 async def show_customer_panel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
-    Displays or edits an inline keyboard with purchase and receipt submission options.
+    منوی اصلی خرید و پرداخت مشتری را با گزینه‌های جدید نمایش می‌دهد.
     """
-    keyboard = [
-        [InlineKeyboardButton("🛍️ درخواست خرید اشتراک", callback_data="start_purchase_flow")],
-        [InlineKeyboardButton("💳 ارسال رسید پرداخت", callback_data="start_receipt_upload")],
-        [InlineKeyboardButton("🔙 بازگشت", callback_data="close_customer_panel")]
-    ]
+    # استفاده مستقیم از تابع جدید برای ساخت کیبورد
+    reply_markup = get_customer_purchase_menu_keyboard()
     
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    text = "*به پنل خرید و پرداخت خوش آمدید.*\nلطفاً گزینه مورد نظر خود را انتخاب کنید:"
+    # به‌روزرسانی متن پیام برای هماهنگی با گزینه‌های جدید
+    text = "🛍️ *پنل خرید و پرداخت*\n\nاز این بخش می‌توانید سرویس جدید سفارش دهید یا رسید پرداخت خود را ارسال کنید."
     
     query = update.callback_query
     if query:
-        # If called from a back button, edit the message
+        # اگر از طریق دکمه بازگشت فراخوانی شود، پیام قبلی ویرایش می‌شود
         await query.answer()
-        await query.edit_message_text(text=text, reply_markup=reply_markup, parse_mode=ParseMode.MARKDOWN)
+        await query.edit_message_text(
+            text=text, 
+            reply_markup=reply_markup, 
+            parse_mode=ParseMode.MARKDOWN
+        )
     else:
-        # If called from the main menu, send a new message
-        await update.message.reply_text(text=text, reply_markup=reply_markup, parse_mode=ParseMode.MARKDOWN)
+        # اگر از منوی اصلی فراخوانی شود، پیام جدیدی ارسال می‌شود
+        await update.message.reply_text(
+            text=text, 
+            reply_markup=reply_markup, 
+            parse_mode=ParseMode.MARKDOWN
+        )
 
 
 async def close_customer_panel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
-    Closes the inline customer panel message.
+    پیام پنل خرید مشتری را می‌بندد (حذف می‌کند).
+    این تابع بدون تغییر باقی می‌ماند.
     """
     query = update.callback_query
     await query.answer()
-    await query.message.delete()
+    try:
+        await query.message.delete()
+    except Exception:
+        # در صورتی که پیام قبلاً حذف شده باشد، خطایی رخ ندهد
+        pass

@@ -18,14 +18,27 @@ LOGGER = logging.getLogger(__name__)
 
 # ==================== بخش اصلی جاب روزانه ====================
 
-async def check_users_for_reminders(context: ContextTypes.DEFAULT_TYPE) -> None:
-    from database.db_manager import load_bot_settings, load_non_renewal_users
+# FILE: modules/reminder/actions/jobs.py
+# فقط این تابع را به طور کامل جایگزین کنید
 
+async def check_users_for_reminders(context: ContextTypes.DEFAULT_TYPE) -> None:
+    # --- 🟢 بخش اضافه شده برای منقضی کردن فاکتورها 🟢 ---
+    from database.db_manager import load_bot_settings, load_non_renewal_users, expire_old_pending_invoices
+    
     admin_id = context.job.chat_id
     bot_username = context.bot.username
     LOGGER.info(f"Executing daily job for admin {admin_id}...")
 
     try:
+        # 1. منقضی کردن فاکتورهای قدیمی در ابتدای جاب
+        expired_count = await expire_old_pending_invoices()
+        if expired_count > 0:
+            log_message = f"🧾 **گزارش انقضای فاکتور**\n\nتعداد `{expired_count}` فاکتور پرداخت نشده که بیش از ۲۴ ساعت از ایجادشان گذشته بود، به صورت خودکار منقضی شدند."
+            await send_log(context.bot, log_message, parse_mode=ParseMode.MARKDOWN)
+            LOGGER.info(f"Successfully expired {expired_count} old pending invoices.")
+        # --- -------------------------------------------------- ---
+
+        # 2. ادامه منطق قبلی برای ارسال یادآورها
         settings = await load_bot_settings()
         users_map = await load_users_map()
         
@@ -51,7 +64,6 @@ async def check_users_for_reminders(context: ContextTypes.DEFAULT_TYPE) -> None:
             if status != 'active' or normalized_name in non_renewal_list:
                 continue
             
-            # ... (بقیه منطق ارسال یادآور بدون تغییر باقی می‌ماند)
             is_expiring, is_low_data, expire_date = False, False, None
             expire_ts = user.get('expire')
             if expire_ts:
@@ -78,10 +90,15 @@ async def check_users_for_reminders(context: ContextTypes.DEFAULT_TYPE) -> None:
                         remaining_gb = (data_limit - used_traffic) / GB_IN_BYTES
                         customer_message += f"📉 کمتر از **{remaining_gb:.2f} گیگابایت** از حجم شما باقی مانده است.\n"
                     customer_message += "\nبرای جلوگیری از هرگونه قطعی، لطفاً نسبت به تمدید اشتراک خود اقدام نمایید."
+                    
+                    # --- 🟢 اصلاح callback_data برای یادآور تمدید 🟢 ---
+                    # این اصلاح تضمین می‌کند که نام کاربری به درستی ارسال شود
                     keyboard = InlineKeyboardMarkup([
                         [InlineKeyboardButton("✅ درخواست تمدید", callback_data=f"customer_renew_request_{username}")],
                         [InlineKeyboardButton("❌ عدم تمدید این دوره", callback_data=f"customer_do_not_renew_{username}")]
                     ])
+                    # --- ---------------------------------------------- ---
+                    
                     await context.bot.send_message(
                         chat_id=customer_telegram_id, text=customer_message, reply_markup=keyboard, parse_mode=ParseMode.MARKDOWN
                     )
@@ -123,7 +140,6 @@ async def check_users_for_reminders(context: ContextTypes.DEFAULT_TYPE) -> None:
             await context.bot.send_message(admin_id, error_message, parse_mode=ParseMode.MARKDOWN_V2)
         except Exception as notify_error:
             LOGGER.error(f"Failed to notify admin about the job failure: {notify_error}")
-
 
 # ==================== تابع جدید برای حذف خودکار ====================
 async def auto_delete_expired_users(context: ContextTypes.DEFAULT_TYPE) -> None:
