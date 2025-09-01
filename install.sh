@@ -30,9 +30,17 @@ info "      Mersyar-Bot Universal Installer"
 info "==============================================="
 info "Latest Version Found: $LATEST_TAG"
 
+# --- Script Internal Variables ---
+PROJECT_DIR="/root/$GITHUB_REPO"
+SERVICE_NAME="mersyar-bot"
+PYTHON_ALIAS="python3"
+TARBALL_NAME="${LATEST_TAG}.tar.gz"
+DB_NAME="mersyar_bot_db"
+DB_USER="mersyar"
+
 # --- Interactive User Input ---
-# (این بخش‌ها برای آپدیت مجدد پرسیده نمی‌شوند، اما برای نصب اولیه ضروری هستند)
-if [ ! -f "/root/$GITHUB_REPO/.env" ]; then
+# هوشمندانه عمل می‌کند: اگر فایل .env وجود داشت، دیگر سوال نمی‌پرسد
+if [ ! -f "$PROJECT_DIR/.env" ]; then
     read -p "Enter your Domain/Subdomain (e.g., bot.example.com): " DOMAIN
     read -p "Enter your email for SSL certificate notifications: " ADMIN_EMAIL
     echo "---"
@@ -41,22 +49,12 @@ if [ ! -f "/root/$GITHUB_REPO/.env" ]; then
     read -p "Enter the Support Username (optional, press Enter to skip): " SUPPORT_USERNAME
 else
     info "Existing .env file found. Skipping user input for credentials."
-    # خواندن مقادیر موجود برای Nginx و SSL
-    DOMAIN=$(grep -E "^BOT_DOMAIN=" "/root/$GITHUB_REPO/.env" | cut -d '=' -f2- | tr -d '"')
-    ADMIN_EMAIL="info@$DOMAIN" # یک ایمیل پیش‌فرض
+    DOMAIN=$(grep -E "^BOT_DOMAIN=" "$PROJECT_DIR/.env" | cut -d '=' -f2- | tr -d '"')
+    ADMIN_EMAIL="info@$DOMAIN"
 fi
-
 
 info "✅ Starting the installation/update process..."
 sleep 2
-
-# --- Script Internal Variables ---
-PROJECT_DIR="/root/$GITHUB_REPO"
-SERVICE_NAME="mersyar-bot"
-PYTHON_ALIAS="python3"
-TARBALL_NAME="${LATEST_TAG}.tar.gz"
-DB_NAME="mersyar_bot_db"
-DB_USER="mersyar"
 
 # --- 1. Update System and Install ALL Dependencies ---
 info "[1/9] Updating system and installing dependencies..."
@@ -72,7 +70,6 @@ wget -q "$DOWNLOAD_URL" -O "/tmp/$TARBALL_NAME"
 # --- 3. Smart Update/Install Logic ---
 if [ -d "$PROJECT_DIR" ]; then
     info "[3/9] Existing installation found. Performing an update..."
-    # روی فایل‌های موجود بازنویسی می‌کند بدون حذف کل پوشه
     tar -xzf "/tmp/$TARBALL_NAME" --strip-components=1 -C "$PROJECT_DIR"
 else
     info "[3/9] No existing installation found. Performing a fresh install..."
@@ -80,7 +77,6 @@ else
     tar -xzf "/tmp/$TARBALL_NAME" --strip-components=1 -C "$PROJECT_DIR"
     cd "$PROJECT_DIR"
     
-    # --- 3a. Setting up MySQL Database (Only for fresh install) ---
     info "   -> Setting up MySQL Database and User..."
     DB_PASSWORD=$(openssl rand -base64 18 | tr -dc 'a-zA-Z0-9' | head -c 16)
     mysql -e "CREATE DATABASE IF NOT EXISTS $DB_NAME;"
@@ -88,7 +84,6 @@ else
     mysql -e "GRANT ALL PRIVILEGES ON $DB_NAME.* TO '$DB_USER'@'localhost';"
     mysql -e "FLUSH PRIVILEGES;"
     
-    # --- 3b. Create .env file (Only for fresh install) ---
     info "   -> Creating .env file..."
     WEBHOOK_SECRET_TOKEN=$(openssl rand -base64 24 | tr -dc 'a-zA-Z0-9' | head -c 32)
     cat << EOF > .env
@@ -123,7 +118,6 @@ PHP_FPM_SOCK=$(ls /var/run/php/php*-fpm.sock | head -n 1)
 
 # --- 6. Configure Nginx and Obtain SSL Certificate ---
 info "[6/9] Configuring Nginx and obtaining SSL..."
-# فقط در صورتی Nginx را کانفیگ کن که فایل آن وجود نداشته باشد
 if [ ! -f "/etc/nginx/sites-available/$SERVICE_NAME" ]; then
     cat << EOF > /etc/nginx/sites-available/$SERVICE_NAME
 server {
@@ -135,7 +129,7 @@ server {
 EOF
     ln -s -f /etc/nginx/sites-available/$SERVICE_NAME /etc/nginx/sites-enabled/
     systemctl restart nginx
-    certbot --nginx -d "$DOMAIN" --non-interactive --agree-tos --email "$ADMIN_EMAIL" --redirect
+    certbot --nginx -d "$DOMAIN" --non-interactive --agree-tos --email "$ADMIN_EMAIL"
 else
     info "Nginx configuration already exists. Skipping."
 fi
@@ -147,12 +141,10 @@ cat << EOF > /etc/systemd/system/$SERVICE_NAME.service
 Description=$SERVICE_NAME Telegram Bot Service
 After=network.target mysql.service
 [Service]
-Type=simple
-User=root
+Type=simple User=root
 WorkingDirectory=$PROJECT_DIR
 ExecStart=$PROJECT_DIR/venv/bin/python3 $PROJECT_DIR/bot.py
-Restart=on-failure
-RestartSec=10
+Restart=on-failure RestartSec=10
 [Install]
 WantedBy=multi-user.target
 EOF
