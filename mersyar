@@ -2,191 +2,104 @@
 
 # =============================================================
 #  Mersyar Bot Management CLI
-#  Version: 1.1.0
+#  Version: 1.2.0 (Final & Stable Backup Logic)
 # =============================================================
 
-# --- مسیرهای اصلی ---
-BOT_DIR="/root/mersyar-bot" # مسیر نصب ثابت شما
+# --- Paths & Config ---
+BOT_DIR="/root/mersyar-bot"
 ENV_FILE="$BOT_DIR/.env"
 BACKUP_SCRIPT_PATH="$BOT_DIR/backup_and_send.sh"
-INSTALL_SCRIPT_URL="https://raw.githubusercontent.com/mersvpn/mersyar-bot/main/install.sh"
+INSTALL_SCRIPT_URL="https://raw.githubusercontent.com/mersvpn/mersyar-bot/master/install.sh"
 
-# --- رنگ‌ها ---
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-RED='\033[0;31m'
-NC='\033[0m'
+# --- Colors ---
+GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; NC='\033[0m'
 
-# --- توابع کمکی ---
-get_env_var() {
-    local var_name=$1
-    # اطمینان حاصل می‌کند که فقط متغیرهای کامل مطابقت داده شوند
-    local var_value=$(grep -E "^${var_name}=" "$ENV_FILE" | cut -d '=' -f2-)
-    var_value="${var_value%\"}"; var_value="${var_value#\"}"
-    echo "$var_value"
-}
+# --- Helper Functions ---
+get_env_var() { local v=$(grep -E "^$1=" "$ENV_FILE"|cut -d'=' -f2-); v="${v//\"/}"; echo "$v"; }
 
-# --- توابع اصلی عملیات ---
-
+# --- Main Functions ---
 run_install() {
-    echo -e "${YELLOW}هشدار: این عملیات تمام مراحل نصب را از ابتدا اجرا خواهد کرد.${NC}"
-    read -p "آیا مطمئن هستید؟ (y/n): " confirm
-    if [[ "$confirm" != "y" ]]; then
-        echo "عملیات لغو شد."
-        return
-    fi
-    echo -e "${YELLOW}دانلود و اجرای آخرین نسخه اسکریپت نصب...${NC}"
+    echo -e "${YELLOW}Warning: This will run the full installation from scratch.${NC}"
+    read -p "Are you sure? (y/n): " confirm
+    if [[ "$confirm" != "y" ]]; then echo "Operation cancelled."; return; fi
+    echo -e "${YELLOW}Downloading and executing the latest install script...${NC}"
     wget -O install.sh "$INSTALL_SCRIPT_URL" && chmod +x install.sh && ./install.sh
 }
 
 run_update() {
-    echo -e "${YELLOW}شروع فرآیند به‌روزرسانی...${NC}"
-    cd "$BOT_DIR" || { echo -e "${RED}خطا: ورود به پوشه ربات ناموفق بود.${NC}"; exit 1; }
-    
-    echo "۱. دریافت آخرین نسخه از گیت‌هاب (با استفاده از دانلود مستقیم)..."
+    echo -e "${YELLOW}Starting update process...${NC}"
+    cd "$BOT_DIR" || { echo -e "${RED}Error: Could not enter bot directory.${NC}"; exit 1; }
+    echo "1. Fetching the latest version from GitHub..."
     LATEST_TAG=$(wget -qO- "https://api.github.com/repos/mersvpn/mersyar-bot/releases/latest" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
     DOWNLOAD_URL="https://github.com/mersvpn/mersyar-bot/archive/refs/tags/$LATEST_TAG.tar.gz"
     TARBALL_NAME="${LATEST_TAG}.tar.gz"
-    
-    wget -q "$DOWNLOAD_URL" -O "/tmp/$TARBALL_NAME"
-    
-    # استخراج محتویات جدید روی فایل‌های قدیمی (آپدیت)
-    # --strip-components=1 برای حذف پوشه اصلی داخل tarball
-    tar -xzf "/tmp/$TARBALL_NAME" --strip-components=1 -C "$BOT_DIR"
-    rm "/tmp/$TARBALL_NAME"
-
-    echo "۲. به‌روزرسانی کتابخانه‌های پایتون..."
-    source venv/bin/activate
-    pip install -r requirements.txt
-    deactivate
-    
-    echo "۳. ری‌استارت سرویس ربات..."
-    systemctl restart mersyar-bot
-    
-    echo -e "${GREEN}ربات با موفقیت به نسخه $LATEST_TAG به‌روزرسانی و ری‌استارت شد!${NC}"
+    wget -q "$DOWNLOAD_URL" -O "/tmp/$TARBALL_NAME"; tar -xzf "/tmp/$TARBALL_NAME" --strip-components=1 -C "$BOT_DIR"; rm "/tmp/$TARBALL_NAME"
+    echo "2. Updating Python libraries..."; source venv/bin/activate; pip install -r requirements.txt; deactivate
+    echo "3. Restarting the bot service..."; systemctl restart mersyar-bot
+    echo -e "${GREEN}Bot successfully updated to version $LATEST_TAG and restarted!${NC}"
 }
 
 run_manual_backup() {
-    echo -e "${YELLOW}شروع فرآیند بکاپ‌گیری دستی...${NC}"
-
-    if ! command -v mysqldump &> /dev/null; then
-        echo -e "${RED}خطا: \`mysqldump\` نصب نیست. لطفاً ابتدا پکیج mysql-client را نصب کنید.${NC}"
-        return
-    fi
-    
-    DB_NAME=$(get_env_var "DB_NAME")
-    DB_USER=$(get_env_var "DB_USER")
-    DB_PASSWORD=$(get_env_var "DB_PASSWORD")
-    DB_HOST=$(get_env_var "DB_HOST")
-
-    if [ -z "$DB_NAME" ] || [ -z "$DB_USER" ]; then
-        echo -e "${RED}خطا: اطلاعات دیتابیس در فایل .env یافت نشد.${NC}"
-        return
-    fi
-    
-    BACKUP_DIR="$BOT_DIR/backups"
-    mkdir -p "$BACKUP_DIR"
-    TIMESTAMP=$(date +"%Y-%m-%d_%H-%M-%S")
+    echo -e "${YELLOW}Starting manual backup process...${NC}"
+    if ! command -v mysqldump &> /dev/null; then echo -e "${RED}Error: 'mysqldump' is not installed.${NC}"; return; fi
+    DB_NAME=$(get_env_var "DB_NAME"); DB_USER=$(get_env_var "DB_USER"); DB_PASSWORD=$(get_env_var "DB_PASSWORD"); DB_HOST=$(get_env_var "DB_HOST")
+    if [ -z "$DB_NAME" ] || [ -z "$DB_USER" ]; then echo -e "${RED}Error: Database credentials not found.${NC}"; return; fi
+    BACKUP_DIR="$BOT_DIR/backups"; mkdir -p "$BACKUP_DIR"; TIMESTAMP=$(date +"%Y-%m-%d_%H-%M-%S")
     BACKUP_FILE="$BACKUP_DIR/backup-${DB_NAME}-${TIMESTAMP}.sql"
-
-    echo "در حال ایجاد بکاپ از دیتابیس '$DB_NAME'..."
-    
-    if mysqldump -h"$DB_HOST" -u"$DB_USER" -p"$DB_PASSWORD" "$DB_NAME" > "$BACKUP_FILE"; then
-        gzip "$BACKUP_FILE"
-        echo -e "${GREEN}بکاپ با موفقیت در مسیر زیر ایجاد شد:${NC}"
-        echo "$BACKUP_FILE.gz"
+    echo "Creating backup of database '$DB_NAME'..."
+    export MYSQL_PWD="$DB_PASSWORD"
+    if mysqldump --no-tablespaces -h"$DB_HOST" -u"$DB_USER" "$DB_NAME" > "$BACKUP_FILE" 2>/dev/null; then
+        unset MYSQL_PWD; gzip "$BACKUP_FILE"; echo -e "${GREEN}Backup successfully created at:${NC}"; echo "$BACKUP_FILE.gz"
     else
-        echo -e "${RED}خطا در هنگام ایجاد بکاپ دیتابیس.${NC}"
-        rm -f "$BACKUP_FILE"
+        unset MYSQL_PWD; echo -e "${RED}Error during database backup.${NC}"; rm -f "$BACKUP_FILE"
     fi
 }
 
 setup_auto_backup() {
-    echo -e "${YELLOW}تنظیم بکاپ‌گیری خودکار و ارسال به تلگرام...${NC}"
-    
-    # خواندن مقادیر پیش‌فرض از .env
+    echo -e "${YELLOW}Setting up automatic backup to Telegram...${NC}"
     DEFAULT_TOKEN=$(get_env_var "TELEGRAM_BOT_TOKEN")
+    read -p "Enter your Telegram Bot Token (default: $DEFAULT_TOKEN): " BOT_TOKEN; BOT_TOKEN=${BOT_TOKEN:-$DEFAULT_TOKEN}
+    read -p "Enter the numeric Telegram Channel ID (starts with -100): " CHANNEL_ID
+    read -p "How many hours between backups? (e.g., 6): " INTERVAL_HOURS
+    if ! [[ "$INTERVAL_HOURS" =~ ^[0-9]+$ ]] || [ "$INTERVAL_HOURS" -le 0 ]; then echo -e "${RED}Error: Interval must be a positive number.${NC}"; return; fi
     
-    read -p "توکن ربات تلگرام خود را وارد کنید (پیش‌فرض: $DEFAULT_TOKEN): " BOT_TOKEN
-    BOT_TOKEN=${BOT_TOKEN:-$DEFAULT_TOKEN}
-
-    read -p "آیدی عددی کانال تلگرام را وارد کنید (با -100 شروع می‌شود): " CHANNEL_ID
-    read -p "هر چند ساعت یکبار بکاپ گرفته شود؟ (مثال: 6 برای هر 6 ساعت): " INTERVAL_HOURS
-
-    if ! [[ "$INTERVAL_HOURS" =~ ^[0-9]+$ ]] || [ "$INTERVAL_HOURS" -le 0 ]; then
-        echo -e "${RED}خطا: فاصله زمانی باید یک عدد مثبت باشد.${NC}"; return;
-    fi
-    
-    echo "در حال ایجاد/به‌روزرسانی اسکریپت بکاپ..."
-    
-    # ایجاد اسکریپت با Heredoc
+    echo "Creating/Updating backup script...";
+    # --- 🟢 The Final, Correct backup script generation logic 🟢 ---
     cat > "$BACKUP_SCRIPT_PATH" <<- EOL
 #!/bin/bash
-BOT_DIR="$BOT_DIR"
-ENV_FILE="\$BOT_DIR/.env"
-get_var() { local v=\$(grep -E "^\$1=" "\$ENV_FILE" | cut -d '=' -f2-); v="\${v%\\\"}"; v="\${v#\\\"}"; echo "\$v"; }
-DB_NAME=\$(get_var "DB_NAME")
-DB_USER=\$(get_var "DB_USER")
-DB_PASSWORD=\$(get_var "DB_PASSWORD")
-DB_HOST=\$(get_var "DB_HOST")
-BACKUP_DIR="\$BOT_DIR/backups"
-mkdir -p "\$BACKUP_DIR"
+source "$BOT_DIR/.env"
 TIMESTAMP=\$(date +"%Y-%m-%d_%H-%M-%S")
-BACKUP_FILE="\$BACKUP_DIR/backup-\$DB_NAME-\$TIMESTAMP.sql.gz"
-mysqldump -h"\$DB_HOST" -u"\$DB_USER" -p"\$DB_PASSWORD" "\$DB_NAME" | gzip > "\$BACKUP_FILE"
-if [ -s "\$BACKUP_FILE" ]; then
-    CAPTION="Backup: \$DB_NAME @ \$TIMESTAMP"
-    curl -s -F document=@"\$BACKUP_FILE" "https://api.telegram.org/bot$BOT_TOKEN/sendDocument?chat_id=$CHANNEL_ID&caption=\$CAPTION" > /dev/null
-    rm "\$BACKUP_FILE"
+BACKUP_FILE="/tmp/backup-\${DB_NAME}-\${TIMESTAMP}.sql.gz"
+export MYSQL_PWD="\$DB_PASSWORD"
+if mysqldump --no-tablespaces -h"\$DB_HOST" -u"\$DB_USER" "\$DB_NAME" 2>/dev/null | gzip > "\$BACKUP_FILE"; then
+    if [ -s "\$BACKUP_FILE" ]; then
+        CAPTION_TEXT="Backup: \${DB_NAME} @ \${TIMESTAMP}"
+        curl -s -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendDocument" \\
+             -F "chat_id=${CHANNEL_ID}" \\
+             -F "document=@\${BACKUP_FILE}" \\
+             -F "caption=\${CAPTION_TEXT}" > /dev/null
+    fi
 fi
+unset MYSQL_PWD
+rm -f "\$BACKUP_FILE"
 EOL
-
     chmod +x "$BACKUP_SCRIPT_PATH"
-    echo "در حال تنظیم Cronjob..."
+    echo "Setting up Cronjob...";
     (crontab -l 2>/dev/null | grep -v "$BACKUP_SCRIPT_PATH" ; echo "0 */$INTERVAL_HOURS * * * $BACKUP_SCRIPT_PATH") | crontab -
-    
-    echo -e "${GREEN}انجام شد! بکاپ‌گیری خودکار هر $INTERVAL_HOURS ساعت یکبار انجام خواهد شد.${NC}"
+    echo -e "${GREEN}Done! Automatic backup will run every $INTERVAL_HOURS hours.${NC}"
+
+    read -p "Would you like to run the first backup now to test the configuration? (y/n): " test_now
+    if [[ "$test_now" == "y" ]]; then
+        echo -e "${YELLOW}Running a test backup...${NC}"
+        if bash "$BACKUP_SCRIPT_PATH"; then
+             echo -e "${GREEN}Test backup sent! Please check your Telegram channel.${NC}"
+        else
+             echo -e "${RED}The test backup script encountered an error.${NC}"
+        fi
+    fi
 }
 
-
-# --- نمایش منوها ---
-show_menu() {
-    echo -e "\n${GREEN}===== منوی مدیریت ربات Mersyar =====${NC}"
-    echo "1. نصب / نصب مجدد (Re-install)"
-    echo "2. به‌روزرسانی ربات (Update)"
-    echo "3. مدیریت بکاپ‌ها (Backup)"
-    echo "4. خروج (Exit)"
-    echo -e "======================================"
-}
-
-show_backup_menu() {
-    echo -e "\n${YELLOW}--- منوی مدیریت بکاپ ---${NC}"
-    echo "1. ایجاد بکاپ دستی (فوری)"
-    echo "2. تنظیم بکاپ خودکار و ارسال به تلگرام"
-    echo "3. بازگشت به منوی اصلی"
-    echo -e "-------------------------"
-}
-
-# --- حلقه اصلی برنامه ---
-while true; do
-    show_menu
-    read -p "لطفاً یک گزینه را انتخاب کنید [1-4]: " choice
-    case $choice in
-        1) run_install ;;
-        2) run_update ;;
-        3)
-            while true; do
-                show_backup_menu
-                read -p "گزینه بکاپ را انتخاب کنید [1-3]: " backup_choice
-                case $backup_choice in
-                    1) run_manual_backup; break ;;
-                    2) setup_auto_backup; break ;;
-                    3) break ;;
-                    *) echo -e "${RED}گزینه نامعتبر.${NC}" ;;
-                esac
-            done
-            ;;
-        4) echo "خروج."; exit 0 ;;
-        *) echo -e "${RED}گزینه نامعتبر.${NC}" ;;
-    esac
-done
+# --- Menu Display & Main Loop ---
+show_menu() { echo -e "\n${GREEN}===== Mersyar Bot Management Menu =====${NC}";echo "1. Install / Re-install";echo "2. Update Bot";echo "3. Backup Management";echo "4. Exit";echo -e "======================================";}
+show_backup_menu() { echo -e "\n${YELLOW}--- Backup Management Menu ---${NC}";echo "1. Create Manual Backup (Now)";echo "2. Setup Auto-Backup to Telegram";echo "3. Back to Main Menu";echo -e "-------------------------";}
+while true; do show_menu; read -p "Please select an option [1-4]: " choice; case $choice in 1)run_install;;2)run_update;;3)while true; do show_backup_menu; read -p "Select a backup option [1-3]: " backup_choice; case $backup_choice in 1)run_manual_backup;break;;2)setup_auto_backup;break;;3)break;;*)echo -e "${RED}Invalid option.${NC}";;esac; done;;4)echo "Exiting.";exit 0;;*)echo -e "${RED}Invalid option.${NC}";;esac; done
