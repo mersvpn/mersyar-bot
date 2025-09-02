@@ -1,0 +1,23 @@
+# Environment variables
+.env
+
+# Python virtual environment
+venv/
+.venv/
+
+# Python cache files
+__pycache__/
+*.pyc
+
+# VSCode specific files
+.vscode/
+
+# Log files
+*.log
+*.log.*
+
+# Bot status file
+bot_status.json
+
+# Other runtime files
+*.session
