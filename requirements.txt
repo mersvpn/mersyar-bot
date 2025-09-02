@@ -1,0 +1,25 @@
+# ===== Core Bot Framework =====
+python-telegram-bot[webhooks,job-queue]
+
+# ===== Environment & Configuration =====
+python-dotenv
+
+# ===== Networking =====
+httpx[http2]
+
+# ===== Database Connector =====
+# For connecting to MySQL asynchronously
+aiomysql
+# Required by aiomysql for modern MySQL authentication
+cryptography
+
+# ===== Date & Time =====
+jdatetime
+
+# ===== Utilities =====
+qrcode
+Pillow
+
+aiofiles
+
+python-telegram-bot
