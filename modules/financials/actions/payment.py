@@ -1,4 +1,4 @@
-# FILE: modules/financials/actions/payment.py (نسخه نهایی کامل و اصلاح شده)
+# FILE: modules/financials/actions/payment.py (نسخه نهایی با رفع مشکل بازگشت به پنل ادمین)
 import qrcode
 import io
 import logging
@@ -16,8 +16,9 @@ from database.db_manager import (
     link_user_to_telegram, get_user_note, get_telegram_id_from_marzban_username,
     create_pending_invoice
 )
-from shared.keyboards import get_admin_main_menu_keyboard, get_customer_main_menu_keyboard
-from modules.general.actions import start as back_to_main_menu_action
+from shared.keyboards import get_admin_main_menu_keyboard
+# --- FIX: Import the new central menu function and remove the old keyboard import ---
+from modules.general.actions import send_main_menu, start as back_to_main_menu_action
 from config import config
 from modules.marzban.actions.add_user import create_marzban_user_from_template
 
@@ -153,22 +154,71 @@ payment_request_conv = ConversationHandler(
 )
 
 async def send_renewal_invoice_to_user(context: ContextTypes.DEFAULT_TYPE, user_telegram_id: int, username: str, renewal_days: int, price: int, data_limit_gb: int):
-    # This function's body is intentionally omitted for brevity in this fix.
-    # The original file content should be here.
-    pass
+    """
+    Creates a pending invoice and sends it to the user after a successful renewal.
+    """
+    try:
+        financials = await load_financials()
+        card_holder = financials.get("card_holder")
+        card_number = financials.get("card_number")
+
+        if not card_holder or not card_number:
+            LOGGER.error(f"Cannot send renewal invoice to {username} ({user_telegram_id}) because financial settings are not configured.")
+            return
+
+        plan_details = {
+            'username': username,
+            'volume': data_limit_gb,
+            'duration': renewal_days
+        }
+        invoice_id = await create_pending_invoice(user_telegram_id, plan_details, price)
+        if not invoice_id:
+            LOGGER.error(f"Failed to create a pending invoice for user {username} during renewal.")
+            return
+
+        formatted_price = f"{price:,}"
+        invoice_text = (
+            f"🧾 *صورتحساب تمدید اشتراک*\n"
+            f"*شماره فاکتور: `{invoice_id}`*\n\n"
+            f"▫️ **سرویس:** `{username}`\n"
+            f"▫️ **دوره تمدید:** {renewal_days} روز\n"
+            f"▫️ **مبلغ قابل پرداخت:** `{formatted_price}` تومان\n\n"
+            f"**اطلاعات پرداخت:**\n"
+            f" \- شماره کارت: `{card_number}`\n"
+            f" \- به نام: `{card_holder}`\n\n"
+            "لطفاً پس از واریز، با استفاده از دکمه زیر، رسید خود را برای ما ارسال کنید."
+        )
+        
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("💳 ارسال رسید پرداخت", callback_data="customer_send_receipt")],
+            [InlineKeyboardButton("🔙 بازگشت به منو", callback_data="payment_back_to_menu")]
+        ])
+
+        await context.bot.send_message(
+            chat_id=user_telegram_id,
+            text=invoice_text,
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=keyboard
+        )
+        LOGGER.info(f"Renewal invoice #{invoice_id} successfully sent to user {username} ({user_telegram_id}).")
+
+    except TelegramError as e:
+        if "bot was blocked by the user" in str(e).lower():
+            LOGGER.warning(f"Could not send renewal invoice to {user_telegram_id} because the user has blocked the bot.")
+        else:
+            LOGGER.error(f"A Telegram error occurred while sending renewal invoice to {user_telegram_id}: {e}", exc_info=True)
+    except Exception as e:
+        LOGGER.error(f"An unexpected error occurred in send_renewal_invoice_to_user for user {username}: {e}", exc_info=True)
 
 async def handle_copy_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    # This function's body is intentionally omitted for brevity in this fix.
     pass
 
+# --- FIX: تابع handle_payment_back_button اصلاح شد تا از تابع کمکی مرکزی استفاده کند ---
 async def handle_payment_back_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
-    await query.message.delete()
-    await context.bot.send_message(
-        chat_id=update.effective_chat.id, text="به منوی اصلی بازگشتید.",
-        reply_markup=get_customer_main_menu_keyboard()
-    )
+    # به جای ارسال مستقیم کیبورد، تابع کمکی را فراخوانی می‌کنیم
+    await send_main_menu(update, context, message_text="به منوی اصلی بازگشتید.")
 
 async def send_manual_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
@@ -186,7 +236,6 @@ async def send_manual_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE
         duration = note_data.get('subscription_duration')
         
         if not price or not duration:
-            # If price/duration are not set, create a manual invoice
             callback_string = f"fin_send_req:{customer_id}:{username}"
             admin_keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("💰 ایجاد و ارسال صورتحساب", callback_data=callback_string)]])
             await context.bot.send_message(admin_chat_id, 
@@ -204,7 +253,6 @@ async def send_manual_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE
             await context.bot.send_message(admin_chat_id, "❌ **خطا:** اطلاعات مالی تنظیم نشده است.", parse_mode=ParseMode.MARKDOWN)
             return
 
-        # Create a pending invoice in the database first
         plan_details = {
             'username': username,
             'volume': note_data.get('subscription_data_limit_gb', 0),
@@ -232,19 +280,8 @@ async def send_manual_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE
         LOGGER.error(f"Failed to send manual invoice for user {username}: {e}", exc_info=True)
         await context.bot.send_message(admin_chat_id, f"❌ **خطای ناشناخته**.", parse_mode=ParseMode.MARKDOWN)
 
-
-# FILE: modules/financials/actions/payment.py
-# ابتدا دو import زیر را به بالای فایل اضافه کنید:
-# import qrcode
-# import io
-
-# سپس فقط این تابع را به طور کامل جایگزین کنید
-
+# --- FIX: تابع approve_payment اصلاح شد تا در انتها منوی اصلی صحیح را نمایش دهد ---
 async def approve_payment(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    Handles the 'Approve Payment' button.
-    Intelligently decides whether to create a new user or just confirm payment.
-    """
     from database.db_manager import save_subscription_note
 
     query = update.callback_query
@@ -276,9 +313,7 @@ async def approve_payment(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     existing_user = await get_user_data(marzban_username)
 
     if existing_user and "error" not in existing_user:
-        # --- حالت ۱: کاربر از قبل وجود دارد (پرداخت دستی / تمدید) ---
         LOGGER.info(f"User '{marzban_username}' already exists. Confirming payment for invoice #{invoice_id}.")
-        
         await update_invoice_status(invoice_id, 'approved')
         
         try:
@@ -294,9 +329,10 @@ async def approve_payment(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                                             f"(توسط: {admin_user.full_name})",
             parse_mode=ParseMode.MARKDOWN
         )
+        # پس از تایید، منوی اصلی را نمایش می‌دهیم
+        await send_main_menu(update, context, message_text="پرداخت با موفقیت تایید شد.")
 
     else:
-        # --- حالت ۲: کاربر وجود ندارد (خرید خودکار جدید) ---
         LOGGER.info(f"User '{marzban_username}' not found. Creating new user for invoice #{invoice_id}.")
         
         data_limit_gb = plan_details.get('volume')
@@ -338,18 +374,15 @@ async def approve_payment(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await link_user_to_telegram(marzban_username, customer_id)
         await update_invoice_status(invoice_id, 'approved')
         
-        # --- 🟢 بخش ارسال پیام جدید و زیباسازی شده به مشتری 🟢 ---
         try:
             subscription_url = new_user_data.get('subscription_url')
             if subscription_url:
-                # 1. ساخت QR کد
                 qr_image = qrcode.make(subscription_url)
                 bio = io.BytesIO()
                 bio.name = 'qrcode.png'
                 qr_image.save(bio, 'PNG')
                 bio.seek(0)
 
-                # 2. ساخت کپشن زیبا
                 caption = (
                     "✅ پرداخت شما تایید شد و سرویس جدیدتان با موفقیت ساخته شد!\n\n"
                     f"👤 **نام کاربری:** `{marzban_username}`\n"
@@ -359,7 +392,6 @@ async def approve_payment(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                     "👇 *برای اتصال، QR کد بالا را اسکن کنید یا لینک را در برنامه خود وارد نمایید.*"
                 )
                 
-                # 3. ارسال عکس (QR کد) به همراه کپشن
                 await context.bot.send_photo(
                     chat_id=customer_id,
                     photo=bio,
@@ -367,7 +399,6 @@ async def approve_payment(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                     parse_mode=ParseMode.MARKDOWN
                 )
             else:
-                # حالت جایگزین در صورت نبود لینک اشتراک
                 fallback_message = (
                     "✅ پرداخت شما تایید شد و سرویس جدیدتان با موفقیت ساخته شد!\n\n"
                     f"👤 **نام کاربری:** `{marzban_username}`\n"
@@ -378,10 +409,8 @@ async def approve_payment(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 await context.bot.send_message(
                     chat_id=customer_id, text=fallback_message, parse_mode=ParseMode.MARKDOWN
                 )
-
         except Exception as e:
             LOGGER.error(f"Failed to send success message/photo to customer {customer_id} for invoice #{invoice_id}: {e}", exc_info=True)
-        # --- -------------------------------------------------------- ---
         
         final_caption = query.message.caption + (
             f"\n\n**✅ پرداخت تایید و سرویس `{marzban_username}` با موفقیت ساخته شد.**\n"
@@ -390,17 +419,15 @@ async def approve_payment(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         current_caption = query.message.caption
         if "⚠️" not in current_caption:
              await query.edit_message_caption(caption=final_caption, parse_mode=ParseMode.MARKDOWN)
-    # ========================================================
+        
+        # پس از ساخت کاربر جدید، منوی اصلی را نمایش می‌دهیم
+        await send_main_menu(update, context, message_text="سرویس جدید با موفقیت برای کاربر فعال شد.")
 
 async def reject_payment(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    # This function's body is intentionally omitted for brevity in this fix.
     pass
 
 async def send_custom_plan_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE, plan_details: dict, invoice_id: int):
-    """Sends the invoice for a custom-built plan to the user."""
     query = update.callback_query
-    # Note: update.effective_user might not be reliable if called from a job.
-    # We should rely on the user_id from the query/message.
     user_id = query.from_user.id if query else update.effective_user.id
     
     volume = plan_details.get('volume')
@@ -453,7 +480,6 @@ async def send_custom_plan_invoice(update: Update, context: ContextTypes.DEFAULT
             pass
 
 async def confirm_manual_payment(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handles the 'Confirm Payment' button for a user that has already been created."""
     query = update.callback_query
     admin_user = update.effective_user
     await query.answer("⏳ در حال تایید پرداخت...")
@@ -470,7 +496,6 @@ async def confirm_manual_payment(update: Update, context: ContextTypes.DEFAULT_T
         await query.edit_message_caption(caption=query.message.caption + "\n\n⚠️ **این فاکتور قبلاً پردازش شده یا یافت نشد.**")
         return
 
-    # 1. Update invoice status
     success = await update_invoice_status(invoice_id, 'approved')
     if not success:
         await query.edit_message_caption(caption=query.message.caption + "\n\n❌ **خطا در به‌روزرسانی وضعیت فاکتور در دیتابیس.**")
@@ -478,7 +503,6 @@ async def confirm_manual_payment(update: Update, context: ContextTypes.DEFAULT_T
         
     LOGGER.info(f"Admin {admin_user.id} confirmed payment for manual invoice #{invoice_id}.")
     
-    # 2. Notify the customer
     customer_id = invoice['user_id']
     try:
         await context.bot.send_message(
@@ -488,7 +512,6 @@ async def confirm_manual_payment(update: Update, context: ContextTypes.DEFAULT_T
     except Exception as e:
         LOGGER.error(f"Failed to send manual payment confirmation to customer {customer_id}: {e}")
 
-    # 3. Update admin message
     await query.edit_message_caption(
         caption=query.message.caption + f"\n\n**✅ پرداخت با موفقیت تایید شد.**\n"
                                         f"(توسط: {admin_user.full_name})",

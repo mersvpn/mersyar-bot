@@ -51,14 +51,22 @@ def get_customer_main_menu_keyboard() -> ReplyKeyboardMarkup:
         keyboard_layout.append([KeyboardButton("💬 پشتیبانی")])
     return ReplyKeyboardMarkup(keyboard_layout, resize_keyboard=True)
 
+
+
 def get_customer_view_for_admin_keyboard() -> ReplyKeyboardMarkup:
+    # ابتدا ساختار کیبورد را دقیقاً مانند پنل اصلی مشتری تعریف می‌کنیم
     keyboard_layout = [
-        [KeyboardButton("📊 سرویس من")],
-        [KeyboardButton("💳 خرید اشتراک"), KeyboardButton("📱 دانلود و راهنمای اتصال")],
-        [KeyboardButton("↩️ بازگشت به پنل ادمین")]
+        [KeyboardButton("🛍️ پنل خرید و پرداخت")],
+        [KeyboardButton("📊 سرویس من"), KeyboardButton("📱 دانلود و راهنمای اتصال")]
     ]
+    
+    # اگر نام کاربری پشتیبانی تعریف شده باشد، دکمه آن را اضافه می‌کنیم
     if config.SUPPORT_USERNAME:
-        keyboard_layout[1].insert(1, KeyboardButton("💬 پشتیبانی"))
+        keyboard_layout.append([KeyboardButton("💬 پشتیبانی")])
+        
+    # در نهایت، دکمه بازگشت به پنل ادمین را به عنوان آخرین ردیف اضافه می‌کنیم
+    keyboard_layout.append([KeyboardButton("↩️ بازگشت به پنل ادمین")])
+    
     return ReplyKeyboardMarkup(keyboard_layout, resize_keyboard=True)
 
 def get_notes_management_keyboard() -> ReplyKeyboardMarkup:

@@ -41,13 +41,36 @@ AWAITING_GB_PRICE, AWAITING_DAY_PRICE = range(3, 5)
 
 @admin_only
 async def show_financial_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Displays the main financial settings menu.
+    Handles both message-based and callback-based triggers for a smoother UX.
+    """
     user_id = update.effective_user.id
     LOGGER.info(f"Admin {user_id} accessed the main financial menu.")
-    await update.message.reply_text(
-        "💰 *تنظیمات مالی*\n\nلطفا بخش مورد نظر خود را انتخاب کنید:",
-        reply_markup=get_financial_settings_keyboard(),
-        parse_mode=ParseMode.MARKDOWN
-    )
+    
+    text = "💰 *تنظیمات مالی*\n\nلطفا بخش مورد نظر خود را انتخاب کنید:"
+    keyboard = get_financial_settings_keyboard()
+
+    if update.callback_query:
+        # Triggered by an inline button (e.g., "Back" button)
+        query = update.callback_query
+        await query.answer()
+        # It's better to edit the message to remove the old inline keyboard
+        # and then send a new message with the ReplyKeyboardMarkup.
+        await query.edit_message_text(text="به منوی تنظیمات مالی بازگشتید.")
+        await context.bot.send_message(
+            chat_id=user_id,
+            text=text,
+            reply_markup=keyboard,
+            parse_mode=ParseMode.MARKDOWN
+        )
+    else:
+        # Triggered by a message (e.g., a ReplyKeyboardButton)
+        await update.message.reply_text(
+            text=text,
+            reply_markup=keyboard,
+            parse_mode=ParseMode.MARKDOWN
+        )
 
 @admin_only
 async def show_payment_methods_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

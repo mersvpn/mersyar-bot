@@ -1,4 +1,4 @@
-# FILE: modules/reminder/actions/daily_note.py (FINAL, NO EXTRA DEPENDENCIES)
+# FILE: modules/reminder/actions/daily_note.py (نسخه نهایی و اصلاح شده)
 
 import logging
 import uuid
@@ -11,10 +11,8 @@ from telegram.constants import ParseMode
 from telegram.helpers import escape_markdown
 
 from database import db_manager
-from shared.callbacks import cancel_conversation
-# --- FIX: Import the required keyboard directly ---
+from shared.callbacks import cancel_conversation # تابع لغو عمومی از اینجا وارد می‌شود
 from shared.keyboards import get_settings_and_tools_keyboard
-# --- END OF FIX ---
 
 LOGGER = logging.getLogger(__name__)
 
@@ -26,23 +24,41 @@ LOGGER = logging.getLogger(__name__)
 ) = range(9)
 
 
-async def _build_main_menu_message(update: Update, context: ContextTypes.DEFAULT_TYPE, is_entry: bool = False):
-    # ======================== START: FIX for Keyboard Layout ========================
+async def main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """
+    Entry point for the daily notes conversation.
+    Deletes the user's trigger message and sends a clean menu.
+    """
+    is_entry = update.message is not None
+
     keyboard = [
         [
             InlineKeyboardButton("➕ افزودن یادداشت جدید", callback_data="dnote_add_prompt"),
             InlineKeyboardButton(" L️ لیست یادداشت‌ها", callback_data="dnote_list_prompt")
         ],
-        [InlineKeyboardButton("🔙 بازگشت به ابزارها", callback_data="dnote_back_to_tools")]
+        # دکمه بازگشت اکنون از تابع عمومی لغو مکالمه استفاده می‌کند
+        [InlineKeyboardButton("🔙 بازگشت به منوی اصلی", callback_data="cancel_conv")]
     ]
-    # ========================= END: FIX for Keyboard Layout =========================
     reply_markup = InlineKeyboardMarkup(keyboard)
     text = "🗒️ **مدیریت یادداشت‌های روزانه**\n\nلطفاً یک گزینه را انتخاب کنید."
-    
+
     if is_entry:
-        await update.message.reply_text(text, reply_markup=reply_markup, parse_mode=ParseMode.MARKDOWN)
+        await update.message.delete()
+        sent_message = await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=text,
+            reply_markup=reply_markup,
+            parse_mode=ParseMode.MARKDOWN
+        )
+        context.user_data['main_menu_message'] = sent_message
     else:
-        await update.callback_query.edit_message_text(text, reply_markup=reply_markup, parse_mode=ParseMode.MARKDOWN)
+        await update.callback_query.edit_message_text(
+            text=text,
+            reply_markup=reply_markup,
+            parse_mode=ParseMode.MARKDOWN
+        )
+
+    return MAIN_MENU
 
 
 async def _build_list_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -86,42 +102,6 @@ async def _build_view_message(update: Update, context: ContextTypes.DEFAULT_TYPE
     return VIEW_NOTE
 
 
-async def main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """
-    Entry point for the daily notes conversation.
-    Deletes the user's trigger message and sends a clean menu.
-    """
-    is_entry = update.message is not None
-
-    # ======================== START: FIX for Keyboard Layout ========================
-    keyboard = [
-        [
-            InlineKeyboardButton("➕ افزودن یادداشت جدید", callback_data="dnote_add_prompt"),
-            InlineKeyboardButton(" L️ لیست یادداشت‌ها", callback_data="dnote_list_prompt")
-        ],
-        [InlineKeyboardButton("🔙 بازگشت به ابزارها", callback_data="dnote_back_to_tools")]
-    ]
-    # ========================= END: FIX for Keyboard Layout =========================
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    text = "🗒️ **مدیریت یادداشت‌های روزانه**\n\nلطفاً یک گزینه را انتخاب کنید."
-
-    if is_entry:
-        await update.message.delete()
-        sent_message = await context.bot.send_message(
-            chat_id=update.effective_chat.id,
-            text=text,
-            reply_markup=reply_markup,
-            parse_mode=ParseMode.MARKDOWN
-        )
-        context.user_data['main_menu_message'] = sent_message
-    else:
-        await update.callback_query.edit_message_text(
-            text=text,
-            reply_markup=reply_markup,
-            parse_mode=ParseMode.MARKDOWN
-        )
-
-    return MAIN_MENU
 async def list_notes(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await update.callback_query.answer()
     await _build_list_message(update, context)
@@ -154,12 +134,11 @@ async def add_get_text_and_save(update: Update, context: ContextTypes.DEFAULT_TY
     
     await update.message.reply_text("✅ یادداشت جدید با موفقیت ذخیره شد.", reply_markup=get_settings_and_tools_keyboard())
     
-    # Clean up the conversation interface
     if 'main_menu_message' in context.user_data:
         try:
             await context.user_data['main_menu_message'].delete()
         except Exception:
-            pass # Message might be already deleted
+            pass
     
     context.user_data.clear()
     return ConversationHandler.END
@@ -225,29 +204,10 @@ async def edit_save(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     else:
         await update.message.reply_text("خطا: یادداشت برای ویرایش یافت نشد.")
     
-    # After edit, rebuild the view message
-    query = update.callback_query or (await update.message.reply_text("\u200b")).callback_query # A bit of a hack to recreate the context
-    await query.edit_message_text(text="در حال بازگشت...") # Placeholder
+    query = update.callback_query or (await update.message.reply_text("\u200b")).callback_query
+    await query.edit_message_text(text="در حال بازگشت...")
     return await _build_view_message(update, context)
 
-
-async def back_to_tools(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Returns to the main tools menu without depending on other files."""
-    await update.callback_query.answer()
-    await update.callback_query.message.delete()
-    await update.callback_query.message.reply_text(
-        "به بخش «تنظیمات و ابزارها» بازگشتید.",
-        reply_markup=get_settings_and_tools_keyboard()
-    )
-    context.user_data.clear()
-    return ConversationHandler.END
-
-# A simplified cancel function for this conversation
-async def cancel_note_conversation(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    await update.message.reply_text("عملیات لغو شد.")
-    # Re-show the main notes menu
-    await _build_main_menu_message(update, context, is_entry=True)
-    return MAIN_MENU
 
 daily_notes_conv = ConversationHandler(
     entry_points=[MessageHandler(filters.Regex('^🗒️ یادداشت‌های روزانه$'), main_menu)],
@@ -255,7 +215,6 @@ daily_notes_conv = ConversationHandler(
         MAIN_MENU: [
             CallbackQueryHandler(add_prompt, pattern='^dnote_add_prompt$'),
             CallbackQueryHandler(list_notes, pattern='^dnote_list_prompt$'),
-            CallbackQueryHandler(back_to_tools, pattern='^dnote_back_to_tools$'),
         ],
         ADD_GET_TITLE: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_get_title)],
         ADD_GET_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_get_text_and_save)],
@@ -281,7 +240,9 @@ daily_notes_conv = ConversationHandler(
         EDIT_GET_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, edit_save)],
     },
     fallbacks=[
-        CommandHandler('cancel', cancel_note_conversation)
+        CommandHandler('cancel', cancel_conversation),
+        # این خط باعث می‌شود دکمه بازگشت نیز مکالمه را به درستی پایان دهد
+        CallbackQueryHandler(cancel_conversation, pattern='^cancel_conv$')
     ],
     conversation_timeout=600,
     per_user=True,
