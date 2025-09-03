@@ -94,14 +94,20 @@ async def send_broadcast_message_job(context: ContextTypes.DEFAULT_TYPE) -> None
 
 async def start_messaging(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data['messaging_info'] = {}
+    
+    # --- FIX: Keyboard layout changed to two columns ---
     keyboard = [
-        [InlineKeyboardButton("👥 ارسال همگانی", callback_data="msg_broadcast_all")],
-        [InlineKeyboardButton("👤 ارسال به یک کاربر", callback_data="msg_broadcast_single")],
-        [InlineKeyboardButton("❌ لغو", callback_data="msg_cancel")]
+        [
+            InlineKeyboardButton("👥 ارسال همگانی", callback_data="msg_broadcast_all"),
+            InlineKeyboardButton("👤 ارسال به یک کاربر", callback_data="msg_broadcast_single")
+        ],
+        [
+            InlineKeyboardButton("❌ لغو", callback_data="msg_cancel")
+        ]
     ]
+
     await update.message.reply_text("لطفاً نوع ارسال را انتخاب کنید:", reply_markup=InlineKeyboardMarkup(keyboard))
     return CHOOSING_TYPE
-
 
 async def prompt_for_user_id(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
