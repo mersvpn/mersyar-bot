@@ -69,7 +69,7 @@ async def handle_renewal_request(update: Update, context: ContextTypes.DEFAULT_T
             # این پیام حالا فقط زمانی نمایش داده می‌شود که ربات نتواند به هیچ ادمینی پیام دهد
             confirmation_text = "❌ مشکلی در ارسال درخواست به پشتیبانی رخ داد. لطفاً بعداً دوباره تلاش کنید."
             
-        await query.edit_message_text(text=confirmation_text)
+        await query.edit_message_text(text=confirmation_text, reply_markup=None)
         
     # این خط مکالمه را به درستی پایان می‌دهد
     return ConversationHandler.END
