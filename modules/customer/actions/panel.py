@@ -1,17 +1,17 @@
-# FILE: modules/customer/actions/panel.py (نسخه نهایی و اصلاح شده)
+# FILE: modules/customer/actions/panel.py (نسخه اصلاح‌شده با منوی انتخاب نوع پلن)
 
 from telegram import Update
 from telegram.ext import ContextTypes
 from telegram.constants import ParseMode
 
-# ایمپورت کردن کیبورد از ماژول اشتراکی
-from shared.keyboards import get_customer_purchase_menu_keyboard
-# --- FIX: ایمپورت کردن تابع کمکی جدید برای نمایش منوی اصلی ---
+# --- MODIFIED: Import both necessary keyboards ---
+from shared.keyboards import get_customer_purchase_menu_keyboard, get_plan_type_selection_keyboard
 from modules.general.actions import send_main_menu
 
 async def show_customer_panel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
-    منوی اصلی خرید و پرداخت مشتری را با گزینه‌های جدید نمایش می‌دهد.
+    منوی اصلی خرید و پرداخت مشتری را نمایش می‌دهد.
+    این تابع همچنین به عنوان نقطه بازگشت از منوی انتخاب نوع پلن عمل می‌کند.
     """
     reply_markup = get_customer_purchase_menu_keyboard()
     
@@ -32,15 +32,38 @@ async def show_customer_panel(update: Update, context: ContextTypes.DEFAULT_TYPE
             parse_mode=ParseMode.MARKDOWN
         )
 
+# --- NEW FUNCTION ---
+async def show_plan_type_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    منوی انتخاب بین پلن حجمی و پلن نامحدود را نمایش می‌دهد.
+    """
+    query = update.callback_query
+    await query.answer()
+
+    # متن راهنما برای منوی جدید
+    text = (
+        "💡 *انتخاب نوع پلن*\n\n"
+        "لطفاً نوع سرویس مورد نظر خود را انتخاب کنید:\n\n"
+        "📊 **پلن حجمی:** سرویس با حجم و زمان دلخواه شما و قیمت‌گذاری هوشمند.\n"
+        "💎 **پلن نامحدود:** سرویس با حجم بی‌نهایت و قابلیت انتخاب تعداد کاربر همزمان."
+    )
+    
+    # دریافت کیبورد جدید از ماژول اشتراکی
+    reply_markup = await get_plan_type_selection_keyboard()
+
+    # ویرایش پیام فعلی و نمایش منوی جدید
+    await query.edit_message_text(
+        text=text,
+        reply_markup=reply_markup,
+        parse_mode=ParseMode.MARKDOWN
+    )
+# --- END NEW FUNCTION ---
 
 async def close_customer_panel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
-    Closes the customer's purchase panel and returns them to the appropriate main menu.
+    پنل خرید مشتری را می‌بندد و او را به منوی اصلی بازمی‌گرداند.
     """
     query = update.callback_query
     await query.answer()
     
-    # --- FIX: Instead of deleting the message, call the central main menu function ---
-    # This ensures the admin gets the correct "customer view" keyboard back.
     await send_main_menu(update, context, message_text="به منوی اصلی بازگشتید.")
-    # --- END OF FIX ---

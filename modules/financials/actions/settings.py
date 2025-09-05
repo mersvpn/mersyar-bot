@@ -1,4 +1,4 @@
-# FILE: modules/financials/actions/settings.py (نسخه نهایی با رفع TypeError و قیمت‌گذاری دو مرحله‌ای)
+# FILE: modules/financials/actions/settings.py (نسخه بازطراحی شده با پنل مدیریت پلن)
 
 import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -13,13 +13,12 @@ from telegram.ext import (
 from telegram.constants import ParseMode
 
 # --- Local Imports ---
-from database.db_manager import (
-    load_financials, save_financials, 
-    save_pricing_settings, load_pricing_settings
-)
-from shared.keyboards import get_financial_settings_keyboard, get_payment_methods_keyboard
+from database.db_manager import load_financials, save_financials
+# --- MODIFIED: Updated keyboard imports and removed unused ones ---
+from shared.keyboards import get_financial_settings_keyboard, get_payment_methods_keyboard, get_plan_management_keyboard
 from shared.callbacks import cancel_conversation
 from modules.auth import admin_only
+from database.db_manager import load_financials, save_financials, load_bot_settings, save_bot_settings
 
 # --- SETUP ---
 LOGGER = logging.getLogger(__name__)
@@ -32,8 +31,12 @@ LOGGER = logging.getLogger(__name__)
     EDITING_CARD
 ) = range(3)
 
-# States for the pricing conversation
-AWAITING_GB_PRICE, AWAITING_DAY_PRICE = range(3, 5)
+# States for the plan name settings conversation (NEW)
+(
+    PLAN_NAME_MENU,
+    EDITING_VOLUMETRIC_NAME,
+    EDITING_UNLIMITED_NAME
+) = range(3, 6)
 
 # =============================================================================
 # 1. توابع منوهای اصلی مالی
@@ -42,8 +45,7 @@ AWAITING_GB_PRICE, AWAITING_DAY_PRICE = range(3, 5)
 @admin_only
 async def show_financial_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
-    Displays the main financial settings menu.
-    Handles both message-based and callback-based triggers for a smoother UX.
+    منوی اصلی تنظیمات مالی را نمایش می‌دهد.
     """
     user_id = update.effective_user.id
     LOGGER.info(f"Admin {user_id} accessed the main financial menu.")
@@ -52,12 +54,12 @@ async def show_financial_menu(update: Update, context: ContextTypes.DEFAULT_TYPE
     keyboard = get_financial_settings_keyboard()
 
     if update.callback_query:
-        # Triggered by an inline button (e.g., "Back" button)
         query = update.callback_query
         await query.answer()
-        # It's better to edit the message to remove the old inline keyboard
-        # and then send a new message with the ReplyKeyboardMarkup.
-        await query.edit_message_text(text="به منوی تنظیمات مالی بازگشتید.")
+        # To avoid TelegramError: MESSAGE_NOT_MODIFIED, check if the message is the same
+        if query.message.text != "به منوی تنظیمات مالی بازگشتید.":
+            await query.edit_message_text(text="به منوی تنظیمات مالی بازگشتید.")
+        
         await context.bot.send_message(
             chat_id=user_id,
             text=text,
@@ -65,7 +67,6 @@ async def show_financial_menu(update: Update, context: ContextTypes.DEFAULT_TYPE
             parse_mode=ParseMode.MARKDOWN
         )
     else:
-        # Triggered by a message (e.g., a ReplyKeyboardButton)
         await update.message.reply_text(
             text=text,
             reply_markup=keyboard,
@@ -78,14 +79,50 @@ async def show_payment_methods_menu(update: Update, context: ContextTypes.DEFAUL
     LOGGER.info(f"Admin {user_id} accessed the payment methods submenu.")
     text = "💳 *تنظیمات پرداخت*\n\nاز این بخش می‌توانید روش‌های پرداخت را مدیریت کنید."
     keyboard = get_payment_methods_keyboard()
+    
+    # Check if triggered by a ReplyKeyboardButton or an InlineKeyboardButton
+    target_message = update.message or (update.callback_query.message if update.callback_query else None)
+    if not target_message: return
+
+    # If it's a callback, we can edit the message
     if update.callback_query:
         await update.callback_query.answer()
         await update.callback_query.edit_message_text(text=text, reply_markup=keyboard, parse_mode=ParseMode.MARKDOWN)
     else:
-        await update.message.reply_text(text=text, reply_markup=keyboard, parse_mode=ParseMode.MARKDOWN)
+        # If it's a regular message, we send a new message with the inline keyboard
+        await target_message.reply_text(text=text, reply_markup=keyboard, parse_mode=ParseMode.MARKDOWN)
 
+# --- NEW FUNCTION ---
+@admin_only
+async def show_plan_management_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Displays the plan management menu (Unlimited / Volumetric).
+    Handles both message and callback query triggers intelligently.
+    """
+    user_id = update.effective_user.id
+    LOGGER.info(f"Admin {user_id} accessed the plan management menu.")
+    
+    text = "📊 *مدیریت پلن‌های فروش*\n\nلطفا نوع پلن‌هایی که قصد مدیریت آن‌ها را دارید، انتخاب کنید:"
+    keyboard = get_plan_management_keyboard()
+    
+    if update.callback_query:
+        # If triggered by an inline button (like "Back"), edit the message.
+        query = update.callback_query
+        await query.answer()
+        await query.edit_message_text(
+            text=text,
+            reply_markup=keyboard,
+            parse_mode=ParseMode.MARKDOWN
+        )
+    else:
+        # If triggered by a message (ReplyKeyboardButton), send a new message.
+        await update.message.reply_text(
+            text=text,
+            reply_markup=keyboard,
+            parse_mode=ParseMode.MARKDOWN
+        )
 # =============================================================================
-# 2. مکالمه تنظیم اطلاعات کارت به کارت
+# 2. مکالمه تنظیم اطلاعات کارت به کارت (بدون تغییر)
 # =============================================================================
 
 async def format_financial_info_message() -> str:
@@ -129,7 +166,6 @@ async def prompt_for_edit(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         'card': ("لطفاً شماره کارت ۱۶ رقمی را وارد کنید (فقط اعداد):", EDITING_CARD),
     }
     if action not in prompt_map:
-        LOGGER.warning(f"Invalid action '{action}' in prompt_for_edit.")
         return CARD_MENU
     prompt_text, next_state = prompt_map[action]
     await query.edit_message_text(text=prompt_text)
@@ -140,7 +176,6 @@ async def save_financial_info(update: Update, context: ContextTypes.DEFAULT_TYPE
     new_value = update.message.text.strip()
     user_id = update.effective_user.id
     if not action:
-        LOGGER.error(f"User {user_id} reached save_financial_info with no action in user_data.")
         await update.message.reply_text("خطا: عملیات نامشخص است. لطفاً دوباره تلاش کنید.")
         return await cancel_conversation(update, context)
     financial_data = await load_financials()
@@ -151,13 +186,11 @@ async def save_financial_info(update: Update, context: ContextTypes.DEFAULT_TYPE
     elif action == 'card':
         card_number = "".join(filter(str.isdigit, new_value))
         if len(card_number) != 16:
-            LOGGER.warning(f"Admin {user_id} entered an invalid card number.")
             await update.message.reply_text("❌ شماره کارت نامعتبر است. باید ۱۶ رقم باشد. لطفاً دوباره وارد کنید.")
             return EDITING_CARD
         financial_data['card_number'] = card_number
         confirmation_text = "✅ شماره کارت با موفقیت به‌روز شد."
     await save_financials(financial_data)
-    LOGGER.info(f"Admin {user_id} successfully updated financial setting: {action}.")
     await update.message.reply_text(confirmation_text)
     context.user_data.pop('financial_action', None)
     await show_payment_methods_menu(update, context)
@@ -179,93 +212,95 @@ card_settings_conv = ConversationHandler(
 )
 
 # =============================================================================
-# 3. مکالمه تنظیم قیمت‌گذاری دلخواه (بازطراحی شده)
+# 3. مکالمه تنظیم نام پلن‌های فروش (NEW SECTION)
 # =============================================================================
 
-@admin_only
-async def start_pricing_conv(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    user_id = update.effective_user.id
-    LOGGER.info(f"Admin {user_id} started the pricing settings conversation.")
-    context.user_data['pricing'] = {}
+async def show_plan_name_settings_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Displays the menu for editing plan button names."""
+    query = update.callback_query
+    await query.answer()
 
-    prices = await load_pricing_settings()
-    price_gb = prices.get('price_per_gb')
-    price_day = prices.get('price_per_day')
-    
-    current_gb_text = f"`{price_gb:,}` تومان" if price_gb is not None else "`تنظیم نشده`"
-    current_day_text = f"`{price_day:,}` تومان" if price_day is not None else "`تنظیم نشده`"
+    settings = await load_bot_settings()
+    vol_name = settings.get("volumetric_plan_button_text", "📊 پلن حجمی")
+    unl_name = settings.get("unlimited_plan_button_text", "💎 پلن نامحدود")
 
-    message_text = (
-        f"💰 *تنظیم قیمت‌گذاری پلن دلخواه*\n\n"
-        f"▫️ قیمت فعلی به ازای هر گیگابایت: {current_gb_text}\n"
-        f"▫️ قیمت فعلی به ازای هر روز: {current_day_text}\n\n"
-        "مرحله ۱ از ۲: لطفاً **قیمت جدید به ازای هر گیگابایت** را وارد کنید (فقط عدد و به تومان).\n"
-        "برای لغو /cancel را ارسال کنید."
+    text = (
+        "✏️ *تنظیم نام پلن‌ها*\n\n"
+        "از این بخش می‌توانید نام دکمه‌هایی که به مشتری نمایش داده می‌شود را تغییر دهید.\n\n"
+        f"▫️ نام فعلی پلن حجمی: `{vol_name}`\n"
+        f"▫️ نام فعلی پلن نامحدود: `{unl_name}`"
     )
-    await update.message.reply_text(text=message_text, parse_mode=ParseMode.MARKDOWN)
-    return AWAITING_GB_PRICE
 
-@admin_only
-async def get_gb_price_and_ask_for_day_price(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    user_id = update.effective_user.id
-    price_text = update.message.text.strip()
+    keyboard = [
+        [
+            InlineKeyboardButton("📊 ویرایش نام پلن حجمی", callback_data="set_name_volumetric"),
+            InlineKeyboardButton("💎 ویرایش نام پلن نامحدود", callback_data="set_name_unlimited")
+        ],
+        [InlineKeyboardButton("🔙 بازگشت", callback_data="back_to_plan_management")]
+    ]
     
-    try:
-        price_per_gb = int(price_text)
-        if price_per_gb < 0: raise ValueError("Price must be non-negative.")
-    except (ValueError, TypeError):
-        LOGGER.warning(f"Admin {user_id} entered an invalid GB price: '{price_text}'.")
-        await update.message.reply_text("❌ ورودی نامعتبر است. لطفاً فقط یک عدد مثبت یا صفر وارد کنید.")
-        return AWAITING_GB_PRICE
-
-    context.user_data['pricing']['price_per_gb'] = price_per_gb
-    LOGGER.info(f"Admin {user_id} entered price_per_gb: {price_per_gb}")
-    
-    message_text = (
-        f"✅ قیمت هر گیگابایت: `{price_per_gb:,}` تومان\n\n"
-        "مرحله ۲ از ۲: لطفاً **قیمت جدید به ازای هر روز** را وارد کنید (فقط عدد و به تومان)."
+    await query.edit_message_text(
+        text=text,
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode=ParseMode.MARKDOWN
     )
-    await update.message.reply_text(text=message_text, parse_mode=ParseMode.MARKDOWN)
-    return AWAITING_DAY_PRICE
+    return PLAN_NAME_MENU
 
-@admin_only
-async def save_prices(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    user_id = update.effective_user.id
-    price_text = update.message.text.strip()
-
-    try:
-        price_per_day = int(price_text)
-        if price_per_day < 0: raise ValueError("Price must be non-negative.")
-    except (ValueError, TypeError):
-        LOGGER.warning(f"Admin {user_id} entered an invalid DAY price: '{price_text}'.")
-        await update.message.reply_text("❌ ورودی نامعتبر است. لطفاً فقط یک عدد مثبت یا صفر وارد کنید.")
-        return AWAITING_DAY_PRICE
-
-    price_per_gb = context.user_data['pricing']['price_per_gb']
+async def prompt_for_new_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Asks the admin to enter the new name for the selected button."""
+    query = update.callback_query
+    action = query.data.split('_')[-1] # 'volumetric' or 'unlimited'
+    context.user_data['plan_name_to_edit'] = action
     
-    success = await save_pricing_settings(price_per_gb, price_per_day)
-    
-    if success:
-        LOGGER.info(f"Admin {user_id} successfully set prices: GB={price_per_gb}, DAY={price_per_day}.")
-        await update.message.reply_text(
-            f"✅ قیمت‌های جدید با موفقیت تنظیم شد:\n"
-            f"▫️ هر گیگابایت: `{price_per_gb:,}` تومان\n"
-            f"▫️ هر روز: `{price_per_day:,}` تومان",
-            parse_mode=ParseMode.MARKDOWN
-        )
+    if action == 'volumetric':
+        prompt_text = "لطفاً نام جدید دکمه **پلن حجمی** را وارد کنید (می‌توانید از ایموجی هم استفاده کنید):"
+        next_state = EDITING_VOLUMETRIC_NAME
     else:
-        LOGGER.error(f"Failed to save pricing for admin {user_id}.")
-        await update.message.reply_text("❌ خطایی در ذخیره اطلاعات رخ داد. لطفاً دوباره تلاش کنید.")
+        prompt_text = "لطفاً نام جدید دکمه **پلن نامحدود** را وارد کنید (می‌توانید از ایموجی هم استفاده کنید):"
+        next_state = EDITING_UNLIMITED_NAME
+        
+    await query.answer()
+    await query.edit_message_text(text=prompt_text, parse_mode=ParseMode.MARKDOWN)
+    return next_state
 
-    context.user_data.pop('pricing', None)
-    await show_financial_menu(update, context)
+async def save_new_plan_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Saves the new button name and cleanly exits the conversation."""
+    new_name = update.message.text.strip()
+    action = context.user_data.pop('plan_name_to_edit', None)
+
+    if not action:
+        await update.message.reply_text("❌ خطایی رخ داد. لطفاً دوباره تلاش کنید.")
+        return await cancel_conversation(update, context)
+
+    if action == 'volumetric':
+        key_to_save = "volumetric_plan_button_text"
+    else:
+        key_to_save = "unlimited_plan_button_text"
+
+    await save_bot_settings({key_to_save: new_name})
+    
+    await update.message.reply_text(f"✅ نام دکمه با موفقیت به «{new_name}» تغییر یافت.")
+    
+    # --- FIX: Re-create and send the previous menu manually to ensure a clean exit ---
+    menu_text = "📊 *مدیریت پلن‌های فروش*\n\nلطفا نوع پلن‌هایی که قصد مدیریت آن‌ها را دارید، انتخاب کنید:"
+    menu_keyboard = get_plan_management_keyboard()
+    
+    await update.message.reply_text(
+        text=menu_text,
+        reply_markup=menu_keyboard,
+        parse_mode=ParseMode.MARKDOWN
+    )
+
     return ConversationHandler.END
-
-pricing_conv = ConversationHandler(
-    entry_points=[MessageHandler(filters.Regex('^💰 تنظیم قیمت‌گذاری دلخواه$'), start_pricing_conv)],
+plan_name_settings_conv = ConversationHandler(
+    entry_points=[CallbackQueryHandler(show_plan_name_settings_menu, pattern='^admin_set_plan_names$')],
     states={
-        AWAITING_GB_PRICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_gb_price_and_ask_for_day_price)],
-        AWAITING_DAY_PRICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, save_prices)],
+        PLAN_NAME_MENU: [
+            CallbackQueryHandler(prompt_for_new_name, pattern=r'^set_name_'),
+            CallbackQueryHandler(show_plan_management_menu, pattern=r'^back_to_plan_management$')
+        ],
+        EDITING_VOLUMETRIC_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, save_new_plan_name)],
+        EDITING_UNLIMITED_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, save_new_plan_name)],
     },
     fallbacks=[CommandHandler('cancel', cancel_conversation)],
     conversation_timeout=300

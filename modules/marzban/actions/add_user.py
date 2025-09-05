@@ -41,17 +41,19 @@ def generate_random_username(length=8):
 async def create_marzban_user_from_template(
     data_limit_gb: int,
     expire_days: int,
-    username: Optional[str] = None
+    username: Optional[str] = None,
+    max_ips: Optional[int] = None  # <-- NEW PARAMETER
 ) -> Optional[Dict[str, Any]]:
     """
     Creates a new Marzban user based on the saved template.
-    This is the core, reusable function. It handles username collisions by appending a random suffix.
+    This is the core, reusable function. It handles username collisions and max_ips.
 
     Args:
         data_limit_gb: Data limit in Gigabytes.
         expire_days: Subscription duration in days.
         username: (Optional) The desired username. If None, a random one is generated.
-
+        max_ips: (Optional) The maximum number of simultaneous connections.
+    
     Returns:
         A dictionary with the new user's data on success, None on failure.
     """
@@ -84,6 +86,12 @@ async def create_marzban_user_from_template(
         "status": "active"
     }
 
+    # --- NEW: Add max_online_ips if provided ---
+    if max_ips is not None and max_ips > 0:
+        payload["on_hold_max_ips"] = max_ips
+        LOGGER.info(f"[Core Create User] Setting max_online_ips to {max_ips} for user {base_username}.")
+    # --- END NEW ---
+
     # --- Create User with Collision Handling ---
     current_username = base_username
     for attempt in range(4): # Try original name + 3 variations
@@ -98,23 +106,17 @@ async def create_marzban_user_from_template(
             LOGGER.info(f"[Core Create User] Successfully created user '{current_username}' via API.")
             return result
         
-        # Check if the failure was due to a username collision
         if isinstance(result, str) and "already exists" in result:
             LOGGER.warning(f"[Core Create User] Username '{current_username}' already exists. Generating a new one.")
-            # Generate a new username with a random suffix
             suffix = ''.join(secrets.choice(string.digits) for _ in range(3))
             current_username = f"{base_username}_{suffix}"
-            continue # Retry with the new username
+            continue
         else:
-            # If it's another error, stop trying
             LOGGER.error(f"[Core Create User] Failed to create user '{current_username}'. API response: {result}")
             return None
 
-    # If all attempts fail
     LOGGER.error(f"[Core Create User] Failed to create user after 4 attempts. Last tried username: '{current_username}'.")
     return None
-
-# =============================================================================
 #  2. مکالمه افزودن کاربر به صورت دستی توسط ادمین
 # =============================================================================
 

@@ -1,4 +1,4 @@
-# FILE: database/db_manager.py (نسخه کامل و نهایی با قیمت‌گذاری روزانه)
+# FILE: database/db_manager.py (نسخه نهایی با ایجاد خودکار جدول و توابع مدیریت پلن نامحدود)
 import asyncio
 import aiomysql
 import logging
@@ -62,11 +62,23 @@ async def _run_migrations(conn):
 
         LOGGER.info("Database migrations finished.")
 
+                # Migration 3: Add base_daily_price to financial_settings
+        try:
+            await cur.execute("SHOW COLUMNS FROM financial_settings LIKE 'base_daily_price';")
+            if not await cur.fetchone():
+                LOGGER.info("Applying migration: Adding 'base_daily_price' to 'financial_settings' table.")
+                # We set a sensible default value
+                await cur.execute("ALTER TABLE financial_settings ADD COLUMN base_daily_price INT NULL DEFAULT 1000;")
+                LOGGER.info("Migration successful for 'base_daily_price'.")
+        except Exception as e:
+            LOGGER.error(f"Failed to apply migration for 'base_daily_price': {e}", exc_info=True)
+
 async def _initialize_db():
     if not _pool: return
     try:
         async with _pool.acquire() as conn:
             async with conn.cursor() as cur:
+                # ... (تمام دستورات CREATE TABLE IF NOT EXISTS قبلی) ...
                 await cur.execute("""
                     CREATE TABLE IF NOT EXISTS bot_settings (
                         setting_key VARCHAR(255) PRIMARY KEY, setting_value TEXT
@@ -117,7 +129,6 @@ async def _initialize_db():
                 await cur.execute("""
                     CREATE TABLE IF NOT EXISTS bot_managed_users (marzban_username VARCHAR(255) PRIMARY KEY)
                     ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;""")
-# در تابع _initialize_db اضافه شود
                 await cur.execute("""
                     CREATE TABLE IF NOT EXISTS pending_invoices (
                         invoice_id INT AUTO_INCREMENT PRIMARY KEY,
@@ -133,6 +144,28 @@ async def _initialize_db():
                         guide_key VARCHAR(50) PRIMARY KEY, title VARCHAR(100) NOT NULL, content TEXT,
                         photo_file_id TEXT DEFAULT NULL, buttons JSON DEFAULT NULL
                     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;""")
+                
+                # --- NEW TABLE FOR UNLIMITED PLANS (AUTO-CREATED) ---
+                await cur.execute("""
+                    CREATE TABLE IF NOT EXISTS unlimited_plans (
+                        id INT AUTO_INCREMENT PRIMARY KEY,
+                        plan_name VARCHAR(100) NOT NULL,
+                        price INT NOT NULL,
+                        max_ips INT NOT NULL DEFAULT 1,
+                        is_active BOOLEAN NOT NULL DEFAULT TRUE,
+                        sort_order INT NOT NULL DEFAULT 0
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;""")
+                # --- END OF NEW TABLE ---
+                # --- NEW TABLE FOR VOLUMETRIC PRICING TIERS (AUTO-CREATED) ---
+                await cur.execute("""
+                    CREATE TABLE IF NOT EXISTS volumetric_pricing_tiers (
+                        id INT AUTO_INCREMENT PRIMARY KEY,
+                        tier_name VARCHAR(100) NOT NULL,
+                        volume_limit_gb INT NOT NULL UNIQUE,
+                        price_per_gb INT NOT NULL
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;""")
+                # --- END OF NEW TABLE ---
+
             await _run_migrations(conn)
         LOGGER.info("Database initialized and migrations checked successfully.")
     except Exception as e:
@@ -514,15 +547,135 @@ async def expire_old_pending_invoices() -> int:
     Finds all 'pending' invoices older than 24 hours and updates their status to 'expired'.
     Returns the number of invoices that were expired.
     """
-    # فاکتورهای قدیمی‌تر از 24 ساعت را پیدا کرده و وضعیت آنها را تغییر می‌دهد
     query = """
         UPDATE pending_invoices
         SET status = 'expired'
         WHERE status = 'pending' AND created_at < NOW() - INTERVAL 24 HOUR;
     """
-    
-    # execute_query تعداد سطرهای آپدیت شده را برمی‌گرداند
     expired_count = await execute_query(query)
-    
-    # اگر expired_count None باشد (به معنی خطا)، صفر برمی‌گردانیم
     return expired_count if expired_count is not None else 0
+
+# =============================================================================
+#  Unlimited Plan Management (NEW SECTION)
+# =============================================================================
+
+async def add_unlimited_plan(plan_name: str, price: int, max_ips: int, sort_order: int) -> Optional[int]:
+    """Adds a new unlimited plan to the database and returns its ID."""
+    query = """
+        INSERT INTO unlimited_plans (plan_name, price, max_ips, sort_order, is_active)
+        VALUES (%s, %s, %s, %s, TRUE);
+    """
+    if not _pool: return None
+    try:
+        async with _pool.acquire() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(query, (plan_name, price, max_ips, sort_order))
+                await conn.commit()
+                return cur.lastrowid
+    except Exception as e:
+        LOGGER.error(f"Failed to add new unlimited plan: {e}", exc_info=True)
+        return None
+
+async def update_unlimited_plan(plan_id: int, plan_name: str, price: int, max_ips: int, is_active: bool, sort_order: int) -> bool:
+    """Updates an existing unlimited plan."""
+    query = """
+        UPDATE unlimited_plans
+        SET plan_name = %s, price = %s, max_ips = %s, is_active = %s, sort_order = %s
+        WHERE id = %s;
+    """
+    result = await execute_query(query, (plan_name, price, max_ips, is_active, sort_order, plan_id))
+    return result is not None and result > 0
+
+async def delete_unlimited_plan(plan_id: int) -> bool:
+    """Deletes an unlimited plan from the database."""
+    query = "DELETE FROM unlimited_plans WHERE id = %s;"
+    result = await execute_query(query, (plan_id,))
+    return result is not None and result > 0
+
+async def get_unlimited_plan_by_id(plan_id: int) -> Optional[Dict[str, Any]]:
+    """Fetches a single unlimited plan by its ID."""
+    query = "SELECT id, plan_name, price, max_ips, is_active, sort_order FROM unlimited_plans WHERE id = %s;"
+    return await execute_query(query, (plan_id,), fetch='one')
+
+async def get_all_unlimited_plans() -> List[Dict[str, Any]]:
+    """Fetches all unlimited plans for the admin panel, ordered by sort_order."""
+    query = "SELECT id, plan_name, price, max_ips, is_active, sort_order FROM unlimited_plans ORDER BY sort_order ASC, id ASC;"
+    return await execute_query(query, fetch='all') or []
+
+async def get_active_unlimited_plans() -> List[Dict[str, Any]]:
+    """Fetches all ACTIVE unlimited plans for the customer purchase menu."""
+    query = """
+        SELECT id, plan_name, price, max_ips FROM unlimited_plans
+        WHERE is_active = TRUE
+        ORDER BY sort_order ASC, id ASC;
+    """
+    return await execute_query(query, fetch='all') or []
+
+# =============================================================================
+#  Volumetric Pricing Management (NEW SECTION)
+# =============================================================================
+
+async def get_all_pricing_tiers() -> List[Dict[str, Any]]:
+    """Fetches all volumetric pricing tiers, ordered by their volume limit."""
+    query = "SELECT id, tier_name, volume_limit_gb, price_per_gb FROM volumetric_pricing_tiers ORDER BY volume_limit_gb ASC;"
+    return await execute_query(query, fetch='all') or []
+
+async def get_pricing_tier_by_id(tier_id: int) -> Optional[Dict[str, Any]]:
+    """Fetches a single pricing tier by its ID."""
+    query = "SELECT id, tier_name, volume_limit_gb, price_per_gb FROM volumetric_pricing_tiers WHERE id = %s;"
+    return await execute_query(query, (tier_id,), fetch='one')
+
+async def add_pricing_tier(tier_name: str, volume_limit_gb: int, price_per_gb: int) -> Optional[int]:
+    """Adds a new pricing tier and returns its ID."""
+    query = "INSERT INTO volumetric_pricing_tiers (tier_name, volume_limit_gb, price_per_gb) VALUES (%s, %s, %s);"
+    if not _pool: return None
+    try:
+        async with _pool.acquire() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(query, (tier_name, volume_limit_gb, price_per_gb))
+                await conn.commit()
+                return cur.lastrowid
+    except Exception as e:
+        LOGGER.error(f"Failed to add new pricing tier: {e}", exc_info=True)
+        return None
+
+async def update_pricing_tier(tier_id: int, tier_name: str, volume_limit_gb: int, price_per_gb: int) -> bool:
+    """Updates an existing pricing tier."""
+    query = "UPDATE volumetric_pricing_tiers SET tier_name = %s, volume_limit_gb = %s, price_per_gb = %s WHERE id = %s;"
+    result = await execute_query(query, (tier_name, volume_limit_gb, price_per_gb, tier_id))
+    return result is not None and result > 0
+
+async def delete_pricing_tier(tier_id: int) -> bool:
+    """Deletes a pricing tier."""
+    query = "DELETE FROM volumetric_pricing_tiers WHERE id = %s;"
+    result = await execute_query(query, (tier_id,))
+    return result is not None and result > 0
+
+async def save_base_daily_price(price: int) -> bool:
+    """Saves or updates the base daily price in financial_settings."""
+    # This also removes the old, now unused, price_per_gb and price_per_day columns for cleanup.
+    query = """
+        INSERT INTO financial_settings (id, base_daily_price) 
+        VALUES (1, %s) 
+        ON DUPLICATE KEY UPDATE base_daily_price = VALUES(base_daily_price);
+    """
+    result = await execute_query(query, (price,))
+    return result is not None
+
+async def load_pricing_parameters() -> Dict[str, Any]:
+    """
+    Loads all necessary parameters for the volumetric pricing formula.
+    Fetches the base daily price and all pricing tiers.
+    """
+    # 1. Get base price
+    query_base = "SELECT base_daily_price FROM financial_settings WHERE id = 1;"
+    base_result = await execute_query(query_base, fetch='one')
+    base_price = base_result.get('base_daily_price') if base_result else None
+
+    # 2. Get all tiers
+    tiers = await get_all_pricing_tiers()
+
+    return {
+        "base_daily_price": base_price,
+        "tiers": tiers
+    }

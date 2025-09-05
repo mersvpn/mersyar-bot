@@ -329,7 +329,6 @@ async def approve_payment(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                                             f"(توسط: {admin_user.full_name})",
             parse_mode=ParseMode.MARKDOWN
         )
-        # پس از تایید، منوی اصلی را نمایش می‌دهیم
         await send_main_menu(update, context, message_text="پرداخت با موفقیت تایید شد.")
 
     else:
@@ -338,8 +337,9 @@ async def approve_payment(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         data_limit_gb = plan_details.get('volume')
         duration_days = plan_details.get('duration')
         price = plan_details.get('price')
+        max_ips = plan_details.get('max_ips') 
 
-        if not all([data_limit_gb, duration_days, price]):
+        if not all([data_limit_gb is not None, duration_days is not None, price is not None]):
             LOGGER.error(f"Invoice #{invoice_id} has incomplete plan_details: {plan_details}")
             await query.edit_message_caption(caption=query.message.caption + "\n\n❌ **خطا:** اطلاعات پلن در فاکتور ناقص است.")
             return
@@ -348,7 +348,8 @@ async def approve_payment(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             new_user_data = await create_marzban_user_from_template(
                 data_limit_gb=data_limit_gb, 
                 expire_days=duration_days,
-                username=marzban_username
+                username=marzban_username,
+                max_ips=max_ips
             )
             if not new_user_data or 'username' not in new_user_data:
                 raise Exception("Failed to create user in Marzban, received empty response.")
@@ -357,20 +358,18 @@ async def approve_payment(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             await query.edit_message_caption(caption=query.message.caption + "\n\n❌ **خطا در ساخت کاربر در مرزبان.**")
             return
         
-        try:
-            await save_subscription_note(
-                username=marzban_username,
-                duration=duration_days,
-                price=price,
-                data_limit_gb=data_limit_gb
-            )
-            LOGGER.info(f"Successfully saved subscription note for new user '{marzban_username}'.")
-        except Exception as e:
-            LOGGER.error(f"CRITICAL: Failed to save subscription note for '{marzban_username}' after creation: {e}", exc_info=True)
-            await query.edit_message_caption(
-                caption=query.message.caption + "\n\n⚠️ **هشدار:** کاربر ساخته شد ولی اطلاعات اشتراک در دیتابیس ربات ثبت نشد."
-            )
-
+        # This part for saving note is not strictly necessary for unlimited plans but good for consistency
+        # try:
+        #     await save_subscription_note(
+        #         username=marzban_username,
+        #         duration=duration_days,
+        #         price=price,
+        #         data_limit_gb=data_limit_gb
+        #     )
+        #     LOGGER.info(f"Successfully saved subscription note for new user '{marzban_username}'.")
+        # except Exception as e:
+        #     LOGGER.error(f"CRITICAL: Failed to save subscription note for '{marzban_username}' after creation: {e}", exc_info=True)
+        
         await link_user_to_telegram(marzban_username, customer_id)
         await update_invoice_status(invoice_id, 'approved')
         
@@ -383,13 +382,19 @@ async def approve_payment(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 qr_image.save(bio, 'PNG')
                 bio.seek(0)
 
+                volume_text = "نامحدود" if plan_details.get("plan_type") == "unlimited" else f"{data_limit_gb} گیگابایت"
+                user_limit_text = f"\n👥 **تعداد کاربر:** {max_ips} دستگاه همزمان" if max_ips else ""
+
                 caption = (
-                    "✅ پرداخت شما تایید شد و سرویس جدیدتان با موفقیت ساخته شد!\n\n"
+                    "🎉 **اشتراک شما با موفقیت فعال شد!**\n\n"
                     f"👤 **نام کاربری:** `{marzban_username}`\n"
-                    f"📦 **حجم:** {data_limit_gb} گیگابایت\n"
-                    f"🗓️ **مدت:** {duration_days} روز\n\n"
-                    f"🔗 **لینک اتصال (برای کپی):**\n`{subscription_url}`\n\n"
-                    "👇 *برای اتصال، QR کد بالا را اسکن کنید یا لینک را در برنامه خود وارد نمایید.*"
+                    f"📦 **حجم:** {volume_text}\n"
+                    f"🗓️ **مدت:** {duration_days} روز{user_limit_text}\n\n"
+                    "👇 **برای اتصال از روش‌های زیر استفاده کنید:**\n\n"
+                    "1️⃣ **اسکن QR کد:**\n"
+                    "کد QR بالا را با برنامه خود اسکن کنید.\n\n"
+                    "2️⃣ **کپی لینک** (روی لینک زیر کلیک کنید تا کپی شود):\n"
+                    f"`{subscription_url}`"
                 )
                 
                 await context.bot.send_photo(
@@ -402,8 +407,6 @@ async def approve_payment(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 fallback_message = (
                     "✅ پرداخت شما تایید شد و سرویس جدیدتان با موفقیت ساخته شد!\n\n"
                     f"👤 **نام کاربری:** `{marzban_username}`\n"
-                    f"📦 **حجم:** {data_limit_gb} گیگابایت\n"
-                    f"🗓️ **مدت:** {duration_days} روز\n\n"
                     "⚠️ متاسفانه لینک اتصال خودکار ساخته نشد. لطفاً از ادمین درخواست کنید."
                 )
                 await context.bot.send_message(
@@ -416,13 +419,9 @@ async def approve_payment(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             f"\n\n**✅ پرداخت تایید و سرویس `{marzban_username}` با موفقیت ساخته شد.**\n"
             f"(توسط: {admin_user.full_name})"
         )
-        current_caption = query.message.caption
-        if "⚠️" not in current_caption:
-             await query.edit_message_caption(caption=final_caption, parse_mode=ParseMode.MARKDOWN)
+        await query.edit_message_caption(caption=final_caption, parse_mode=ParseMode.MARKDOWN)
         
-        # پس از ساخت کاربر جدید، منوی اصلی را نمایش می‌دهیم
         await send_main_menu(update, context, message_text="سرویس جدید با موفقیت برای کاربر فعال شد.")
-
 async def reject_payment(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     pass
 

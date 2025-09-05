@@ -1,22 +1,20 @@
-# FILE: modules/marzban/actions/api.py (نسخه نهایی با کش کردن اطلاعات)
+# FILE: modules/marzban/actions/api.py (نسخه نهایی با مکانیزم تلاش مجدد)
 
 import httpx
 import logging
+import asyncio # <-- کتابخانه جدید برای ایجاد تاخیر
 from typing import Tuple, Dict, Any, Optional, Union, List
 
 from .data_manager import normalize_username
-# تابع load_marzban_credentials دیگر به صورت مستقیم استفاده نمی‌شود
 
 LOGGER = logging.getLogger(__name__)
 _client = httpx.AsyncClient(timeout=20.0, http2=True)
 
-# --- متغیر سراسری برای کش کردن اطلاعات اتصال ---
 _marzban_credentials: Dict[str, Any] = {}
 
 async def init_marzban_credentials():
     """
     اطلاعات اتصال به مرزبان را از دیتابیس خوانده و در حافظه کش می‌کند.
-    این تابع باید در هنگام استارت ربات فراخوانی شود.
     """
     from .data_manager import load_marzban_credentials as load_from_db
     global _marzban_credentials
@@ -27,9 +25,12 @@ async def init_marzban_credentials():
         LOGGER.warning("Marzban credentials could not be loaded from database.")
 
 async def get_marzban_token() -> Optional[str]:
-    # حالا از متغیر کش شده استفاده می‌کنیم
+    """
+    Gets an authentication token from the Marzban API.
+    Retries up to 3 times on network errors.
+    """
     if not _marzban_credentials:
-        LOGGER.warning("Marzban API call failed: Credentials are not loaded into the bot.")
+        LOGGER.warning("Marzban API call failed: Credentials are not loaded.")
         return None
 
     base_url = _marzban_credentials.get("base_url")
@@ -37,20 +38,31 @@ async def get_marzban_token() -> Optional[str]:
     password = _marzban_credentials.get("password")
 
     if not all([base_url, username, password]):
-        LOGGER.warning("Marzban API call failed: Credentials values are incomplete.")
+        LOGGER.warning("Marzban API call failed: Credential values are incomplete.")
         return None
 
     url = f"{base_url}/api/admin/token"
     payload = {'username': username, 'password': password}
-    try:
-        response = await _client.post(url, data=payload)
-        response.raise_for_status()
-        return response.json().get("access_token")
-    except (httpx.RequestError, httpx.HTTPStatusError) as e:
-        LOGGER.error(f"Failed to get Marzban token: {e}")
-        return None
+    
+    last_exception = None
+    for attempt in range(3):
+        try:
+            response = await _client.post(url, data=payload)
+            response.raise_for_status()
+            return response.json().get("access_token")
+        except (httpx.RequestError, httpx.HTTPStatusError) as e:
+            last_exception = e
+            LOGGER.warning(f"Attempt {attempt + 1}/3 to get Marzban token failed: {e}. Retrying in 1 second...")
+            await asyncio.sleep(1)
+            
+    LOGGER.error(f"Failed to get Marzban token after 3 attempts. Last error: {last_exception}")
+    return None
 
 async def _api_request(method: str, endpoint: str, **kwargs) -> Optional[Dict[str, Any]]:
+    """
+    Performs an API request to Marzban with authentication and retry logic.
+    Retries up to 3 times for network-related errors or 5xx server errors.
+    """
     token = await get_marzban_token()
     if not token:
         return {"error": "Authentication failed or credentials not set."}
@@ -59,23 +71,36 @@ async def _api_request(method: str, endpoint: str, **kwargs) -> Optional[Dict[st
     url = f"{base_url}{endpoint}"
     headers = {"Authorization": f"Bearer {token}", **kwargs.pop('headers', {})}
 
-    try:
-        response = await _client.request(method, url, headers=headers, **kwargs)
-        response.raise_for_status()
-        return response.json() if response.content else {"success": True}
-    except httpx.HTTPStatusError as e:
-        error_detail = "Unknown error"
+    last_exception = None
+    for attempt in range(3):
         try:
-            error_detail = e.response.json().get("detail", e.response.text)
-        except Exception:
-            pass
-        LOGGER.error(f"API request to {url} failed with status {e.response.status_code}: {error_detail}")
-        return {"error": error_detail, "status_code": e.response.status_code}
-    except httpx.RequestError as e:
-        LOGGER.error(f"Network error on API request to {url}: {e}")
-        return {"error": "Network error"}
+            response = await _client.request(method, url, headers=headers, **kwargs)
+            response.raise_for_status()
+            return response.json() if response.content else {"success": True}
 
-# بقیه توابع بدون تغییر باقی می‌مانند و از _api_request اصلاح شده استفاده می‌کنند
+        except httpx.HTTPStatusError as e:
+            if 500 <= e.response.status_code < 600:
+                last_exception = e
+                LOGGER.warning(f"API request to {url} failed with server error {e.response.status_code} (Attempt {attempt + 1}/3). Retrying...")
+                await asyncio.sleep(attempt + 1)
+                continue
+            else:
+                error_detail = "Unknown client error"
+                try:
+                    error_detail = e.response.json().get("detail", e.response.text)
+                except Exception:
+                    pass
+                LOGGER.error(f"API request to {url} failed with client status {e.response.status_code}: {error_detail}")
+                return {"error": error_detail, "status_code": e.response.status_code}
+
+        except httpx.RequestError as e:
+            last_exception = e
+            LOGGER.warning(f"Network error on API request to {url} (Attempt {attempt + 1}/3): {e}. Retrying...")
+            await asyncio.sleep(attempt + 1)
+    
+    LOGGER.error(f"API request to {url} failed after 3 attempts. Last error: {last_exception}")
+    return {"error": "Network error or persistent server issue"}
+
 async def get_all_users() -> Optional[List[Dict[str, Any]]]:
     response = await _api_request("GET", "/api/users", timeout=40.0)
     return response.get("users") if response and "error" not in response else None
@@ -83,8 +108,7 @@ async def get_all_users() -> Optional[List[Dict[str, Any]]]:
 async def get_user_data(username: str) -> Optional[Dict[str, Any]]:
     if not username: return None
     response = await _api_request("GET", f"/api/user/{username}")
-    if response and "error" in response and response.get("status_code") == 404:
-        return None 
+    # --- FIX: Simplify error handling. Let _api_request handle logging. ---
     if response and "error" in response:
         return None
     return response
@@ -97,7 +121,8 @@ async def modify_user_api(username: str, settings_to_change: dict) -> Tuple[bool
         current_data.pop(key, None)
     if 'proxies' in current_data and isinstance(current_data['proxies'], dict):
         current_data['proxies'] = {p: s for p, s in current_data['proxies'].items() if s}
-    current_data['status'] = 'active'
+    # --- FIX: Do not force status to 'active' on every modification ---
+    # current_data['status'] = 'active'
     updated_payload = {**current_data, **settings_to_change}
     response = await _api_request("PUT", f"/api/user/{username}", json=updated_payload)
     if response and "error" not in response:
