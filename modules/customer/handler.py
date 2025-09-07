@@ -1,4 +1,4 @@
-# FILE: modules/customer/handler.py (نسخه نهایی با مکالمه خرید پلن نامحدود)
+# FILE: modules/customer/handler.py (REVISED FOR PAGINATION)
 
 import logging
 from telegram.ext import (
@@ -6,7 +6,6 @@ from telegram.ext import (
     CallbackQueryHandler, filters, CommandHandler
 )
 
-# --- MODIFIED: Import the new unlimited_purchase module ---
 from .actions import purchase, renewal, service, panel, receipt, guide, custom_purchase, unlimited_purchase
 from modules.general.actions import start as start_action
 
@@ -16,11 +15,15 @@ def register(application: Application):
     LOGGER.info("Registering customer module handlers...")
     customer_fallbacks = [CommandHandler('start', start_action)]
 
-    # --- Conversations (No changes here) ---
+    # --- Conversations ---
     my_service_conv = ConversationHandler(
-        entry_points=[MessageHandler(filters.Regex('^📊 سرویس من$'), service.handle_my_service)],
+        entry_points=[MessageHandler(filters.Regex('^📊ســـــــــــرویس‌های من$'), service.handle_my_service)],
         states={
-            service.CHOOSE_SERVICE: [CallbackQueryHandler(service.choose_service, pattern=r'^select_service_')],
+            service.CHOOSE_SERVICE: [
+                CallbackQueryHandler(service.choose_service, pattern=r'^select_service_'),
+                # --- NEW: Handler for pagination ---
+                CallbackQueryHandler(service.handle_service_page_change, pattern=r'^(page_fwd_|page_back_)')
+            ],
             service.DISPLAY_SERVICE: [
                 CallbackQueryHandler(renewal.handle_renewal_request, pattern=r'^customer_renew_request_'),
                 CallbackQueryHandler(service.confirm_reset_subscription, pattern=r'^customer_reset_sub_'),
@@ -52,16 +55,13 @@ def register(application: Application):
     application.add_handler(manual_purchase_conv, group=1)
     application.add_handler(receipt.receipt_conv, group=1)
     application.add_handler(custom_purchase.custom_purchase_conv, group=1)
-    # --- NEW: Register the unlimited purchase conversation ---
     application.add_handler(unlimited_purchase.unlimited_purchase_conv, group=1)
 
     # --- Standalone Handlers for Purchase Panel ---
-    application.add_handler(MessageHandler(filters.Regex('^🛍️ پنل خرید و پرداخت$'), panel.show_customer_panel), group=1)
+    application.add_handler(MessageHandler(filters.Regex('^🛍️فــــــــــروشـــــــــــگاه$'), panel.show_customer_panel), group=1)
     application.add_handler(CallbackQueryHandler(panel.close_customer_panel, pattern='^close_panel$'), group=1)
-    application.add_handler(CallbackQueryHandler(panel.show_plan_type_menu, pattern='^show_plan_type_menu$'), group=1)
-    application.add_handler(CallbackQueryHandler(panel.show_customer_panel, pattern='^back_to_purchase_panel$'), group=1)
     
-    # --- Other Handlers (No changes here) ---
+    # --- Other Handlers ---
     from config import config
     if config.SUPPORT_USERNAME:
         application.add_handler(MessageHandler(filters.Regex('^💬 پشتیبانی$'), purchase.handle_support_button), group=1)

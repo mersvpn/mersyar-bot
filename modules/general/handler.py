@@ -57,6 +57,7 @@ def register(application: Application):
 
     # --- هندلرهای اصلاح شده ---
     # هندلر "تنظیمات آموزش" حذف شد چون به ماژول guides منتقل شده است
-    application.add_handler(MessageHandler(filters.Regex('^📱 دانلود و راهنمای اتصال$'), show_guides_to_customer), group=1)
+    
+    application.add_handler(MessageHandler(filters.Regex('^📱 راهــــــــــنمای اتصال$'), show_guides_to_customer), group=1)
     application.add_handler(MessageHandler(filters.Regex('^💻 ورود به پنل کاربری$'), switch_to_customer_view), group=1)
     application.add_handler(MessageHandler(filters.Regex('^↩️ بازگشت به پنل ادمین$'), switch_to_admin_view), group=1)

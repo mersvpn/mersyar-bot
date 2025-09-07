@@ -1,4 +1,4 @@
-# FILE: modules/customer/actions/service.py (FIXED WITH LAZY IMPORTS)
+# FILE: modules/customer/actions/service.py (REVISED FOR PAGINATION)
 
 import datetime
 import jdatetime
@@ -8,19 +8,78 @@ from telegram.ext import ContextTypes, ConversationHandler
 from telegram.constants import ParseMode
 from config import config
 from shared.keyboards import get_customer_main_menu_keyboard, get_admin_main_menu_keyboard
-from shared.keyboards import get_customer_main_menu_keyboard
 from modules.marzban.actions.api import get_user_data, reset_subscription_url_api, get_all_users
 from modules.marzban.actions.constants import GB_IN_BYTES
 from modules.marzban.actions.data_manager import normalize_username
-# --- START OF FIX: The global import from db_manager is removed to prevent circular dependency ---
-# from database.db_manager import get_linked_marzban_usernames, get_user_note
-# --- END OF FIX ---
 
 LOGGER = logging.getLogger(__name__)
 
 CHOOSE_SERVICE, DISPLAY_SERVICE, CONFIRM_RESET_SUB, CONFIRM_DELETE = range(4)
+ITEMS_PER_PAGE = 8
 
-# ==================== ۲. جایگزین تابع display_service_details ====================
+# =============================================================================
+#  بخش جدید: توابع کمکی برای صفحه‌بندی
+# =============================================================================
+async def _build_paginated_service_keyboard(services: list, page: int = 0) -> InlineKeyboardMarkup:
+    """یک کیبورد صفحه‌بندی شده از سرویس‌ها می‌سازد."""
+    start_index = page * ITEMS_PER_PAGE
+    end_index = start_index + ITEMS_PER_PAGE
+    
+    keyboard = []
+    
+    # Add service buttons for the current page
+    for user in services[start_index:end_index]:
+        status_emoji = "🟢" if user.get('status') == 'active' else "🔴"
+        keyboard.append([
+            InlineKeyboardButton(
+                f"{status_emoji} سرویس: {user['username']}", 
+                callback_data=f"select_service_{user['username']}"
+            )
+        ])
+        
+    # Add navigation buttons
+    nav_buttons = []
+    total_pages = (len(services) + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
+    
+    if page > 0:
+        nav_buttons.append(InlineKeyboardButton("⬅️ قبلی", callback_data=f"page_back_{page-1}"))
+    
+    if total_pages > 1:
+        nav_buttons.append(InlineKeyboardButton(f"صفحه {page + 1}/{total_pages}", callback_data="noop")) # No operation
+
+    if end_index < len(services):
+        nav_buttons.append(InlineKeyboardButton("بعدی ➡️", callback_data=f"page_fwd_{page+1}"))
+        
+    if nav_buttons:
+        keyboard.append(nav_buttons)
+
+    keyboard.append([InlineKeyboardButton("❌ انصراف و بازگشت", callback_data="customer_back_to_main_menu")])
+    return InlineKeyboardMarkup(keyboard)
+
+async def handle_service_page_change(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Handles clicks on 'next' and 'previous' buttons."""
+    query = update.callback_query
+    await query.answer()
+
+    direction, page_str = query.data.split('_')[1:]
+    page = int(page_str)
+
+    services = context.user_data.get('services_list', [])
+    if not services:
+        await query.edit_message_text("خطا: لیست سرویس‌ها یافت نشد. لطفاً دوباره امتحان کنید.")
+        return ConversationHandler.END
+
+    reply_markup = await _build_paginated_service_keyboard(services, page)
+    await query.edit_message_text(
+        "شما چندین سرویس دارید. لطفاً یکی را برای مشاهده جزئیات انتخاب کنید:", 
+        reply_markup=reply_markup
+    )
+    return CHOOSE_SERVICE
+
+# =============================================================================
+#  توابع اصلی (با تغییرات)
+# =============================================================================
+
 async def display_service_details(update: Update, context: ContextTypes.DEFAULT_TYPE, marzban_username: str) -> int:
     from database.db_manager import get_user_note
     
@@ -40,7 +99,6 @@ async def display_service_details(update: Update, context: ContextTypes.DEFAULT_
     is_active = user_info.get('status') == 'active'
 
     if is_active:
-        # --- نمایش جزئیات کامل برای سرویس فعال ---
         usage_gb = (user_info.get('used_traffic') or 0) / GB_IN_BYTES
         limit_gb = (user_info.get('data_limit') or 0) / GB_IN_BYTES
         usage_str = f"{usage_gb:.2f} GB" + (f" / {limit_gb:.0f} GB" if limit_gb > 0 else " (از نامحدود)")
@@ -59,7 +117,6 @@ async def display_service_details(update: Update, context: ContextTypes.DEFAULT_
                 time_left = expire_date - datetime.datetime.now()
                 expire_str = f"{jalali_date.strftime('%Y/%m/%d')} ({time_left.days} روز باقی‌مانده)"
             else:
-                # این حالت نباید رخ دهد چون is_active را چک کردیم، اما برای اطمینان
                 is_active = False 
                 expire_str = "منقضی شده"
         
@@ -84,7 +141,6 @@ async def display_service_details(update: Update, context: ContextTypes.DEFAULT_
         ])
     
     if not is_active:
-        # --- نمایش پیام ساده برای سرویس غیرفعال/منقضی ---
         message = (
             f"⚠️ **وضعیت سرویس**\n\n"
             f"▫️ **نام کاربری:** `{marzban_username}`\n"
@@ -99,7 +155,6 @@ async def display_service_details(update: Update, context: ContextTypes.DEFAULT_
     await target_message.edit_text(message, reply_markup=keyboard, parse_mode=ParseMode.MARKDOWN)
     return DISPLAY_SERVICE
     
-# ==================== REPLACE THIS FUNCTION in modules/customer/actions/service.py ====================
 async def handle_my_service(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     from database.db_manager import get_linked_marzban_usernames, unlink_user_from_telegram
     
@@ -147,28 +202,22 @@ async def handle_my_service(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         original_username = valid_linked_accounts[0]['username']
         return await display_service_details(dummy_update, context, original_username)
 
-    keyboard = []
-    for user in sorted(valid_linked_accounts, key=lambda u: u['username'].lower()):
-        status_emoji = "🟢" if user.get('status') == 'active' else "🔴"
-        keyboard.append([
-            InlineKeyboardButton(
-                f"{status_emoji} سرویس: {user['username']}", 
-                callback_data=f"select_service_{user['username']}"
-            )
-        ])
-        
-    keyboard.append([InlineKeyboardButton("❌ انصراف و بازگشت", callback_data="customer_back_to_main_menu")])
-    reply_markup = InlineKeyboardMarkup(keyboard)
+    # --- REVISED FOR PAGINATION ---
+    sorted_services = sorted(valid_linked_accounts, key=lambda u: u['username'].lower())
+    context.user_data['services_list'] = sorted_services
+
+    reply_markup = await _build_paginated_service_keyboard(sorted_services, page=0)
     
     await loading_message.edit_text("شما چندین سرویس دارید. لطفاً یکی را برای مشاهده جزئیات انتخاب کنید:", reply_markup=reply_markup)
     return CHOOSE_SERVICE
-# =======================================================================================================
+
 async def choose_service(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()
     marzban_username = query.data.split('select_service_')[-1]
     return await display_service_details(update, context, marzban_username)
 
+# ... (بقیه توابع بدون تغییر باقی می‌مانند)
 async def confirm_reset_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()
@@ -204,29 +253,18 @@ async def execute_reset_subscription(update: Update, context: ContextTypes.DEFAU
         await query.edit_message_text(text, reply_markup=keyboard) # edit the same message on failure
     return DISPLAY_SERVICE
 
-
-# ==================== REPLACE THIS FUNCTION ====================
 async def back_to_main_menu_customer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """
-    Ends the conversation and returns the user to their appropriate main menu.
-    Checks if the user is an admin to show the admin menu, otherwise shows the customer menu.
-    """
     query = update.callback_query
     await query.answer()
-    
     user_id = update.effective_user.id
     
-    # Decide which keyboard to show based on user's role
     if user_id in config.AUTHORIZED_USER_IDS:
-        # User is an admin, show the admin main menu
         final_keyboard = get_admin_main_menu_keyboard()
         message_text = "به منوی اصلی ادمین بازگشتید."
     else:
-        # User is a regular customer, show the customer main menu
         final_keyboard = get_customer_main_menu_keyboard()
         message_text = "به منوی اصلی بازگشتید."
 
-    # Delete the inline message and send the new main menu message
     await query.message.delete()
     await context.bot.send_message(
         chat_id=user_id,
@@ -236,7 +274,7 @@ async def back_to_main_menu_customer(update: Update, context: ContextTypes.DEFAU
     
     context.user_data.clear()
     return ConversationHandler.END
-# =================
+
 async def request_delete_service(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()
@@ -251,7 +289,6 @@ async def request_delete_service(update: Update, context: ContextTypes.DEFAULT_T
     ])
     await query.edit_message_text(text, reply_markup=keyboard, parse_mode=ParseMode.MARKDOWN)
     return CONFIRM_DELETE
-
 
 async def confirm_delete_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     from config import config
@@ -275,15 +312,9 @@ async def confirm_delete_request(update: Update, context: ContextTypes.DEFAULT_T
             "این کاربر درخواست حذف کامل این سرویس را دارد."
         )
         
-        # --- 🟢 بخش اصلاح شده 🟢 ---
-        # در callback_data فقط نام کاربری را قرار می‌دهیم
         admin_keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton("✅ تایید حذف", callback_data=f"delete_{username}")],
-            # برای دکمه رد کردن، می‌توانیم یک الگوی متفاوت برای جلوگیری از تداخل داشته باشیم
-            # اما فعلا نیازی نیست، چون هیچ تابعی آن را پردازش نمی‌کند.
-            # [InlineKeyboardButton("❌ رد درخواست", callback_data=f"admin_reject_delete_{username}")]
         ])
-        # --- ------------------- ---
 
         for admin_id in config.AUTHORIZED_USER_IDS:
             try:

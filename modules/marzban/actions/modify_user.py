@@ -264,7 +264,8 @@ async def renew_user_smart(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     
     payload_to_modify = {
         "expire": int(new_expire_date.timestamp()),
-        "data_limit": int(data_limit_gb * GB_IN_BYTES)
+        "data_limit": int(data_limit_gb * GB_IN_BYTES),
+        "status": "active"  # <--- این خط اضافه شده است
     }
     
     success_modify, message_modify = await modify_user_api(username, payload_to_modify)
