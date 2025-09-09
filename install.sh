@@ -130,26 +130,61 @@ PHP_FPM_SOCK=$(ls /var/run/php/php*-fpm.sock | head -n 1)
 
 # --- 6. Nginx & SSL ---
 info "[6/9] Configuring Nginx & SSL..."
-if [ ! -f "/etc/nginx/sites-available/$SERVICE_NAME" ]; then
-cat << EOF > /etc/nginx/sites-available/$SERVICE_NAME
+NGINX_CONF="/etc/nginx/sites-available/$SERVICE_NAME"
+PHP_FPM_SOCK=$(ls /var/run/php/php*-fpm.sock | head -n 1) # Moved here for better scoping
+
+if [ ! -f "$NGINX_CONF" ]; then
+    info "-> Creating Nginx configuration for $DOMAIN..."
+    cat << EOF > "$NGINX_CONF"
 server {
-    listen 80; server_name $DOMAIN; root /var/www/html;
-    location /.well-known/acme-challenge/ { allow all; }
-    location /phpmyadmin { index index.php; location ~ \.php\$ { include snippets/fastcgi-php.conf; fastcgi_pass unix:${PHP_FPM_SOCK}; } }
-    location / { 
-        proxy_pass http://127.0.0.1:${BOT_PORT}; 
-        proxy_set_header Host \$host; 
-        proxy_set_header X-Real-IP \$remote_addr; 
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for; 
+    listen 80;
+    server_name $DOMAIN;
+    root /var/www/html;
+    
+    # Rule for Certbot ACME challenge
+    location /.well-known/acme-challenge/ {
+        allow all;
+    }
+    
+    # Rule for phpMyAdmin
+    location /phpmyadmin {
+        index index.php;
+        location ~ \.php\$ {
+            include snippets/fastcgi-php.conf;
+            fastcgi_pass unix:${PHP_FPM_SOCK};
+        }
+    }
+    
+    # Rule for the bot webhook
+    location / {
+        # Redirect all HTTP traffic to HTTPS
+        return 301 https://\$host\$request_uri;
     }
 }
 EOF
-    ln -s -f /etc/nginx/sites-available/$SERVICE_NAME /etc/nginx/sites-enabled/
+    ln -s -f "$NGINX_CONF" /etc/nginx/sites-enabled/
     systemctl restart nginx
-    certbot --nginx -d "$DOMAIN" --non-interactive --agree-tos --email "$ADMIN_EMAIL" --redirect
+
+    info "-> Attempting to obtain SSL certificate from ZeroSSL..."
+    # ✨ MODIFIED: Added error handling and changed ACME server to ZeroSSL
+    if ! certbot --nginx -d "$DOMAIN" --non-interactive --agree-tos --email "$ADMIN_EMAIL" \
+        --server https://acme.zerossl.com/v2/EAB --register-unsafely-without-email; then
+        error "SSL certificate generation failed. Please check the following:"
+        error "1. Your domain '$DOMAIN' correctly points to this server's IP."
+        error "2. Port 80 is not blocked by a firewall."
+        error "3. Review the logs: /var/log/letsencrypt/letsencrypt.log"
+        exit 1
+    fi
+    success "SSL certificate obtained and configured successfully."
+    systemctl restart nginx
 else
-    info "Nginx config exists. Skipping creation."
-    certbot renew --quiet
+    info "-> Nginx config already exists. Attempting to renew certificate..."
+    # ✨ MODIFIED: Quieter renew and more robust check
+    if certbot renew --quiet; then
+        info "SSL certificate renewal check complete."
+    else
+        warning "SSL certificate renewal check reported issues. Check logs if problems persist."
+    fi
 fi
 
 # --- 7. systemd service ---
