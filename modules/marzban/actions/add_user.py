@@ -1,4 +1,4 @@
-# FILE: modules/marzban/actions/add_user.py (نسخه نهایی کامل و بازطراحی شده)
+# FILE: modules/marzban/actions/add_user.py (REVISED)
 
 import datetime
 import qrcode
@@ -22,7 +22,9 @@ from database.db_manager import (
     add_user_to_managed_list
 )
 from shared.keyboards import get_user_management_keyboard
-from shared.callbacks import cancel_conversation
+# V V V V V THE FIX IS HERE (IMPORT) V V V V V
+from modules.general.actions import end_conversation_and_show_menu
+# ^ ^ ^ ^ ^ THE FIX IS HERE (IMPORT) ^ ^ ^ ^ ^
 from .api import create_user_api, get_user_data
 from .data_manager import normalize_username
 from shared.log_channel import send_log
@@ -42,7 +44,7 @@ async def create_marzban_user_from_template(
     data_limit_gb: int,
     expire_days: int,
     username: Optional[str] = None,
-    max_ips: Optional[int] = None  # <-- NEW PARAMETER
+    max_ips: Optional[int] = None
 ) -> Optional[Dict[str, Any]]:
     """
     Creates a new Marzban user based on the saved template.
@@ -86,11 +88,9 @@ async def create_marzban_user_from_template(
         "status": "active"
     }
 
-    # --- NEW: Add max_online_ips if provided ---
     if max_ips is not None and max_ips > 0:
         payload["on_hold_max_ips"] = max_ips
         LOGGER.info(f"[Core Create User] Setting max_online_ips to {max_ips} for user {base_username}.")
-    # --- END NEW ---
 
     # --- Create User with Collision Handling ---
     current_username = base_username
@@ -117,6 +117,8 @@ async def create_marzban_user_from_template(
 
     LOGGER.error(f"[Core Create User] Failed to create user after 4 attempts. Last tried username: '{current_username}'.")
     return None
+
+# =============================================================================
 #  2. مکالمه افزودن کاربر به صورت دستی توسط ادمین
 # =============================================================================
 
@@ -212,56 +214,34 @@ async def add_user_get_expire(update: Update, context: ContextTypes.DEFAULT_TYPE
         await update.message.reply_text("❌ ورودی نامعتبر. لطفاً فقط عدد صحیح و مثبت (یا صفر) وارد کنید.")
         return ADD_USER_EXPIRE
 
-# ==================== REPLACE THIS FUNCTION in modules/marzban/actions/add_user.py ====================
-async def add_user_create(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    import copy
-    from database.db_manager import (
-        load_template_config_db, link_user_to_telegram, save_user_note,
-        add_user_to_managed_list
-    )
 
+async def add_user_create(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()
     
     admin_user = update.effective_user
-
-    template_config = await load_template_config_db()
-    if not template_config.get("template_username"):
-        await query.edit_message_text("❌ **خطا: الگوی کاربری تنظیم نشده است.**", parse_mode=ParseMode.MARKDOWN)
-        context.user_data.clear()
-        return ConversationHandler.END
+    await query.edit_message_text(f"در حال ساخت کاربر...", parse_mode=ParseMode.MARKDOWN)
 
     user_info = context.user_data.get('new_user')
     if not user_info:
         await query.edit_message_text("خطا: اطلاعات کاربر در حافظه موقت یافت نشد.")
-        context.user_data.clear()
         return ConversationHandler.END
 
-    await query.edit_message_text(f"در حال ساخت کاربر `{user_info['username']}` در پنل مرزبان...", parse_mode=ParseMode.MARKDOWN)
-
-    data_limit_gb = user_info['data_limit_gb']
-    data_limit = data_limit_gb * GB_IN_BYTES if data_limit_gb > 0 else 0
-    expire_days = user_info['expire_days']
-    expire = int((datetime.datetime.now() + datetime.timedelta(days=expire_days)).timestamp()) if expire_days > 0 else 0
+    new_user_data = await create_marzban_user_from_template(
+        data_limit_gb=user_info['data_limit_gb'],
+        expire_days=user_info['expire_days'],
+        username=user_info['username']
+    )
     
-    proxies_from_template = copy.deepcopy(template_config.get('proxies', {}))
-    if 'vless' in proxies_from_template and 'id' in proxies_from_template['vless']: del proxies_from_template['vless']['id']
-    if 'vmess' in proxies_from_template and 'id' in proxies_from_template['vmess']: del proxies_from_template['vmess']['id']
-    
-    payload = { "username": user_info['username'], "inbounds": template_config.get('inbounds', {}), "expire": expire, "data_limit": data_limit, "proxies": proxies_from_template, "status": "active" }
-    
-    success, result = await create_user_api(payload)
-    
-    if success:
-        new_user_data = result
-        marzban_username = user_info['username']
+    if new_user_data:
+        marzban_username = new_user_data['username'] # Use the username returned by API
         normalized_username = normalize_username(marzban_username)
 
         await add_user_to_managed_list(normalized_username)
         
         note_data = {
-            'subscription_duration': expire_days, 
-            'subscription_data_limit_gb': data_limit_gb,
+            'subscription_duration': user_info['expire_days'], 
+            'subscription_data_limit_gb': user_info['data_limit_gb'],
             'subscription_price': 0
         }
         await save_user_note(normalized_username, note_data)
@@ -271,8 +251,8 @@ async def add_user_create(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         log_message = (
             f"➕ *اشتراک جدید ایجاد شد*\n\n"
             f"▫️ **نام کاربری:** `{safe_username}`\n"
-            f"▫️ **حجم:** {data_limit_gb} GB\n"
-            f"▫️ **مدت:** {expire_days} روز\n"
+            f"▫️ **حجم:** {user_info['data_limit_gb']} GB\n"
+            f"▫️ **مدت:** {user_info['expire_days']} روز\n"
             f"👤 **توسط ادمین:** {admin_mention}"
         )
         await send_log(context.bot, log_message, parse_mode=ParseMode.MARKDOWN_V2)
@@ -282,9 +262,8 @@ async def add_user_create(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             await link_user_to_telegram(normalized_username, customer_id)
             subscription_url = new_user_data.get('subscription_url', '')
             if subscription_url:
-                # --- بخش بازنویسی شده برای پیام زیباتر به مشتری ---
-                data_limit_str = f"{data_limit_gb} GB" if data_limit_gb > 0 else "نامحدود"
-                expire_days_str = f"{expire_days} روز" if expire_days > 0 else "نامحدود"
+                data_limit_str = f"{user_info['data_limit_gb']} GB" if user_info['data_limit_gb'] > 0 else "نامحدود"
+                expire_days_str = f"{user_info['expire_days']} روز" if user_info['expire_days'] > 0 else "نامحدود"
                 
                 customer_message = (
                     f"🎉 **اشتراک شما با موفقیت ساخته شد!** 🎉\n\n"
@@ -295,7 +274,6 @@ async def add_user_create(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                     f"🔗 **لینک اشتراک:**\n`{subscription_url}`\n\n"
                     f"💡 لطفاً لینک اشتراک بالا را کپی کرده و طبق راهنمای اتصال، در برنامه خود وارد کنید."
                 )
-                # --- پایان بخش بازنویسی شده ---
                 
                 qr_image = qrcode.make(subscription_url)
                 bio = io.BytesIO()
@@ -317,15 +295,18 @@ async def add_user_create(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await query.edit_message_text(f"✅ کاربر `{marzban_username}` با موفقیت ساخته شد.", reply_markup=keyboard, parse_mode=ParseMode.MARKDOWN)
 
     else:
-        error_message = f"❌ **خطا در ساخت کاربر:**\n\n`{result}`"
+        error_message = f"❌ **خطا در ساخت کاربر:**\n\n`{new_user_data}`"
         await query.edit_message_text(error_message, parse_mode=ParseMode.MARKDOWN)
     
-    context.user_data.clear()
-    return ConversationHandler.END
-# =======================================================================================================
+    return await end_conversation_and_show_menu(update, context)
+
 
 async def cancel_add_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Cancels the user creation conversation and returns to the main menu."""
     query = update.callback_query
-    await query.answer()
-    await query.edit_message_text("عملیات ساخت کاربر لغو شد.")
-    return await cancel_conversation(update, context)
+    if query:
+        await query.answer()
+        # We don't need to edit the message text here as `end_conversation_and_show_menu` handles it.
+    
+    # Directly call the standard fallback function
+    return await end_conversation_and_show_menu(update, context)

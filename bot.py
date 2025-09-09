@@ -1,11 +1,14 @@
-# FILE: bot.py (نسخه نهایی با ماژول آموزش)
+# FILE: bot.py (REVISED WITH UNIVERSAL DEBUG LOGGER)
 
 import logging
 import logging.handlers
 import sys
 import os
 import asyncio
-from telegram.ext import Application, ApplicationBuilder, ContextTypes
+# V V V V V NEW IMPORTS FOR THE DEBUG LOGGER V V V V V
+from telegram import Update
+from telegram.ext import Application, ApplicationBuilder, ContextTypes, MessageHandler, CallbackQueryHandler, filters
+# ^ ^ ^ ^ ^ NEW IMPORTS FOR THE DEBUG LOGGER ^ ^ ^ ^ ^
 
 from config import config
 from modules.marzban.actions import api as marzban_api
@@ -15,7 +18,6 @@ LOG_FILE = "bot.log"
 LOGGER = logging.getLogger(__name__)
 
 def setup_logging():
-    # ... (بدون تغییر)
     if logging.getLogger().hasHandlers(): return
     log_formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
     file_handler = logging.handlers.RotatingFileHandler(LOG_FILE, maxBytes=5*1024*1024, backupCount=5, encoding='utf-8')
@@ -23,13 +25,32 @@ def setup_logging():
     file_handler.setLevel(logging.DEBUG)
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setFormatter(log_formatter)
-    console_handler.setLevel(logging.INFO)
+    console_handler.setLevel(logging.INFO) # Keep console clean, debug logs go to file
     root_logger = logging.getLogger()
     root_logger.setLevel(logging.DEBUG)
     root_logger.addHandler(file_handler)
     root_logger.addHandler(console_handler)
     logging.getLogger("httpx").setLevel(logging.WARNING)
     LOGGER.info("Logging configured successfully.")
+
+# V V V V V UNIVERSAL DEBUG LOGGER FUNCTION V V V V V
+async def debug_update_logger(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    A high-priority, catch-all handler to log every user interaction for debugging purposes.
+    This helps identify why other handlers might not be triggering.
+    """
+    user_info = f"User(ID:{update.effective_user.id}, Name:'{update.effective_user.full_name}')"
+
+    if update.message and update.message.text:
+        text = update.message.text
+        char_codes = [ord(c) for c in text]
+        LOGGER.info(f"[DEBUG_LOGGER] Message from {user_info} | Text: '{text}' | CharCodes: {char_codes}")
+
+    elif update.callback_query:
+        data = update.callback_query.data
+        LOGGER.info(f"[DEBUG_LOGGER] Callback from {user_info} | Data: '{data}'")
+# ^ ^ ^ ^ ^ UNIVERSAL DEBUG LOGGER FUNCTION ^ ^ ^ ^ ^
+
 
 async def heartbeat(context: ContextTypes.DEFAULT_TYPE):
     LOGGER.info("❤️ Heartbeat: Bot is alive and the JobQueue is running.")
@@ -57,7 +78,7 @@ def main() -> None:
     from modules.reminder import handler as reminder_handler
     from modules.financials import handler as financials_handler
     from modules.stats import handler as stats_handler
-    from modules.guides import handler as guides_handler # <-- وارد کردن ماژول جدید
+    from modules.guides import handler as guides_handler
 
     application = (
         ApplicationBuilder()
@@ -69,6 +90,13 @@ def main() -> None:
         .build()
     )
 
+    # V V V V V REGISTERING THE DEBUG LOGGER V V V V V
+    # We add this handler in group -1 to ensure it runs before all other handlers (default group 0)
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, debug_update_logger), group=-1)
+    application.add_handler(CallbackQueryHandler(debug_update_logger), group=-1)
+    LOGGER.info("Universal debug logger has been activated.")
+    # ^ ^ ^ ^ ^ REGISTERING THE DEBUG LOGGER ^ ^ ^ ^ ^
+
     general_handler.register(application)
     marzban_handler.register(application)
     financials_handler.register(application)
@@ -76,7 +104,7 @@ def main() -> None:
     customer_handler.register(application)
     bot_settings_handler.register(application)
     stats_handler.register(application)
-    guides_handler.register(application) # <-- ثبت ماژول جدید
+    guides_handler.register(application)
     
     if application.job_queue:
         application.job_queue.run_repeating(heartbeat, interval=3600, first=10, name="heartbeat")

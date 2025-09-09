@@ -1,4 +1,4 @@
-# FILE: modules/reminder/actions/daily_note.py (نسخه نهایی و اصلاح شده)
+# FILE: modules/reminder/actions/daily_note.py (REVISED)
 
 import logging
 import uuid
@@ -11,7 +11,9 @@ from telegram.constants import ParseMode
 from telegram.helpers import escape_markdown
 
 from database import db_manager
-from shared.callbacks import cancel_conversation # تابع لغو عمومی از اینجا وارد می‌شود
+# V V V V V THE FIX IS HERE (IMPORTS) V V V V V
+from modules.general.actions import end_conversation_and_show_menu
+# ^ ^ ^ ^ ^ THE FIX IS HERE (IMPORTS) ^ ^ ^ ^ ^
 from shared.keyboards import get_settings_and_tools_keyboard
 
 LOGGER = logging.getLogger(__name__)
@@ -36,14 +38,14 @@ async def main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             InlineKeyboardButton("➕ افزودن یادداشت جدید", callback_data="dnote_add_prompt"),
             InlineKeyboardButton(" L️ لیست یادداشت‌ها", callback_data="dnote_list_prompt")
         ],
-        # دکمه بازگشت اکنون از تابع عمومی لغو مکالمه استفاده می‌کند
         [InlineKeyboardButton("🔙 بازگشت به منوی اصلی", callback_data="cancel_conv")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     text = "🗒️ **مدیریت یادداشت‌های روزانه**\n\nلطفاً یک گزینه را انتخاب کنید."
 
     if is_entry:
-        await update.message.delete()
+        if update.message:
+            await update.message.delete()
         sent_message = await context.bot.send_message(
             chat_id=update.effective_chat.id,
             text=text,
@@ -204,9 +206,9 @@ async def edit_save(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     else:
         await update.message.reply_text("خطا: یادداشت برای ویرایش یافت نشد.")
     
-    query = update.callback_query or (await update.message.reply_text("\u200b")).callback_query
-    await query.edit_message_text(text="در حال بازگشت...")
-    return await _build_view_message(update, context)
+    # Create a dummy query to call the next state
+    dummy_update = Update(update.update_id, callback_query=update.callback_query)
+    return await _build_view_message(dummy_update, context)
 
 
 daily_notes_conv = ConversationHandler(
@@ -239,11 +241,12 @@ daily_notes_conv = ConversationHandler(
         EDIT_GET_TITLE: [MessageHandler(filters.TEXT & ~filters.COMMAND, edit_save)],
         EDIT_GET_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, edit_save)],
     },
+    # V V V V V THE FIX IS HERE (FALLBACKS) V V V V V
     fallbacks=[
-        CommandHandler('cancel', cancel_conversation),
-        # این خط باعث می‌شود دکمه بازگشت نیز مکالمه را به درستی پایان دهد
-        CallbackQueryHandler(cancel_conversation, pattern='^cancel_conv$')
+        CommandHandler('cancel', end_conversation_and_show_menu),
+        CallbackQueryHandler(end_conversation_and_show_menu, pattern='^cancel_conv$')
     ],
+    # ^ ^ ^ ^ ^ THE FIX IS HERE (FALLBACKS) ^ ^ ^ ^ ^
     conversation_timeout=600,
     per_user=True,
     per_chat=True

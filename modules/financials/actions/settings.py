@@ -1,4 +1,4 @@
-# FILE: modules/financials/actions/settings.py (نسخه بازطراحی شده با پنل مدیریت پلن)
+# FILE: modules/financials/actions/settings.py (REVISED)
 
 import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -14,9 +14,10 @@ from telegram.constants import ParseMode
 
 # --- Local Imports ---
 from database.db_manager import load_financials, save_financials
-# --- MODIFIED: Updated keyboard imports and removed unused ones ---
 from shared.keyboards import get_financial_settings_keyboard, get_payment_methods_keyboard, get_plan_management_keyboard
-from shared.callbacks import cancel_conversation
+# V V V V V THE FIX IS HERE (IMPORTS) V V V V V
+from modules.general.actions import end_conversation_and_show_menu
+# ^ ^ ^ ^ ^ THE FIX IS HERE (IMPORTS) ^ ^ ^ ^ ^
 from modules.auth import admin_only
 from database.db_manager import load_financials, save_financials, load_bot_settings, save_bot_settings
 
@@ -24,14 +25,12 @@ from database.db_manager import load_financials, save_financials, load_bot_setti
 LOGGER = logging.getLogger(__name__)
 
 # --- States for Conversations ---
-# States for the card info conversation
 (
     CARD_MENU,
     EDITING_HOLDER,
     EDITING_CARD
 ) = range(3)
 
-# States for the plan name settings conversation (NEW)
 (
     PLAN_NAME_MENU,
     EDITING_VOLUMETRIC_NAME,
@@ -44,9 +43,6 @@ LOGGER = logging.getLogger(__name__)
 
 @admin_only
 async def show_financial_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    منوی اصلی تنظیمات مالی را نمایش می‌دهد.
-    """
     user_id = update.effective_user.id
     LOGGER.info(f"Admin {user_id} accessed the main financial menu.")
     
@@ -56,7 +52,6 @@ async def show_financial_menu(update: Update, context: ContextTypes.DEFAULT_TYPE
     if update.callback_query:
         query = update.callback_query
         await query.answer()
-        # To avoid TelegramError: MESSAGE_NOT_MODIFIED, check if the message is the same
         if query.message.text != "به منوی تنظیمات مالی بازگشتید.":
             await query.edit_message_text(text="به منوی تنظیمات مالی بازگشتید.")
         
@@ -80,25 +75,17 @@ async def show_payment_methods_menu(update: Update, context: ContextTypes.DEFAUL
     text = "💳 *تنظیمات پرداخت*\n\nاز این بخش می‌توانید روش‌های پرداخت را مدیریت کنید."
     keyboard = get_payment_methods_keyboard()
     
-    # Check if triggered by a ReplyKeyboardButton or an InlineKeyboardButton
     target_message = update.message or (update.callback_query.message if update.callback_query else None)
     if not target_message: return
 
-    # If it's a callback, we can edit the message
     if update.callback_query:
         await update.callback_query.answer()
         await update.callback_query.edit_message_text(text=text, reply_markup=keyboard, parse_mode=ParseMode.MARKDOWN)
     else:
-        # If it's a regular message, we send a new message with the inline keyboard
         await target_message.reply_text(text=text, reply_markup=keyboard, parse_mode=ParseMode.MARKDOWN)
 
-# --- NEW FUNCTION ---
 @admin_only
 async def show_plan_management_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    Displays the plan management menu (Unlimited / Volumetric).
-    Handles both message and callback query triggers intelligently.
-    """
     user_id = update.effective_user.id
     LOGGER.info(f"Admin {user_id} accessed the plan management menu.")
     
@@ -106,7 +93,6 @@ async def show_plan_management_menu(update: Update, context: ContextTypes.DEFAUL
     keyboard = get_plan_management_keyboard()
     
     if update.callback_query:
-        # If triggered by an inline button (like "Back"), edit the message.
         query = update.callback_query
         await query.answer()
         await query.edit_message_text(
@@ -115,14 +101,14 @@ async def show_plan_management_menu(update: Update, context: ContextTypes.DEFAUL
             parse_mode=ParseMode.MARKDOWN
         )
     else:
-        # If triggered by a message (ReplyKeyboardButton), send a new message.
         await update.message.reply_text(
             text=text,
             reply_markup=keyboard,
             parse_mode=ParseMode.MARKDOWN
         )
+
 # =============================================================================
-# 2. مکالمه تنظیم اطلاعات کارت به کارت (بدون تغییر)
+# 2. مکالمه تنظیم اطلاعات کارت به کارت
 # =============================================================================
 
 async def format_financial_info_message() -> str:
@@ -174,10 +160,11 @@ async def prompt_for_edit(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 async def save_financial_info(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     action = context.user_data.get('financial_action')
     new_value = update.message.text.strip()
-    user_id = update.effective_user.id
     if not action:
         await update.message.reply_text("خطا: عملیات نامشخص است. لطفاً دوباره تلاش کنید.")
-        return await cancel_conversation(update, context)
+        # V V V V V THE FIX IS HERE (FUNCTION CALL) V V V V V
+        return await end_conversation_and_show_menu(update, context)
+        # ^ ^ ^ ^ ^ THE FIX IS HERE (FUNCTION CALL) ^ ^ ^ ^ ^
     financial_data = await load_financials()
     confirmation_text = ""
     if action == 'holder':
@@ -206,17 +193,18 @@ card_settings_conv = ConversationHandler(
         EDITING_HOLDER: [MessageHandler(filters.TEXT & ~filters.COMMAND, save_financial_info)],
         EDITING_CARD: [MessageHandler(filters.TEXT & ~filters.COMMAND, save_financial_info)],
     },
-    fallbacks=[CommandHandler('cancel', cancel_conversation)],
+    # V V V V V THE FIX IS HERE (FALLBACK) V V V V V
+    fallbacks=[CommandHandler('cancel', end_conversation_and_show_menu)],
+    # ^ ^ ^ ^ ^ THE FIX IS HERE (FALLBACK) ^ ^ ^ ^ ^
     conversation_timeout=300,
     block=False
 )
 
 # =============================================================================
-# 3. مکالمه تنظیم نام پلن‌های فروش (NEW SECTION)
+# 3. مکالمه تنظیم نام پلن‌های فروش
 # =============================================================================
 
 async def show_plan_name_settings_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Displays the menu for editing plan button names."""
     query = update.callback_query
     await query.answer()
 
@@ -247,9 +235,8 @@ async def show_plan_name_settings_menu(update: Update, context: ContextTypes.DEF
     return PLAN_NAME_MENU
 
 async def prompt_for_new_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Asks the admin to enter the new name for the selected button."""
     query = update.callback_query
-    action = query.data.split('_')[-1] # 'volumetric' or 'unlimited'
+    action = query.data.split('_')[-1]
     context.user_data['plan_name_to_edit'] = action
     
     if action == 'volumetric':
@@ -264,13 +251,14 @@ async def prompt_for_new_name(update: Update, context: ContextTypes.DEFAULT_TYPE
     return next_state
 
 async def save_new_plan_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Saves the new button name and cleanly exits the conversation."""
     new_name = update.message.text.strip()
     action = context.user_data.pop('plan_name_to_edit', None)
 
     if not action:
         await update.message.reply_text("❌ خطایی رخ داد. لطفاً دوباره تلاش کنید.")
-        return await cancel_conversation(update, context)
+        # V V V V V THE FIX IS HERE (FUNCTION CALL) V V V V V
+        return await end_conversation_and_show_menu(update, context)
+        # ^ ^ ^ ^ ^ THE FIX IS HERE (FUNCTION CALL) ^ ^ ^ ^ ^
 
     if action == 'volumetric':
         key_to_save = "volumetric_plan_button_text"
@@ -281,7 +269,6 @@ async def save_new_plan_name(update: Update, context: ContextTypes.DEFAULT_TYPE)
     
     await update.message.reply_text(f"✅ نام دکمه با موفقیت به «{new_name}» تغییر یافت.")
     
-    # --- FIX: Re-create and send the previous menu manually to ensure a clean exit ---
     menu_text = "📊 *مدیریت پلن‌های فروش*\n\nلطفا نوع پلن‌هایی که قصد مدیریت آن‌ها را دارید، انتخاب کنید:"
     menu_keyboard = get_plan_management_keyboard()
     
@@ -292,6 +279,7 @@ async def save_new_plan_name(update: Update, context: ContextTypes.DEFAULT_TYPE)
     )
 
     return ConversationHandler.END
+
 plan_name_settings_conv = ConversationHandler(
     entry_points=[CallbackQueryHandler(show_plan_name_settings_menu, pattern='^admin_set_plan_names$')],
     states={
@@ -302,6 +290,8 @@ plan_name_settings_conv = ConversationHandler(
         EDITING_VOLUMETRIC_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, save_new_plan_name)],
         EDITING_UNLIMITED_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, save_new_plan_name)],
     },
-    fallbacks=[CommandHandler('cancel', cancel_conversation)],
+    # V V V V V THE FIX IS HERE (FALLBACK) V V V V V
+    fallbacks=[CommandHandler('cancel', end_conversation_and_show_menu)],
+    # ^ ^ ^ ^ ^ THE FIX IS HERE (FALLBACK) ^ ^ ^ ^ ^
     conversation_timeout=300
 )

@@ -1,4 +1,4 @@
-# FILE: modules/marzban/actions/note.py (نسخه اصلاح شده برای دریافت حجم)
+# FILE: modules/marzban/actions/note.py (REVISED)
 import math
 import logging
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
@@ -8,7 +8,9 @@ from telegram.helpers import escape_markdown
 
 from .data_manager import normalize_username
 from shared.keyboards import get_user_management_keyboard
-from shared.callbacks import cancel_conversation
+# V V V V V THE FIX IS HERE (IMPORTS) V V V V V
+from modules.general.actions import end_conversation_and_show_menu
+# ^ ^ ^ ^ ^ THE FIX IS HERE (IMPORTS) ^ ^ ^ ^ ^
 from .api import get_all_users as get_all_marzban_users
 
 LOGGER = logging.getLogger(__name__)
@@ -90,7 +92,9 @@ async def get_price_and_save_note(update: Update, context: ContextTypes.DEFAULT_
     from database.db_manager import save_user_note
 
     username = context.user_data.get('note_username')
-    if not username: return await cancel_conversation(update, context)
+    # V V V V V THE FIX IS HERE (FUNCTION CALL) V V V V V
+    if not username: return await end_conversation_and_show_menu(update, context)
+    # ^ ^ ^ ^ ^ THE FIX IS HERE (FUNCTION CALL) ^ ^ ^ ^ ^
     try:
         price = int(update.message.text)
         if price < 0:

@@ -88,10 +88,10 @@ cd "$PROJECT_DIR" || { error "Failed to enter project directory: $PROJECT_DIR"; 
 if [ ! -f ".env" ]; then
     info "   -> Setting up MySQL Database and User for the first time..."
     DB_PASSWORD=$(openssl rand -base64 18 | tr -dc 'a-zA-Z0-9' | head -c 16)
-    mysql -e "CREATE DATABASE IF NOT EXISTS $DB_NAME;"
-    mysql -e "CREATE USER IF NOT EXISTS '$DB_USER'@'localhost' IDENTIFIED WITH mysql_native_password BY '$DB_PASSWORD';"
-    mysql -e "GRANT ALL PRIVILEGES ON $DB_NAME.* TO '$DB_USER'@'localhost';"
-    mysql -e "FLUSH PRIVILEGES;"
+    sudo mysql -e "CREATE DATABASE IF NOT EXISTS $DB_NAME;"
+    sudo mysql -e "CREATE USER IF NOT EXISTS '$DB_USER'@'localhost' IDENTIFIED WITH mysql_native_password BY '$DB_PASSWORD';"
+    sudo mysql -e "GRANT ALL PRIVILEGES ON $DB_NAME.* TO '$DB_USER'@'localhost';"
+    sudo mysql -e "FLUSH PRIVILEGES;"
     
     info "   -> Creating .env file..."
     WEBHOOK_SECRET_TOKEN=$(openssl rand -base64 24 | tr -dc 'a-zA-Z0-9' | head -c 32)

@@ -1,11 +1,10 @@
-# FILE: shared/keyboards.py (REVISED)
+# FILE: shared/keyboards.py (COMPLETE AND CORRECT)
 
 from telegram import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
 from config import config
-from database import db_manager
 
 # =============================================================================
-#  بخش کیبوردهای اصلی (ReplyKeyboardMarkup) - بدون تغییر
+#  بخش کیبوردهای اصلی (ReplyKeyboardMarkup)
 # =============================================================================
 
 def get_admin_main_menu_keyboard() -> ReplyKeyboardMarkup:
@@ -52,6 +51,21 @@ def get_customer_main_menu_keyboard() -> ReplyKeyboardMarkup:
         keyboard_layout.append([KeyboardButton("💬 پشتیبانی")])
     return ReplyKeyboardMarkup(keyboard_layout, resize_keyboard=True)
 
+def get_customer_shop_keyboard() -> ReplyKeyboardMarkup:
+    keyboard = [
+        [KeyboardButton("👨‍💻 ساخت اشتراک توسط پشتیبانی")],
+        [KeyboardButton("♻️ اشتراک با حجم دلخواه"), KeyboardButton("💎 اشتراک با حجم نامحدود")],
+        [KeyboardButton("🧾 ارسال رسید پرداخت")],
+        [KeyboardButton("🔙 بازگشت به منوی اصلی")]
+    ]
+    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+
+def get_back_to_main_menu_keyboard() -> ReplyKeyboardMarkup:
+    keyboard = [
+        [KeyboardButton("🔙 بازگشت به منوی اصلی")]
+    ]
+    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+
 def get_customer_view_for_admin_keyboard() -> ReplyKeyboardMarkup:
     keyboard_layout = [
         [KeyboardButton("🛍️فــــــــــروشـــــــــــگاه")],
@@ -79,37 +93,6 @@ def get_financial_settings_keyboard() -> ReplyKeyboardMarkup:
 # =============================================================================
 #  بخش کیبوردهای شیشه‌ای (InlineKeyboardMarkup)
 # =============================================================================
-
-# --- REVISED: This function is now async and directly shows purchase options ---
-async def get_customer_purchase_menu_keyboard() -> InlineKeyboardMarkup:
-    """
-    Builds the main purchase menu with the new approved layout.
-    """
-    settings = await db_manager.load_bot_settings()
-    
-    # Fetch custom names for plan buttons, or use defaults
-    unlimited_btn_text = settings.get("unlimited_plan_button_text", "💎 پلن نامحدود")
-    volumetric_btn_text = settings.get("volumetric_plan_button_text", "📊 ساخت سرویس دلخواه")
-
-    # New layout definition
-    keyboard = [
-        # Row 1: Manual purchase from support
-        [InlineKeyboardButton("👨‍💻  ساخت اشتراک توسط پشتیبانی", callback_data="customer_manual_purchase")],
-        
-        # Row 2: Self-service plans (side-by-side)
-        [
-            InlineKeyboardButton(volumetric_btn_text, callback_data="customer_custom_purchase"),
-            InlineKeyboardButton(unlimited_btn_text, callback_data="customer_unlimited_purchase")
-        ],
-        
-        # Row 3: Send receipt
-        [InlineKeyboardButton("🧾 ارسال رسید پرداخت", callback_data="customer_send_receipt")],
-        
-        # Row 4: Close button
-        [InlineKeyboardButton("✖️ انصراف", callback_data="close_panel")]
-    ]
-    return InlineKeyboardMarkup(keyboard)
-
 
 def get_payment_methods_keyboard() -> InlineKeyboardMarkup:
     keyboard = [

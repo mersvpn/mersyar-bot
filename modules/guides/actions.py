@@ -269,8 +269,7 @@ async def get_button_url_and_save(update: Update, context: ContextTypes.DEFAULT_
         buttons
     )
     
-    # --- منطق جدید برای بازگشت تمیز به منو ---
-    # حذف پیام فعلی (لینک) و پیام قبلی ("لطفاً لینک را وارد کنید")
+  
     try:
         await update.message.delete()
         if 'last_bot_message_id' in context.user_data:

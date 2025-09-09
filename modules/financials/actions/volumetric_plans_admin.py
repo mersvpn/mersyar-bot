@@ -1,8 +1,7 @@
-# FILE: modules/financials/actions/volumetric_plans_admin.py (NEW FILE)
+# FILE: modules/financials/actions/volumetric_plans_admin.py (REVISED)
 
 import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-
 from telegram.ext import (
     ContextTypes,
     ConversationHandler,
@@ -13,7 +12,6 @@ from telegram.ext import (
 )
 from telegram.constants import ParseMode
 
-
 # --- Local Imports ---
 from database.db_manager import (
     load_pricing_parameters,
@@ -21,25 +19,26 @@ from database.db_manager import (
     add_pricing_tier,
     delete_pricing_tier,
     get_pricing_tier_by_id,
-    update_pricing_tier  # <-- This function is now imported
+    update_pricing_tier
 )
 from .settings import show_plan_management_menu
-from shared.callbacks import cancel_conversation
+# V V V V V THE FIX IS HERE (IMPORTS) V V V V V
+from modules.general.actions import end_conversation_and_show_menu
+# ^ ^ ^ ^ ^ THE FIX IS HERE (IMPORTS) ^ ^ ^ ^ ^
+
 # --- SETUP ---
 LOGGER = logging.getLogger(__name__)
 
 # --- Conversation States ---
 GET_BASE_PRICE = 0
 GET_TIER_NAME, GET_TIER_LIMIT, GET_TIER_PRICE, CONFIRM_TIER_ADD = range(1, 5)
+EDIT_TIER_NAME, EDIT_TIER_LIMIT, EDIT_TIER_PRICE, CONFIRM_TIER_EDIT = range(5, 9)
 
 # =============================================================================
 # 1. Main Menu and Display Logic
 # =============================================================================
 
 async def manage_volumetric_plans_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    Displays the main menu for managing volumetric pricing parameters with a two-row-per-item layout.
-    """
     query = update.callback_query
     await query.answer()
 
@@ -50,17 +49,13 @@ async def manage_volumetric_plans_menu(update: Update, context: ContextTypes.DEF
     text = "💡 *مدیریت پلن‌های حجمی*\n\n"
     keyboard_rows = []
 
-    # --- Section 1: Base Price ---
     base_price_str = f"`{base_price:,}` تومان" if base_price is not None else "`تنظیم نشده`"
     text += f"⚙️ *هزینه پایه:*\nروزانه: {base_price_str}\n\n"
     keyboard_rows.append(
         [InlineKeyboardButton("✏️ ویرایش قیمت پایه روزانه", callback_data="vol_edit_base_price")]
     )
-    keyboard_rows.append(
-        [InlineKeyboardButton(" ", callback_data="noop")] # Visual spacer
-    )
+    keyboard_rows.append([InlineKeyboardButton(" ", callback_data="noop")])
 
-    # --- Section 2: Pricing Tiers ---
     text += "梯 *پلکان‌های قیمتی:*"
     if not tiers:
         text += "\n_هیچ پلکانی تعریف نشده است._"
@@ -72,21 +67,18 @@ async def manage_volumetric_plans_menu(update: Update, context: ContextTypes.DEF
             ])
             
             action_buttons = [
-                # --- MODIFIED: Activated the edit button ---
                 InlineKeyboardButton("✏️ ویرایش", callback_data=f"vol_edit_tier_{tier['id']}"),
                 InlineKeyboardButton("🗑️ حذف", callback_data=f"vol_delete_tier_{tier['id']}")
             ]
             keyboard_rows.append(action_buttons)
     
-    # --- Section 3: General Actions ---
-    keyboard_rows.append(
-        [InlineKeyboardButton(" ", callback_data="noop")] # Another visual spacer
-    )
+    keyboard_rows.append([InlineKeyboardButton(" ", callback_data="noop")])
     keyboard_rows.append([InlineKeyboardButton("➕ افزودن پلکان جدید", callback_data="vol_add_tier")])
     keyboard_rows.append([InlineKeyboardButton("🔙 بازگشت", callback_data="back_to_plan_management")])
     
     reply_markup = InlineKeyboardMarkup(keyboard_rows)
     await query.edit_message_text(text=text, reply_markup=reply_markup, parse_mode=ParseMode.MARKDOWN)
+
 # =============================================================================
 # 2. Edit Base Daily Price Conversation
 # =============================================================================
@@ -110,7 +102,6 @@ async def save_new_base_price(update: Update, context: ContextTypes.DEFAULT_TYPE
     await save_base_daily_price(price)
     await update.message.reply_text(f"✅ هزینه پایه روزانه با موفقیت به `{price:,}` تومان تغییر کرد.")
     
-    # Create a dummy query to refresh the main menu
     dummy_query = type('Query', (), {'answer': (lambda: None), 'edit_message_text': update.message.reply_text})()
     dummy_update = type('Update', (), {'callback_query': dummy_query})()
     await manage_volumetric_plans_menu(dummy_update, context)
@@ -198,34 +189,10 @@ async def cancel_add_tier(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     return ConversationHandler.END
 
 # =============================================================================
-# 4. Delete Tier Handlers
+# 4. Edit Pricing Tier Conversation
 # =============================================================================
-
-async def confirm_delete_tier(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    query = update.callback_query
-    tier_id = int(query.data.split('_')[-1])
-    tier = await get_pricing_tier_by_id(tier_id)
-    if not tier:
-        await query.answer("❌ پلکان یافت نشد!", show_alert=True)
-        return
-
-    text = f"⚠️ آیا از حذف پلکان '{tier['tier_name']}' مطمئن هستید؟"
-    keyboard = [[
-        InlineKeyboardButton("✅ بله، حذف کن", callback_data=f"vol_do_delete_tier_{tier_id}"),
-        InlineKeyboardButton("❌ خیر", callback_data="admin_manage_volumetric")
-    ]]
-    await query.answer()
-    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
-
-    # =============================================================================
-# 4. Edit Pricing Tier Conversation (NEW SECTION)
-# =============================================================================
-
-# Define new states for the edit conversation to avoid conflicts
-EDIT_TIER_NAME, EDIT_TIER_LIMIT, EDIT_TIER_PRICE, CONFIRM_TIER_EDIT = range(5, 9)
 
 async def start_edit_tier(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Starts the conversation to edit an existing pricing tier."""
     query = update.callback_query
     tier_id = int(query.data.split('_')[-1])
     
@@ -246,7 +213,6 @@ async def start_edit_tier(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     return EDIT_TIER_NAME
 
 async def get_new_tier_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Gets the new name or skips, then asks for the new volume limit."""
     new_name = update.message.text.strip()
     if new_name.lower() != '/skip':
         context.user_data['edit_tier']['tier_name'] = new_name
@@ -260,7 +226,6 @@ async def get_new_tier_name(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     return EDIT_TIER_LIMIT
 
 async def get_new_tier_limit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Gets the new volume limit or skips, then asks for the new price."""
     new_limit_text = update.message.text.strip()
     if new_limit_text.lower() != '/skip':
         try:
@@ -280,7 +245,6 @@ async def get_new_tier_limit(update: Update, context: ContextTypes.DEFAULT_TYPE)
     return EDIT_TIER_PRICE
 
 async def get_new_tier_price_and_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Gets the new price or skips, then shows the final confirmation."""
     new_price_text = update.message.text.strip()
     if new_price_text.lower() != '/skip':
         try:
@@ -307,7 +271,6 @@ async def get_new_tier_price_and_confirm(update: Update, context: ContextTypes.D
     return CONFIRM_TIER_EDIT
 
 async def save_edited_tier(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Saves the edited tier to the DB."""
     query = update.callback_query
     await query.answer("در حال ذخیره تغییرات...")
     tier_data = context.user_data.pop('edit_tier', {})
@@ -327,7 +290,6 @@ async def save_edited_tier(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     return ConversationHandler.END
 
 async def cancel_edit_tier(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Cancels the edit tier conversation."""
     query = update.callback_query
     await query.answer()
     context.user_data.pop('edit_tier', None)
@@ -336,8 +298,24 @@ async def cancel_edit_tier(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     return ConversationHandler.END
 
 # =============================================================================
-# Renumber the section below to 5, and add the new ConversationHandler
+# 5. Delete Tier Handlers
 # =============================================================================
+
+async def confirm_delete_tier(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    tier_id = int(query.data.split('_')[-1])
+    tier = await get_pricing_tier_by_id(tier_id)
+    if not tier:
+        await query.answer("❌ پلکان یافت نشد!", show_alert=True)
+        return
+
+    text = f"⚠️ آیا از حذف پلکان '{tier['tier_name']}' مطمئن هستید؟"
+    keyboard = [[
+        InlineKeyboardButton("✅ بله، حذف کن", callback_data=f"vol_do_delete_tier_{tier_id}"),
+        InlineKeyboardButton("❌ خیر", callback_data="admin_manage_volumetric")
+    ]]
+    await query.answer()
+    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
 
 async def execute_delete_tier(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
@@ -348,13 +326,13 @@ async def execute_delete_tier(update: Update, context: ContextTypes.DEFAULT_TYPE
     await manage_volumetric_plans_menu(update, context)
 
 # =============================================================================
-# 5. Conversation Handler Definitions
+# 6. Conversation Handler Definitions
 # =============================================================================
 
 edit_base_price_conv = ConversationHandler(
     entry_points=[CallbackQueryHandler(prompt_for_base_price, pattern='^vol_edit_base_price$')],
     states={GET_BASE_PRICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, save_new_base_price)]},
-    fallbacks=[CommandHandler('cancel', cancel_conversation)]
+    fallbacks=[CommandHandler('cancel', end_conversation_and_show_menu)]
 )
 
 add_tier_conv = ConversationHandler(
@@ -368,7 +346,7 @@ add_tier_conv = ConversationHandler(
             CallbackQueryHandler(cancel_add_tier, pattern='^vol_cancel_add$')
         ]
     },
-    fallbacks=[CommandHandler('cancel', cancel_conversation)],
+    fallbacks=[CommandHandler('cancel', end_conversation_and_show_menu)],
     conversation_timeout=600
 )
 
@@ -392,6 +370,6 @@ edit_tier_conv = ConversationHandler(
             CallbackQueryHandler(cancel_edit_tier, pattern='^vol_cancel_edit$')
         ]
     },
-    fallbacks=[CommandHandler('cancel', cancel_conversation)],
+    fallbacks=[CommandHandler('cancel', end_conversation_and_show_menu)],
     conversation_timeout=600
 )

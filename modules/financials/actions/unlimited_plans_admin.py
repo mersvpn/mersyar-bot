@@ -1,4 +1,4 @@
-# FILE: modules/financials/actions/unlimited_plans_admin.py (NEW FILE)
+# FILE: modules/financials/actions/unlimited_plans_admin.py (REVISED)
 
 import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -21,7 +21,9 @@ from database.db_manager import (
     update_unlimited_plan
 )
 from .settings import show_plan_management_menu
-from shared.callbacks import cancel_conversation
+# V V V V V THE FIX IS HERE (IMPORTS) V V V V V
+from modules.general.actions import end_conversation_and_show_menu
+# ^ ^ ^ ^ ^ THE FIX IS HERE (IMPORTS) ^ ^ ^ ^ ^
 
 # --- SETUP ---
 LOGGER = logging.getLogger(__name__)
@@ -34,10 +36,6 @@ GET_NAME, GET_PRICE, GET_IPS, GET_SORT_ORDER, CONFIRM_ADD = range(5)
 # =============================================================================
 
 async def manage_unlimited_plans_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    Displays the main menu for managing unlimited plans.
-    It fetches all plans from the DB and builds an interactive list.
-    """
     query = update.callback_query
     await query.answer()
 
@@ -54,16 +52,13 @@ async def manage_unlimited_plans_menu(update: Update, context: ContextTypes.DEFA
             status_icon = "✅" if plan['is_active'] else "❌"
             plan_text = f"{status_icon} {plan['plan_name']} - {plan['price']:,} تومان - {plan['max_ips']} کاربر"
             
-            # Buttons for each plan
             plan_buttons = [
-                # InlineKeyboardButton("✏️ ویرایش", callback_data=f"unlimplan_edit_{plan['id']}"), # Coming Soon
                 InlineKeyboardButton("🗑 حذف", callback_data=f"unlimplan_delete_{plan['id']}"),
                 InlineKeyboardButton("فعال/غیرفعال", callback_data=f"unlimplan_toggle_{plan['id']}")
             ]
             keyboard_rows.append([InlineKeyboardButton(plan_text, callback_data=f"unlimplan_noop_{plan['id']}")])
             keyboard_rows.append(plan_buttons)
 
-    # General action buttons
     keyboard_rows.append([InlineKeyboardButton("➕ افزودن پلن جدید", callback_data="unlimplan_add_new")])
     keyboard_rows.append([InlineKeyboardButton("🔙 بازگشت", callback_data="back_to_plan_management")])
     
@@ -75,7 +70,6 @@ async def manage_unlimited_plans_menu(update: Update, context: ContextTypes.DEFA
 # =============================================================================
 
 async def start_add_plan(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Starts the conversation to add a new unlimited plan."""
     query = update.callback_query
     await query.answer()
     context.user_data['new_unlimited_plan'] = {}
@@ -85,7 +79,6 @@ async def start_add_plan(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     return GET_NAME
 
 async def get_plan_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Gets the plan name and asks for the price."""
     plan_name = update.message.text.strip()
     context.user_data['new_unlimited_plan']['name'] = plan_name
     
@@ -94,7 +87,6 @@ async def get_plan_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     return GET_PRICE
 
 async def get_plan_price(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Gets the price and asks for the max simultaneous users (max_ips)."""
     price_text = update.message.text.strip()
     try:
         price = int(price_text)
@@ -109,7 +101,6 @@ async def get_plan_price(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     return GET_IPS
 
 async def get_max_ips(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Gets max_ips and asks for the sort order."""
     ips_text = update.message.text.strip()
     try:
         max_ips = int(ips_text)
@@ -124,7 +115,6 @@ async def get_max_ips(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     return GET_SORT_ORDER
     
 async def get_sort_order_and_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Gets sort_order, shows a confirmation, and waits for final approval."""
     sort_order_text = update.message.text.strip()
     try:
         sort_order = int(sort_order_text)
@@ -153,7 +143,6 @@ async def get_sort_order_and_confirm(update: Update, context: ContextTypes.DEFAU
     return CONFIRM_ADD
 
 async def save_new_plan(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Saves the new plan to the DB and ends the conversation."""
     query = update.callback_query
     await query.answer("در حال ذخیره...")
     
@@ -169,24 +158,22 @@ async def save_new_plan(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         sort_order=plan_data['sort_order']
     )
     await query.edit_message_text("✅ پلن جدید با موفقیت اضافه شد.")
-    await manage_unlimited_plans_menu(update, context) # Refresh the list
+    await manage_unlimited_plans_menu(update, context)
     return ConversationHandler.END
 
 async def cancel_add_plan(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Cancels the add plan conversation."""
     query = update.callback_query
     await query.answer()
     context.user_data.pop('new_unlimited_plan', None)
     await query.edit_message_text("عملیات افزودن پلن لغو شد.")
-    await manage_unlimited_plans_menu(update, context) # Go back to the list
+    await manage_unlimited_plans_menu(update, context)
     return ConversationHandler.END
 
 # =============================================================================
-# 3. Handlers for Plan Actions (Delete, Toggle Status)
+# 3. Handlers for Plan Actions
 # =============================================================================
 
 async def confirm_delete_plan(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Asks for confirmation before deleting a plan."""
     query = update.callback_query
     plan_id = int(query.data.split('_')[-1])
     
@@ -206,7 +193,6 @@ async def confirm_delete_plan(update: Update, context: ContextTypes.DEFAULT_TYPE
     await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
     
 async def execute_delete_plan(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Deletes the plan from the DB."""
     query = update.callback_query
     plan_id = int(query.data.split('_')[-1])
     
@@ -221,7 +207,6 @@ async def execute_delete_plan(update: Update, context: ContextTypes.DEFAULT_TYPE
     await manage_unlimited_plans_menu(update, context)
 
 async def toggle_plan_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Toggles the is_active status of a plan."""
     query = update.callback_query
     plan_id = int(query.data.split('_')[-1])
     
@@ -231,7 +216,6 @@ async def toggle_plan_status(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await query.answer("❌ پلن یافت نشد!", show_alert=True)
         return
         
-    # Toggle the status
     new_status = not plan['is_active']
     
     await update_unlimited_plan(
@@ -261,6 +245,8 @@ add_unlimited_plan_conv = ConversationHandler(
             CallbackQueryHandler(cancel_add_plan, pattern='^unlimplan_cancel_add$')
         ]
     },
-    fallbacks=[CommandHandler('cancel', cancel_conversation)], # A generic cancel handler
+    # V V V V V THE FIX IS HERE (FALLBACK) V V V V V
+    fallbacks=[CommandHandler('cancel', end_conversation_and_show_menu)],
+    # ^ ^ ^ ^ ^ THE FIX IS HERE (FALLBACK) ^ ^ ^ ^ ^
     conversation_timeout=600
 )

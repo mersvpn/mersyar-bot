@@ -1,4 +1,4 @@
-# FILE: modules/marzban/actions/messaging.py (FIXED WITH LAZY IMPORTS)
+# FILE: modules/marzban/actions/messaging.py (REVISED)
 
 import logging
 import uuid
@@ -12,13 +12,10 @@ from telegram.ext import (
 from telegram.constants import ParseMode
 from telegram.error import TelegramError
 
-# --- START OF FIX: The global import from db_manager is removed ---
-# from database.db_manager import (
-#     get_all_linked_users, add_broadcast_job, get_broadcast_job, delete_broadcast_job
-# )
-# --- END OF FIX ---
+# V V V V V THE FIX IS HERE (IMPORTS) V V V V V
 from shared.keyboards import get_admin_main_menu_keyboard
-from shared.callbacks import cancel_conversation
+from modules.general.actions import end_conversation_and_show_menu
+# ^ ^ ^ ^ ^ THE FIX IS HERE (IMPORTS) ^ ^ ^ ^ ^
 
 LOGGER = logging.getLogger(__name__)
 
@@ -30,7 +27,6 @@ LOGGER = logging.getLogger(__name__)
 async def send_broadcast_message_job(context: ContextTypes.DEFAULT_TYPE) -> None:
     # --- LAZY IMPORTS ---
     from database.db_manager import get_broadcast_job, delete_broadcast_job, get_all_linked_users
-    # --- END LAZY IMPORTS ---
 
     job_data = context.job.data
     job_id = job_data.get("job_id")
@@ -95,7 +91,6 @@ async def send_broadcast_message_job(context: ContextTypes.DEFAULT_TYPE) -> None
 async def start_messaging(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data['messaging_info'] = {}
     
-    # --- FIX: Keyboard layout changed to two columns ---
     keyboard = [
         [
             InlineKeyboardButton("👥 ارسال همگانی", callback_data="msg_broadcast_all"),
@@ -175,7 +170,6 @@ async def get_button_url(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 async def show_preview_and_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     # --- LAZY IMPORT ---
     from database.db_manager import get_all_linked_users
-    # --- END LAZY IMPORT ---
 
     query = update.callback_query
     info = context.user_data.get('messaging_info', {})
@@ -225,7 +219,6 @@ async def show_preview_and_confirm(update: Update, context: ContextTypes.DEFAULT
 async def schedule_job_and_end(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     # --- LAZY IMPORT ---
     from database.db_manager import add_broadcast_job
-    # --- END LAZY IMPORT ---
 
     query = update.callback_query
     info = context.user_data.get('messaging_info', {})
@@ -252,14 +245,19 @@ async def schedule_job_and_end(update: Update, context: ContextTypes.DEFAULT_TYP
     )
 
     await query.edit_message_text(f"✅ عملیات ارسال با ID `{job_id}` در صف قرار گرفت.", parse_mode=ParseMode.MARKDOWN)
-    return await cancel_conversation(update, context)
+    # V V V V V THE FIX IS HERE (FUNCTION CALL) V V V V V
+    return await end_conversation_and_show_menu(update, context)
+    # ^ ^ ^ ^ ^ THE FIX IS HERE (FUNCTION CALL) ^ ^ ^ ^ ^
 
 
 async def end_messaging_conversation(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
-    await query.answer()
-    await query.edit_message_text("عملیات ارسال پیام لغو شد.")
-    return await cancel_conversation(update, context)
+    if query:
+        await query.answer()
+        # Message is handled by the standard function
+    # V V V V V THE FIX IS HERE (FUNCTION CALL) V V V V V
+    return await end_conversation_and_show_menu(update, context)
+    # ^ ^ ^ ^ ^ THE FIX IS HERE (FUNCTION CALL) ^ ^ ^ ^ ^
 
 
 messaging_conv = ConversationHandler(
