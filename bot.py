@@ -1,14 +1,15 @@
-# FILE: bot.py (REVISED WITH UNIVERSAL DEBUG LOGGER)
+# FILE: bot.py (REVISED TO ACCEPT PORT FROM CLI ARGUMENT)
 
 import logging
 import logging.handlers
 import sys
 import os
 import asyncio
-# V V V V V NEW IMPORTS FOR THE DEBUG LOGGER V V V V V
+# ✨ NEW: Import argparse to read command-line arguments
+import argparse
+
 from telegram import Update
 from telegram.ext import Application, ApplicationBuilder, ContextTypes, MessageHandler, CallbackQueryHandler, filters
-# ^ ^ ^ ^ ^ NEW IMPORTS FOR THE DEBUG LOGGER ^ ^ ^ ^ ^
 
 from config import config
 from modules.marzban.actions import api as marzban_api
@@ -33,24 +34,15 @@ def setup_logging():
     logging.getLogger("httpx").setLevel(logging.WARNING)
     LOGGER.info("Logging configured successfully.")
 
-# V V V V V UNIVERSAL DEBUG LOGGER FUNCTION V V V V V
 async def debug_update_logger(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    A high-priority, catch-all handler to log every user interaction for debugging purposes.
-    This helps identify why other handlers might not be triggering.
-    """
     user_info = f"User(ID:{update.effective_user.id}, Name:'{update.effective_user.full_name}')"
-
     if update.message and update.message.text:
         text = update.message.text
         char_codes = [ord(c) for c in text]
         LOGGER.info(f"[DEBUG_LOGGER] Message from {user_info} | Text: '{text}' | CharCodes: {char_codes}")
-
     elif update.callback_query:
         data = update.callback_query.data
         LOGGER.info(f"[DEBUG_LOGGER] Callback from {user_info} | Data: '{data}'")
-# ^ ^ ^ ^ ^ UNIVERSAL DEBUG LOGGER FUNCTION ^ ^ ^ ^ ^
-
 
 async def heartbeat(context: ContextTypes.DEFAULT_TYPE):
     LOGGER.info("❤️ Heartbeat: Bot is alive and the JobQueue is running.")
@@ -68,6 +60,12 @@ async def post_shutdown(application: Application):
 
 def main() -> None:
     setup_logging()
+    
+    # ✨ NEW: Argument parser to get the port from the command line
+    parser = argparse.ArgumentParser(description="Mersyar Telegram Bot")
+    parser.add_argument("--port", type=int, help="Port to run the webhook on.")
+    args = parser.parse_args()
+
     LOGGER.info("===================================")
     LOGGER.info("🚀 Starting bot...")
 
@@ -90,13 +88,10 @@ def main() -> None:
         .build()
     )
 
-    # V V V V V REGISTERING THE DEBUG LOGGER V V V V V
-    # We add this handler in group -1 to ensure it runs before all other handlers (default group 0)
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, debug_update_logger), group=-1)
     application.add_handler(CallbackQueryHandler(debug_update_logger), group=-1)
     LOGGER.info("Universal debug logger has been activated.")
-    # ^ ^ ^ ^ ^ REGISTERING THE DEBUG LOGGER ^ ^ ^ ^ ^
-
+    
     general_handler.register(application)
     marzban_handler.register(application)
     financials_handler.register(application)
@@ -112,12 +107,22 @@ def main() -> None:
 
     BOT_DOMAIN = os.getenv("BOT_DOMAIN")
     WEBHOOK_SECRET_TOKEN = os.getenv("WEBHOOK_SECRET_TOKEN")
-    PORT = 8080 
+    
+    # ✨ NEW: Logic to determine the port with priority: CLI > .env > Default
+    if args.port:
+        PORT = args.port
+        LOGGER.info(f"Port {PORT} received from command-line argument.")
+    else:
+        # Fallback to .env variable, then to a default
+        PORT = int(os.getenv("BOT_PORT", 8081))
+        LOGGER.info(f"Port {PORT} loaded from environment or default.")
 
     if not all([BOT_DOMAIN, WEBHOOK_SECRET_TOKEN]):
+        LOGGER.info("BOT_DOMAIN or WEBHOOK_SECRET_TOKEN not found. Starting in polling mode.")
         application.run_polling()
     else:
         webhook_url = f"https://{BOT_DOMAIN}/{WEBHOOK_SECRET_TOKEN}"
+        LOGGER.info(f"Starting in webhook mode on port {PORT}. URL: {webhook_url}")
         application.run_webhook(listen="0.0.0.0", port=PORT, url_path=WEBHOOK_SECRET_TOKEN, webhook_url=webhook_url, secret_token=WEBHOOK_SECRET_TOKEN)
 
 if __name__ == '__main__':
