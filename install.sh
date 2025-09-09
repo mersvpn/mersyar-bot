@@ -26,7 +26,7 @@ fi
 DOWNLOAD_URL="https://github.com/$GITHUB_USER/$GITHUB_REPO/archive/refs/tags/$LATEST_TAG.tar.gz"
 
 info "==============================================="
-info "      Mersyar-Bot Installer"
+info "      Mersyar-Bot Universal Installer"
 info "Latest Version: $LATEST_TAG"
 
 PROJECT_DIR="/root/$GITHUB_REPO"
@@ -35,6 +35,7 @@ PYTHON_ALIAS="python3"
 TARBALL_NAME="${LATEST_TAG}.tar.gz"
 DB_NAME="mersyar_bot_db"
 DB_USER="mersyar"
+DB_PASSWORD_DISPLAY=""
 
 # --- Interactive User Input ---
 if [ ! -f "$PROJECT_DIR/.env" ]; then
@@ -44,14 +45,13 @@ if [ ! -f "$PROJECT_DIR/.env" ]; then
     read -p "Enter Telegram Bot Token: " TELEGRAM_BOT_TOKEN
     read -p "Enter Telegram Admin User ID: " AUTHORIZED_USER_IDS
     read -p "Enter Support Username (optional): " SUPPORT_USERNAME
-    # انتخاب پورت ربات
-    read -p "Enter Bot Port (default 8081, must be free): " BOT_PORT
+    read -p "Enter Bot Port (default 8081, press Enter to use): " BOT_PORT
     BOT_PORT=${BOT_PORT:-8081}
 else
     info "Existing .env found. Skipping user input for credentials."
     DOMAIN=$(grep -E "^BOT_DOMAIN=" "$PROJECT_DIR/.env" | cut -d '=' -f2- | tr -d '"')
+    BOT_PORT=$(grep -E "^BOT_PORT=" "$PROJECT_DIR/.env" | cut -d '=' -f2- | tr -d '"')
     ADMIN_EMAIL="info@$DOMAIN"
-    BOT_PORT=8081
 fi
 
 info "✅ Starting installation/update..."
@@ -83,11 +83,21 @@ cd "$PROJECT_DIR" || { error "Cannot cd to $PROJECT_DIR"; exit 1; }
 if [ ! -f ".env" ]; then
     info "-> Setting up MySQL..."
     DB_PASSWORD=$(openssl rand -base64 18 | tr -dc 'a-zA-Z0-9' | head -c 16)
-    sudo mysql -e "CREATE DATABASE IF NOT EXISTS $DB_NAME;"
-    sudo mysql -e "CREATE USER IF NOT EXISTS '$DB_USER'@'localhost' IDENTIFIED BY '$DB_PASSWORD';"
-    sudo mysql -e "ALTER USER '$DB_USER'@'localhost' IDENTIFIED BY '$DB_PASSWORD';"
-    sudo mysql -e "GRANT ALL PRIVILEGES ON $DB_NAME.* TO '$DB_USER'@'localhost';"
-    sudo mysql -e "FLUSH PRIVILEGES;"
+    
+    # ✨ NEW: Bulletproof MySQL connection logic ✨
+    MYSQL_CMD="sudo mysql" # Default command for standard servers
+    if [ -f /root/.my.cnf ]; then
+        info "   -> Found /root/.my.cnf. Using credentials from this file for setup."
+        MYSQL_CMD="mysql --defaults-extra-file=/root/.my.cnf"
+    else
+        info "   -> No /root/.my.cnf found. Using standard 'sudo mysql' connection."
+    fi
+
+    # Use the determined command for all MySQL operations
+    $MYSQL_CMD -e "CREATE DATABASE IF NOT EXISTS $DB_NAME;"
+    $MYSQL_CMD -e "CREATE USER IF NOT EXISTS '$DB_USER'@'localhost' IDENTIFIED WITH mysql_native_password BY '$DB_PASSWORD';"
+    $MYSQL_CMD -e "GRANT ALL PRIVILEGES ON $DB_NAME.* TO '$DB_USER'@'localhost';"
+    $MYSQL_CMD -e "FLUSH PRIVILEGES;"
 
     info "-> Creating .env..."
     WEBHOOK_SECRET_TOKEN=$(openssl rand -base64 24 | tr -dc 'a-zA-Z0-9' | head -c 32)
@@ -97,12 +107,13 @@ AUTHORIZED_USER_IDS="${AUTHORIZED_USER_IDS}"
 SUPPORT_USERNAME="${SUPPORT_USERNAME}"
 BOT_DOMAIN="${DOMAIN}"
 WEBHOOK_SECRET_TOKEN="${WEBHOOK_SECRET_TOKEN}"
+BOT_PORT="${BOT_PORT}"
 DB_HOST="localhost"
 DB_NAME="${DB_NAME}"
 DB_USER="${DB_USER}"
 DB_PASSWORD="${DB_PASSWORD}"
-BOT_PORT="${BOT_PORT}"
 EOF
+    DB_PASSWORD_DISPLAY="$DB_PASSWORD"
 fi
 
 # --- 4. Python venv ---
@@ -175,15 +186,17 @@ systemctl enable $SERVICE_NAME
 systemctl restart $SERVICE_NAME
 
 # --- 🔵 Installation Summary ---
-success "==============================================="
-success "✅✅✅ Installation Complete! ✅✅✅"
-success "📋 Summary:"
-echo -e "\e[36m🌐 Bot Domain:\e[0m https://$DOMAIN"
-echo -e "\e[36m🔑 phpMyAdmin:\e[0m https://$DOMAIN/phpmyadmin"
-echo -e "\e[36m🗄 Database Name:\e[0m $DB_NAME"
-echo -e "\e[36m👤 Database User:\e[0m $DB_USER"
-echo -e "\e[36m🔒 Database Password:\e[0m $DB_PASSWORD"
-echo -e "\e[36m🚀 Bot Port:\e[0m $BOT_PORT"
-success "==============================================="
-info "Use 'mersyar' to manage bot."
-info "Check bot status: systemctl status $SERVICE_NAME"
+if [ -n "$DB_PASSWORD_DISPLAY" ]; then
+    success "==============================================="
+    success "✅✅✅ Installation Complete! ✅✅✅"
+    success "📋 Summary:"
+    echo -e "\e[36m🌐 Bot Domain:\e[0m https://$DOMAIN"
+    echo -e "\e[36m🔑 phpMyAdmin:\e[0m https://$DOMAIN/phpmyadmin"
+    echo -e "\e[36m🗄 Database Name:\e[0m $DB_NAME"
+    echo -e "\e[36m👤 Database User:\e[0m $DB_USER"
+    echo -e "\e[36m🔒 Database Password:\e[0m $DB_PASSWORD_DISPLAY"
+    echo -e "\e[36m🚀 Bot Port:\e[0m $BOT_PORT"
+    success "==============================================="
+    info "Use 'mersyar' to manage bot."
+    info "Check bot status: systemctl status $SERVICE_NAME"
+fi
