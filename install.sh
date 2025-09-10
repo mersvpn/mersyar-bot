@@ -131,7 +131,7 @@ PHP_FPM_SOCK=$(ls /var/run/php/php*-fpm.sock | head -n 1)
 # --- 6. Nginx & SSL ---
 info "[6/9] Configuring Nginx & SSL..."
 NGINX_CONF="/etc/nginx/sites-available/$SERVICE_NAME"
-PHP_FPM_SOCK=$(ls /var/run/php/php*-fpm.sock | head -n 1) # Moved here for better scoping
+PHP_FPM_SOCK=$(ls /var/run/php/php*-fpm.sock | head -n 1)
 
 if [ ! -f "$NGINX_CONF" ]; then
     info "-> Creating Nginx configuration for $DOMAIN..."
@@ -166,9 +166,9 @@ EOF
     systemctl restart nginx
 
     info "-> Attempting to obtain SSL certificate from ZeroSSL..."
-    # ✨ MODIFIED: Added error handling and changed ACME server to ZeroSSL
+    # ✨ FINAL FIX: Corrected the ACME server URL and simplified the command
     if ! certbot --nginx -d "$DOMAIN" --non-interactive --agree-tos --email "$ADMIN_EMAIL" \
-        --server https://acme.zerossl.com/v2/EAB --register-unsafely-without-email; then
+        --server https://acme.zerossl.com/v2/DV90; then
         error "SSL certificate generation failed. Please check the following:"
         error "1. Your domain '$DOMAIN' correctly points to this server's IP."
         error "2. Port 80 is not blocked by a firewall."
@@ -179,7 +179,6 @@ EOF
     systemctl restart nginx
 else
     info "-> Nginx config already exists. Attempting to renew certificate..."
-    # ✨ MODIFIED: Quieter renew and more robust check
     if certbot renew --quiet; then
         info "SSL certificate renewal check complete."
     else
