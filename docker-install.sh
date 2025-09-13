@@ -9,13 +9,14 @@ warning() { echo -e "\e[33m[WARN]\e[0m $1"; }
 
 # --- Static Config ---
 PROJECT_DIR="/root/mersyar-docker"
-INSTALL_SCRIPT_PATH="/root/mersyar-install.sh"
+INSTALL_SCRIPT_PATH="/root/mersyar-install.sh" # Note: a copy is stored for re-runs
 CLI_COMMAND_PATH="/usr/local/bin/mersyar"
 
 # ==============================================================================
 #                              MANAGEMENT MENU
 # ==============================================================================
 manage_bot() {
+    # FIX: Ensure all commands run from the correct directory
     cd "$PROJECT_DIR"
     
     show_menu() {
@@ -29,10 +30,11 @@ manage_bot() {
        echo " 7) Exit"
        echo "------------------------------------"
        read -p "Select an option [1-7]: " option
-       handle_option $option
+       handle_option "$option"
     }
 
     handle_option() {
+       # We are already in PROJECT_DIR from the start of manage_bot()
        case $1 in
            1)
                info "Tailing logs for mersyar-bot. Press Ctrl+C to exit."
@@ -41,34 +43,36 @@ manage_bot() {
                ;;
            2)
                info "Restarting mersyar-bot container..."
-               docker compose restart bot
-               success "Bot restarted."
+               if docker compose restart bot; then success "Bot restarted."; else error "Failed to restart bot."; fi
                show_menu
                ;;
            3)
                info "Stopping all services (bot, db, phpmyadmin)..."
-               docker compose down
-               success "All services stopped."
+               if docker compose down; then success "All services stopped."; else error "Failed to stop services."; fi
                show_menu
                ;;
            4)
                info "Starting all services..."
-               docker compose up -d
-               success "All services started in the background."
+               if docker compose up -d; then success "All services started in the background."; else error "Failed to start services."; fi
                show_menu
                ;;
            5)
                info "Updating bot by rebuilding the image from GitHub..."
                warning "This may take a few minutes."
-               docker compose up -d --build
-               success "Bot updated successfully!"
+               # FIX: Add --build-arg to bust the Docker cache for downloads
+               if docker compose up -d --build --build-arg CACHE_BUSTER=$(date +%s); then
+                   success "Bot updated successfully!"
+               else
+                   error "Failed to update the bot."
+               fi
                show_menu
                ;;
            6)
-               warning "This will re-run the full installation process."
+               warning "This will re-run the full installation process from the stored script."
                read -p "Are you sure you want to continue? (y/n): " confirm
                if [[ "$confirm" == "y" ]]; then
-                   install_bot
+                   # Run the original installer script again
+                   bash "$INSTALL_SCRIPT_PATH"
                else
                    info "Operation cancelled."
                    show_menu
@@ -97,6 +101,7 @@ install_bot() {
     info "==============================================="
 
     # --- 1. Install Docker ---
+    # ... (Installation logic remains the same)
     info "[1/7] Checking for Docker..."
     if ! command -v docker &> /dev/null; then
         warning "Docker not found. Installing Docker..."
@@ -106,14 +111,15 @@ install_bot() {
         success "Docker is already installed."
     fi
     if ! docker compose version &> /dev/null; then
-        warning "Docker Compose not found. Installing..."
-        apt-get update -y && apt-get install -y docker-compose-plugin
-        success "Docker Compose installed successfully."
+        warning "Docker Compose plugin not found. Installing..."
+        apt-get update -y > /dev/null && apt-get install -y docker-compose-plugin > /dev/null
+        success "Docker Compose plugin installed successfully."
     else
-        success "Docker Compose is already installed."
+        success "Docker Compose plugin is already installed."
     fi
 
     # --- 2. User Input ---
+    # ... (User input logic remains the same)
     info "[2/7] Gathering required information..."
     read -p "Enter your Domain/Subdomain (e.g., bot.yourdomain.com): " BOT_DOMAIN
     read -p "Enter your email for SSL notifications: " ADMIN_EMAIL
@@ -153,7 +159,8 @@ DB_HOST="db"
 ADMIN_EMAIL="${ADMIN_EMAIL}"
 EOF
 
-    info "-> Creating Dockerfile..."
+    info "-> Creating Dockerfile with cache-busting..."
+    # FIX: Dockerfile now includes the cache-busting argument
     cat << 'EOF' > Dockerfile
 FROM python:3.10-slim-bookworm
 RUN apt-get update && apt-get install -y wget tar && rm -rf /var/lib/apt/lists/*
@@ -161,8 +168,10 @@ ENV PYTHONDONTWRITEBYTECODE 1
 ENV PYTHONUNBUFFERED 1
 ARG GITHUB_USER="mersvpn"
 ARG GITHUB_REPO="mersyar-bot"
+ARG CACHE_BUSTER=1
 WORKDIR /app
-RUN LATEST_TAG=$(wget -qO- "https://api.github.com/repos/${GITHUB_USER}/${GITHUB_REPO}/releases/latest" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/') && \
+RUN echo "Busting cache with value: ${CACHE_BUSTER}" && \
+    LATEST_TAG=$(wget -qO- "https://api.github.com/repos/${GITHUB_USER}/${GITHUB_REPO}/releases/latest" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/') && \
     DOWNLOAD_URL="https://github.com/${GITHUB_USER}/${GITHUB_REPO}/archive/refs/tags/${LATEST_TAG}.tar.gz" && \
     wget -q "$DOWNLOAD_URL" -O latest_release.tar.gz && \
     tar -xzf latest_release.tar.gz --strip-components=1 && \
@@ -172,7 +181,7 @@ CMD ["python", "bot.py"]
 EOF
 
     info "-> Creating docker-compose.yml with healthchecks..."
-    # ✨ IMPROVED: Using the version of docker-compose.yml with healthchecks
+    # (The docker-compose.yml content is already correct, no changes needed here)
     cat << 'EOF' > docker-compose.yml
 version: '3.8'
 services:
@@ -239,11 +248,9 @@ EOF
     docker compose up --build -d
 
     # --- 5. Configure Nginx ---
+    # ... (Nginx logic remains the same)
     info "[5/7] Configuring Nginx reverse proxy..."
-    if ! command -v nginx &> /dev/null; then
-        warning "Nginx not found. Installing..."
-        apt-get update -y && apt-get install -y nginx
-    fi
+    if ! command -v nginx &> /dev/null; then warning "Nginx not found. Installing..." && apt-get update -y > /dev/null && apt-get install -y nginx > /dev/null; fi
     mkdir -p /etc/nginx/sites-available/ /etc/nginx/sites-enabled/
     NGINX_CONF="/etc/nginx/sites-available/mersyar-bot"
     cat << EOF > "$NGINX_CONF"
@@ -263,31 +270,40 @@ EOF
     ln -sf "$NGINX_CONF" /etc/nginx/sites-enabled/
 
     # --- 6. Obtain SSL Certificate ---
+    # ... (Certbot logic remains the same)
     info "[6/7] Obtaining SSL certificate with Certbot..."
     info "-> Ensuring Certbot and Nginx plugin are installed..."
-    apt-get update -y
-    apt-get install -y certbot python3-certbot-nginx
-
+    apt-get update -y > /dev/null && apt-get install -y certbot python3-certbot-nginx > /dev/null
     nginx -t && systemctl restart nginx
     certbot --nginx -d "${BOT_DOMAIN}" --non-interactive --agree-tos --email "${ADMIN_EMAIL}" --redirect
 
     # --- 7. Finalizing ---
     info "[7/7] Finalizing the installation..."
     # Create the management command
+    # Store a copy of the installer script used
     cp "$0" "$INSTALL_SCRIPT_PATH"
     chmod +x "$INSTALL_SCRIPT_PATH"
-    ln -sf "$INSTALL_SCRIPT_PATH" "$CLI_COMMAND_PATH"
-    success "CLI command 'mersyar' created."
+    # Create/update the CLI command that points to the main management function
+    cat << 'EOF' > "$CLI_COMMAND_PATH"
+#!/bin/bash
+# This is a wrapper to call the main script's management function.
+# It ensures that even if the installer script is updated, the 'mersyar' command still works.
+source "$INSTALL_SCRIPT_PATH"
+manage_bot "$@"
+EOF
+    chmod +x "$CLI_COMMAND_PATH"
+    success "CLI command 'mersyar' created/updated."
     
     systemctl restart nginx
 
     # --- ✅ Installation Summary ---
+    # ... (Summary remains the same)
     success "==============================================="
     success "✅✅✅ Mersyar-Bot Docker Installation Complete! ✅✅✅"
     info "You can now manage your bot by running the 'mersyar' command."
     echo ""
     echo -e "\e[36m🌐 Bot Domain:\e[0m https://${BOT_DOMAIN}"
-    echo -e "\e[36m🔑 phpMyAdmin:\e[0m http://127.0.0.1:8082 (Access via SSH tunnel: ssh -L 9090:127.0.0.1:8082 root@<SERVER_IP>)"
+    echo -e "\e[36m🔑 phpMyAdmin:\e[0m http://127.0.0.1:8082 (Access via SSH tunnel: ssh -L 8082:127.0.0.1:8082 root@<SERVER_IP>)"
     echo -e "\e[36m🔒 Database Password:\e[0m ${DB_PASSWORD}"
     success "==============================================="
 }
@@ -298,30 +314,9 @@ EOF
 # If the script is run with the name 'mersyar' or if the project exists, show the menu.
 # Otherwise, start the installation.
 if [[ "$(basename "$0")" == "mersyar" || -f "$PROJECT_DIR/docker-compose.yml" ]]; then
-    # Check if a command is passed (e.g., mersyar update)
-    case "$1" in
-        update)
-            cd "$PROJECT_DIR"
-            info "Updating bot by rebuilding the image from GitHub..."
-            warning "This may take a few minutes."
-            docker compose up -d --build
-            success "Bot updated successfully!"
-            ;;
-        logs)
-            cd "$PROJECT_DIR"
-            info "Tailing logs for mersyar-bot. Press Ctrl+C to exit."
-            docker compose logs -f bot
-            ;;
-        restart)
-            cd "$PROJECT_DIR"
-            info "Restarting mersyar-bot container..."
-            docker compose restart bot
-            success "Bot restarted."
-            ;;
-        *)
-            manage_bot
-            ;;
-    esac
+    manage_bot "$@"
 else
+    # This is a fresh install. We save the path to this script so we can re-run it later.
+    INSTALL_SCRIPT_PATH_SRC="${BASH_SOURCE[0]}"
     install_bot
 fi
