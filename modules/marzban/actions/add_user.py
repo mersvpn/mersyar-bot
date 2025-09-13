@@ -298,7 +298,8 @@ async def add_user_create(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         error_message = f"❌ **خطا در ساخت کاربر:**\n\n`{new_user_data}`"
         await query.edit_message_text(error_message, parse_mode=ParseMode.MARKDOWN)
     
-    return await end_conversation_and_show_menu(update, context)
+        context.user_data.clear()
+    return ConversationHandler.END
 
 
 async def cancel_add_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:

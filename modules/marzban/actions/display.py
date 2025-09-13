@@ -273,9 +273,6 @@ async def show_user_details_panel(
         LOGGER.error(f"Failed to edit user details panel for {username}: {e}")
 
 
-# FILE: modules/marzban/actions/display.py
-# فقط این تابع را با نسخه نهایی و کاملاً صحیح زیر جایگزین کنید
-
 async def show_user_details(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
@@ -283,24 +280,14 @@ async def show_user_details(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     # --- 🟢 راه حل نهایی و قطعی برای نام کاربری‌های شامل آندرلاین 🟢 ---
     try:
         callback_data = query.data
-        
-        # ۱. جدا کردن دو بخش آخر (list_type و page_number) از سمت راست
-        # مثال: 'user_details_moh123_913_warning_1'
-        # نتیجه rsplit: ['user_details_moh123_913', 'warning', '1']
         prefix_and_username, list_type, page_number_str = callback_data.rsplit('_', 2)
         page_number = int(page_number_str)
-
-        # ۲. جدا کردن پیشوند ثابت برای استخراج نام کاربری خالص
         prefix_to_remove = "user_details_"
         if not prefix_and_username.startswith(prefix_to_remove):
              raise ValueError(f"Callback data does not start with the correct prefix: {callback_data}")
-        
-        # نتیجه: 'moh123_913'
         username = prefix_and_username[len(prefix_to_remove):]
-        
-        if not username: # اگر نام کاربری خالی بود
+        if not username:
             raise ValueError("Extracted username is empty.")
-
     except (ValueError, IndexError) as e:
         LOGGER.error(f"CRITICAL: Could not parse complex user_details callback_data '{query.data}': {e}")
         await query.edit_message_text("❌ خطا: اطلاعات دکمه نامعتبر است. لطفاً دوباره لیست کاربران را باز کنید.")
@@ -310,12 +297,27 @@ async def show_user_details(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     context.user_data['current_list_type'] = list_type
     context.user_data['current_page'] = page_number
     
-    await query.edit_message_text(f"در حال دریافت جزئیات برای `{username}`...", parse_mode=ParseMode.MARKDOWN)
+    # V V V V V THE FINAL FIX IS HERE V V V V V
+    # Smartly handle the previous message: delete if it has a photo, edit if it's text-only.
+    loading_message = None
+    if query.message.photo:
+        # If the previous message was a photo (like the QR code), delete it and send a new message.
+        await query.message.delete()
+        loading_message = await context.bot.send_message(
+            chat_id=query.message.chat_id,
+            text=f"در حال دریافت جزئیات برای `{username}`...",
+            parse_mode=ParseMode.MARKDOWN
+        )
+    else:
+        # If it was a text message, we can safely edit it.
+        await query.edit_message_text(f"در حال دریافت جزئیات برای `{username}`...", parse_mode=ParseMode.MARKDOWN)
+        loading_message = query.message
+    # ^ ^ ^ ^ ^ THE FINAL FIX IS HERE ^ ^ ^ ^ ^
     
     await show_user_details_panel(
         context=context,
-        chat_id=query.message.chat_id,
-        message_id=query.message.message_id,
+        chat_id=loading_message.chat_id,
+        message_id=loading_message.message_id,
         username=username,
         list_type=list_type,
         page_number=page_number

@@ -16,7 +16,8 @@ from config import config
 from .actions import (
     start, 
     show_my_id, 
-    switch_to_admin_view
+    switch_to_admin_view,
+    handle_deep_link  
 )
 
 MAINTENANCE_MESSAGE = (
@@ -40,7 +41,7 @@ def register(application: Application):
     application.add_handler(TypeHandler(Update, maintenance_gatekeeper), group=-1)
 
     # --- CORE COMMANDS ---
-    application.add_handler(CommandHandler("start", start), group=1)
+    application.add_handler(CommandHandler("start", handle_deep_link), group=1)
     application.add_handler(CommandHandler("myid", show_my_id), group=1)
 
     # --- ADMIN-SPECIFIC HANDLERS ---

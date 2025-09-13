@@ -6,6 +6,10 @@ from telegram.ext import ContextTypes, ConversationHandler
 from telegram.constants import ParseMode
 from database import db_manager
 from config import config
+
+from modules.marzban.actions.data_manager import link_user_to_telegram, normalize_username
+from modules.marzban.actions.api import get_user_data
+
 from shared.keyboards import (
     get_customer_main_menu_keyboard,
     get_admin_main_menu_keyboard,
@@ -115,3 +119,46 @@ async def end_conv_and_reroute(update: Update, context: ContextTypes.DEFAULT_TYP
     
     # Crucially, end the conversation state
     return ConversationHandler.END
+
+async def handle_deep_link(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Handles the /start command. It checks for a deep link payload
+    and either processes the link or shows the main menu.
+    """
+    user = update.effective_user
+    args = context.args
+
+    # Check if the /start command has a payload (e.g., /start link-some_username)
+    if args and len(args) > 0 and args[0].startswith("link-"):
+        marzban_username_raw = args[0].split('-', 1)[1]
+        marzban_username_normalized = normalize_username(marzban_username_raw)
+        telegram_user_id = user.id
+
+        LOGGER.info(f"User {telegram_user_id} started bot with deep link for Marzban user '{marzban_username_raw}'.")
+        
+        # Check if the Marzban user exists
+        marzban_user_data = await get_user_data(marzban_username_normalized)
+        if not marzban_user_data or "error" in marzban_user_data:
+            await update.message.reply_text("❌ متاسفانه حساب کاربری مرزبانی که با آن لینک شده‌اید، یافت نشد.")
+            # Show the main menu as a fallback
+            await start(update, context)
+            return
+
+        # Link the user in the database
+        success = await link_user_to_telegram(marzban_username_normalized, telegram_user_id)
+
+        if success:
+            await update.message.reply_text(
+                f"✅ حساب کاربری مرزبان شما (`{marzban_username_raw}`) با موفقیت به حساب تلگرام شما متصل شد!\n\n"
+                "اکنون می‌توانید از دکمه «📊ســـــــــــرویس‌های من» برای مشاهده وضعیت سرویس خود استفاده کنید.",
+                parse_mode=ParseMode.MARKDOWN
+            )
+        else:
+            await update.message.reply_text("❌ خطایی در اتصال حساب شما رخ داد. لطفاً با پشتیبانی تماس بگیرید.")
+        
+        # Finally, show the main menu
+        await start(update, context)
+
+    else:
+        # If there's no deep link, just run the normal start process
+        await start(update, context)

@@ -1,4 +1,4 @@
-# FILE: database/db_manager.py (نسخه نهایی با ایجاد خودکار جدول و توابع مدیریت پلن نامحدود)
+# FILE: database/db_manager.py (نسخه اصلاح شده با مدیریت صحیح تراکنش)
 import asyncio
 import aiomysql
 import logging
@@ -20,7 +20,10 @@ async def create_pool():
         _pool = await aiomysql.create_pool(
             host=db_config.DB_HOST, user=db_config.DB_USER,
             password=db_config.DB_PASSWORD, db=db_config.DB_NAME,
-            autocommit=True, loop=None, 
+            # FIX 1: autocommit is set to False for explicit transaction control.
+            # This is the most reliable way to ensure data is saved correctly.
+            autocommit=False, 
+            loop=None,
             cursorclass=aiomysql.DictCursor
         )
         LOGGER.info("Database connection pool created successfully.")
@@ -32,7 +35,9 @@ async def create_pool():
 async def close_pool():
     global _pool
     if _pool:
-        _pool.close(); await _pool.wait_closed(); _pool = None
+        _pool.close()
+        await _pool.wait_closed()
+        _pool = None
         LOGGER.info("Database connection pool closed.")
 
 async def _run_migrations(conn):
@@ -60,18 +65,20 @@ async def _run_migrations(conn):
         except Exception as e:
             LOGGER.error(f"Failed to apply migration for 'price_per_day': {e}", exc_info=True)
 
-        LOGGER.info("Database migrations finished.")
-
-                # Migration 3: Add base_daily_price to financial_settings
+        # Migration 3: Add base_daily_price to financial_settings
         try:
             await cur.execute("SHOW COLUMNS FROM financial_settings LIKE 'base_daily_price';")
             if not await cur.fetchone():
                 LOGGER.info("Applying migration: Adding 'base_daily_price' to 'financial_settings' table.")
-                # We set a sensible default value
                 await cur.execute("ALTER TABLE financial_settings ADD COLUMN base_daily_price INT NULL DEFAULT 1000;")
                 LOGGER.info("Migration successful for 'base_daily_price'.")
         except Exception as e:
             LOGGER.error(f"Failed to apply migration for 'base_daily_price': {e}", exc_info=True)
+        
+        # We must commit DDL changes from migrations
+        await conn.commit()
+        LOGGER.info("Database migrations finished.")
+
 
 async def _initialize_db():
     if not _pool: return
@@ -165,25 +172,38 @@ async def _initialize_db():
                         price_per_gb INT NOT NULL
                     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;""")
                 # --- END OF NEW TABLE ---
-
+            
+            # Commit table creation
+            await conn.commit()
             await _run_migrations(conn)
+
         LOGGER.info("Database initialized and migrations checked successfully.")
     except Exception as e:
         LOGGER.error(f"An error occurred during database initialization or migration: {e}", exc_info=True)
 
+# FIX 2: This function is now responsible for committing write operations.
 async def execute_query(query, args=None, fetch=None):
     if not _pool: return None
     try:
         async with _pool.acquire() as conn:
             async with conn.cursor() as cur:
                 await cur.execute(query, args or ())
-                if fetch == 'one': return await cur.fetchone()
-                elif fetch == 'all': return await cur.fetchall()
-                return cur.rowcount
+                
+                if fetch == 'one':
+                    return await cur.fetchone()
+                elif fetch == 'all':
+                    return await cur.fetchall()
+                else:
+                    # This is a write operation (INSERT, UPDATE, DELETE)
+                    # We commit the transaction to make changes permanent.
+                    await conn.commit()
+                    return cur.rowcount
     except Exception as e:
         LOGGER.error(f"Query failed: {query} | Error: {e}", exc_info=True)
+        # For write operations, we should not hide the error
         return None
 
+# FIX 3: Add explicit commit for direct cursor usage.
 async def add_or_update_user(user) -> bool:
     if not _pool: return False
     try:
@@ -191,14 +211,17 @@ async def add_or_update_user(user) -> bool:
             async with conn.cursor() as cur:
                 await cur.execute("SELECT user_id FROM users WHERE user_id = %s", (user.id,))
                 exists = await cur.fetchone()
+                is_new_user = False
                 if exists:
                     update_query = "UPDATE users SET first_name = %s, username = %s WHERE user_id = %s;"
                     await cur.execute(update_query, (user.first_name, user.username, user.id))
-                    return False
                 else:
                     insert_query = "INSERT INTO users (user_id, first_name, username) VALUES (%s, %s, %s);"
                     await cur.execute(insert_query, (user.id, user.first_name, user.username))
-                    return True
+                    is_new_user = True
+                
+                await conn.commit() # Save changes
+                return is_new_user
     except Exception as e:
         LOGGER.error(f"Database operation failed for user {user.id}: {e}", exc_info=True)
         return False
@@ -264,34 +287,25 @@ async def link_user_to_telegram(marzban_username: str, telegram_user_id: int) ->
     result = await execute_query(query, (marzban_username, telegram_user_id))
     return result is not None
 
+# FIX 4: This function was buggy. It has been completely rewritten to work correctly.
 async def save_subscription_note(username: str, duration: int, price: int, data_limit_gb: int) -> bool:
     """
-    Saves or updates subscription details (price, duration, etc.) for a user in the notes table.
-    This is used after a new user is created via the automated purchase flow.
+    Saves or updates subscription details for a user in the user_notes table.
     """
-    pool = await get_db_pool()
-    async with pool.acquire() as conn:
-        async with conn.cursor() as cursor:
-            try:
-                # SQL query to insert or update the user's note
-                sql = """
-                    INSERT INTO notes (username, subscription_duration, subscription_price, subscription_data_limit_gb, created_at)
-                    VALUES (%s, %s, %s, %s, NOW())
-                    ON DUPLICATE KEY UPDATE
-                        subscription_duration = VALUES(subscription_duration),
-                        subscription_price = VALUES(subscription_price),
-                        subscription_data_limit_gb = VALUES(subscription_data_limit_gb),
-                        updated_at = NOW();
-                """
-                await cursor.execute(sql, (username, duration, price, data_limit_gb))
-                await conn.commit()
-                return True
-            except Exception as e:
-                # It's better to log the error for debugging
-                # Assuming you have a logger setup similar to other files
-                # LOGGER.error(f"Failed to save subscription note for {username}: {e}")
-                print(f"Error in save_subscription_note for {username}: {e}") # Or use your logger
-                return False
+    query = """
+        INSERT INTO user_notes (username, subscription_duration, subscription_price, subscription_data_limit_gb)
+        VALUES (%s, %s, %s, %s)
+        ON DUPLICATE KEY UPDATE
+            subscription_duration = VALUES(subscription_duration),
+            subscription_price = VALUES(subscription_price),
+            subscription_data_limit_gb = VALUES(subscription_data_limit_gb);
+    """
+    try:
+        result = await execute_query(query, (username, duration, price, data_limit_gb))
+        return result is not None
+    except Exception as e:
+        LOGGER.error(f"Failed to save subscription note for {username}: {e}", exc_info=True)
+        return False
                 
 async def unlink_user_from_telegram(marzban_username: str) -> bool:
     query = "DELETE FROM marzban_telegram_links WHERE marzban_username = %s;"
@@ -329,7 +343,8 @@ async def save_bot_settings(settings_to_update: dict):
 
 async def add_to_non_renewal_list(marzban_username: str) -> bool:
     query = "INSERT IGNORE INTO non_renewal_users (marzban_username) VALUES (%s);"
-    return await execute_query(query, (marzban_username,))
+    result = await execute_query(query, (marzban_username,))
+    return result is not None
 
 async def is_in_non_renewal_list(marzban_username: str) -> bool:
     query = "SELECT marzban_username FROM non_renewal_users WHERE marzban_username = %s;"
@@ -364,19 +379,20 @@ async def cleanup_marzban_user_data(marzban_username: str) -> bool:
     if not _pool: return False
     try:
         async with _pool.acquire() as conn:
-            async with conn.cursor() as cur:
-                await conn.begin()
-                try:
+            # This function correctly uses transactions, so it remains unchanged.
+            await conn.begin()
+            try:
+                async with conn.cursor() as cur:
                     await cur.execute("DELETE FROM user_notes WHERE username = %s;", (marzban_username,))
                     await cur.execute("DELETE FROM marzban_telegram_links WHERE marzban_username = %s;", (marzban_username,))
                     await cur.execute("DELETE FROM non_renewal_users WHERE marzban_username = %s;", (marzban_username,))
                     await cur.execute("DELETE FROM bot_managed_users WHERE marzban_username = %s;", (marzban_username,))
-                    await conn.commit()
-                    return True
-                except Exception as inner_e:
-                    await conn.rollback()
-                    LOGGER.error(f"Transaction rolled back during cleanup for {marzban_username}: {inner_e}")
-                    return False
+                await conn.commit()
+                return True
+            except Exception as inner_e:
+                await conn.rollback()
+                LOGGER.error(f"Transaction rolled back during cleanup for {marzban_username}: {inner_e}")
+                return False
     except Exception as e:
         LOGGER.error(f"Failed to acquire connection for cleanup of {marzban_username}: {e}", exc_info=True)
         return False
@@ -476,6 +492,7 @@ async def delete_guide(guide_key: str) -> bool:
     result = await execute_query(query, (guide_key,))
     if result is not None: return result > 0
     return False
+
 # ==================== توابع مدیریت صورتحساب‌های در انتظار ====================
 
 async def get_pending_invoices_for_user(user_id: int) -> List[dict]:
@@ -506,7 +523,6 @@ async def create_pending_invoice(user_id: int, plan_details: dict, price: int) -
         INSERT INTO pending_invoices (user_id, plan_details, price) 
         VALUES (%s, %s, %s);
     """
-    # We need to get the last inserted ID, so we use a transaction
     if not _pool: return None
     try:
         async with _pool.acquire() as conn:
@@ -539,8 +555,6 @@ async def update_invoice_status(invoice_id: int, status: str) -> bool:
     query = "UPDATE pending_invoices SET status = %s WHERE invoice_id = %s;"
     result = await execute_query(query, (status, invoice_id))
     return result is not None and result > 0    
-
-    # این تابع را به انتهای فایل database/db_manager.py اضافه کنید
 
 async def expire_old_pending_invoices() -> int:
     """
@@ -653,7 +667,6 @@ async def delete_pricing_tier(tier_id: int) -> bool:
 
 async def save_base_daily_price(price: int) -> bool:
     """Saves or updates the base daily price in financial_settings."""
-    # This also removes the old, now unused, price_per_gb and price_per_day columns for cleanup.
     query = """
         INSERT INTO financial_settings (id, base_daily_price) 
         VALUES (1, %s) 
@@ -667,12 +680,10 @@ async def load_pricing_parameters() -> Dict[str, Any]:
     Loads all necessary parameters for the volumetric pricing formula.
     Fetches the base daily price and all pricing tiers.
     """
-    # 1. Get base price
     query_base = "SELECT base_daily_price FROM financial_settings WHERE id = 1;"
     base_result = await execute_query(query_base, fetch='one')
     base_price = base_result.get('base_daily_price') if base_result else None
 
-    # 2. Get all tiers
     tiers = await get_all_pricing_tiers()
 
     return {
