@@ -249,7 +249,7 @@ EOF
 
     info "-> Creating docker-compose.yml with healthchecks..."
     cat << 'EOF' > docker-compose.yml
-version: '3.8'
+
 services:
   bot:
     build: .
