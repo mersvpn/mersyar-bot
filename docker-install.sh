@@ -46,7 +46,7 @@ setup_backup_job() {
     fi
 
     info "Creating the backup script (backup_script.sh)..."
-    # --- FIX: Use MYSQL_PWD environment variable for mysqldump to handle special characters in password ---
+    # The backup script generation is already correct and robust. No changes needed here.
     cat << EOF > "${PROJECT_DIR}/backup_script.sh"
 #!/bin/bash
 set -e
@@ -57,43 +57,41 @@ DB_CONTAINER="mersyar-db"
 BACKUP_FILENAME="mersyar_backup_\$(date +%Y-%m-%d_%H-%M-%S).tar.gz"
 
 cd "\$PROJECT_DIR"
-
-# Read password from .env and export it for the mysqldump command
 export MYSQL_PWD=\$(grep 'DB_ROOT_PASSWORD' .env | cut -d '=' -f2)
-
-# Execute dump without password in the command line
 docker exec "\$DB_CONTAINER" mysqldump -u root --all-databases > db_dump.sql
-
-# Unset the variable immediately after use for security
 unset MYSQL_PWD
-
 tar -czf "\$BACKUP_FILENAME" db_dump.sql .env
-
-# Send the backup
-# --- NEW: Added a check for curl's success ---
 if curl -s -o /dev/null -w "%{http_code}" -F "chat_id=\$CHAT_ID" -F "document=@\$BACKUP_FILENAME" -F "caption=Mersyar-Bot Backup: \$(date)" "https://api.telegram.org/bot\$BOT_TOKEN/sendDocument" | grep -q "200"; then
     echo "Backup sent successfully."
 else
     echo "Failed to send backup to Telegram. Check Bot Token and Chat ID." >&2
+    exit 1 # Exit with error on failure
 fi
-
-# Cleanup
 rm db_dump.sql "\$BACKUP_FILENAME"
 EOF
 
     chmod +x "${PROJECT_DIR}/backup_script.sh"
 
     info "Scheduling the cron job..."
-    # Cron job command to be added
-    cron_job="${cron_schedule} bash ${PROJECT_DIR}/backup_script.sh '$BACKUP_BOT_TOKEN' '$BACKUP_CHAT_ID' >/dev/null 2>&1 # MERSYAR_BACKUP_JOB"
+    local cron_job="${cron_schedule} bash ${PROJECT_DIR}/backup_script.sh '$BACKUP_BOT_TOKEN' '$BACKUP_CHAT_ID' >/dev/null 2>&1 # MERSYAR_BACKUP_JOB"
     
-    # --- FIX: Use printf to add the cron job safely, preventing globbing issues with '*' ---
-    (crontab -l 2>/dev/null | grep -v "# MERSYAR_BACKUP_JOB" ; printf '%s\n' "\$cron_job") | crontab -
+    # --- FINAL FIX: Use a temporary file to update crontab safely and avoid all shell interpretation issues ---
+    local temp_cron_file
+    temp_cron_file=$(mktemp)
     
-    if [ $? -eq 0 ]; then
+    # Get current crontab, remove the old job, add the new job, then load it.
+    crontab -l 2>/dev/null | grep -v "# MERSYAR_BACKUP_JOB" > "$temp_cron_file"
+    echo "$cron_job" >> "$temp_cron_file"
+    
+    crontab "$temp_cron_file"
+    local crontab_status=$? # Capture the exit status of the crontab command
+    rm "$temp_cron_file"
+    # --- END OF FINAL FIX ---
+    
+    if [ $crontab_status -eq 0 ]; then
         success "Backup job successfully scheduled!"
         
-        # --- NEW FEATURE: Run a test backup immediately ---
+        # --- Run a test backup immediately ---
         info "Running an initial test backup now..."
         if bash "${PROJECT_DIR}/backup_script.sh" "$BACKUP_BOT_TOKEN" "$BACKUP_CHAT_ID"; then
             success "Test backup completed. Please check your Telegram chat for the backup file."
@@ -101,13 +99,12 @@ EOF
             error "The test backup failed. Please review the output above."
             warning "Your backup job is still scheduled, but the credentials or IDs might be incorrect."
         fi
-        # --- END OF NEW FEATURE ---
 
     else
-        error "Failed to schedule the cron job. Please check crontab permissions or syntax."
+        error "Failed to schedule the cron job. An error occurred with crontab."
+        error "Please check crontab permissions or system logs for more details."
     fi
 }
-
 # ==============================================================================
 #                              MANAGEMENT MENU
 # ==============================================================================
