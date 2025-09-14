@@ -142,13 +142,28 @@ async def handle_receipt_photo(update: Update, context: ContextTypes.DEFAULT_TYP
                f"  - مدت: *{duration} روز*\n"
                f"  - مبلغ: *{price:,} تومان*")
 
-    approve_callback = f"approve_receipt_{invoice_id}"
-    if plan.get("plan_type") == "unlimited" or (volume == 0 or duration == 0): # Check for manual or unlimited
+
+    plan_type = plan.get("plan_type")
+
+    if plan_type == "data_top_up":
+        approve_button_text = "✅ تایید و افزودن حجم"
+        approve_callback = f"approve_data_top_up_{invoice_id}"
+    elif plan_type == "unlimited" or (volume == 0 or duration == 0):
+        # This handles both unlimited plans and manual purchases
+        approve_button_text = "✅ تایید پرداخت"
         approve_callback = f"confirm_manual_receipt_{invoice_id}"
+    else:
+        # This handles standard new service purchases
+        approve_button_text = "✅ تایید و ساخت سرویس"
+        approve_callback = f"approve_receipt_{invoice_id}"
 
     keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("✅ تایید و فعالسازی", callback_data=approve_callback),
-         InlineKeyboardButton("❌ رد کردن", callback_data=f"reject_receipt_{invoice_id}")]])
+        [
+            InlineKeyboardButton(approve_button_text, callback_data=approve_callback),
+            InlineKeyboardButton("❌ رد کردن", callback_data=f"reject_receipt_{invoice_id}")
+        ]
+    ])
+
 
     num_sent = 0
     for admin_id in config.AUTHORIZED_USER_IDS:

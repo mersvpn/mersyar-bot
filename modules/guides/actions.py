@@ -44,13 +44,26 @@ def build_guides_list_keyboard(guides: list) -> InlineKeyboardMarkup:
 
 def build_guide_manage_keyboard(guide_key: str, guide: dict) -> InlineKeyboardMarkup:
     photo_text = "🖼️ افزودن/تغییر عکس" if not guide.get('photo_file_id') else "🖼️ تغییر/حذف عکس"
-    keyboard = [
-        [InlineKeyboardButton("✏️ ویرایش عنوان", callback_data="guide_edit_title"), InlineKeyboardButton("✍️ ویرایش متن", callback_data="guide_edit_content")],
-        [InlineKeyboardButton(photo_text, callback_data="guide_edit_photo"), InlineKeyboardButton("🔗 تنظیم دکمه‌ها", callback_data="guide_edit_buttons")],
+    
+    final_keyboard_layout = [
         [InlineKeyboardButton("👁️‍🗨️ پیش‌نمایش برای کاربر", callback_data=f"guide_view_{guide_key}")],
-        [InlineKeyboardButton("🗑️ حذف کامل", callback_data=f"guide_delete_confirm_{guide_key}"), InlineKeyboardButton("🔙 بازگشت به لیست", callback_data="guide_back_to_list")]
+        [
+            InlineKeyboardButton("✏️ ویرایش عنوان", callback_data="guide_edit_title"), 
+            InlineKeyboardButton("✍️ ویرایش متن", callback_data="guide_edit_content")
+        ],
+        [
+            InlineKeyboardButton(photo_text, callback_data="guide_edit_photo"), 
+            InlineKeyboardButton("🔗 تنظیم دکمه‌ها", callback_data="guide_edit_buttons")
+        ],
+        # Combine Delete and Back buttons into a single row
+        [
+            InlineKeyboardButton("🗑️ حذف کامل", callback_data=f"guide_delete_confirm_{guide_key}"),
+            InlineKeyboardButton("🔙 بازگشت به لیست", callback_data="guide_back_to_list")
+        ]
     ]
-    return InlineKeyboardMarkup(keyboard)
+
+    return InlineKeyboardMarkup(final_keyboard_layout)
+
 
 def build_buttons_manage_keyboard(guide: dict) -> InlineKeyboardMarkup:
     keyboard = []

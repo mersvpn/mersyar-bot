@@ -11,10 +11,13 @@ from shared.keyboards import get_customer_main_menu_keyboard, get_admin_main_men
 from modules.marzban.actions.api import get_user_data, reset_subscription_url_api, get_all_users
 from modules.marzban.actions.constants import GB_IN_BYTES
 from modules.marzban.actions.data_manager import normalize_username
+from database.db_manager import load_pricing_parameters, create_pending_invoice
+from modules.financials.actions.payment import send_custom_plan_invoice
 
 LOGGER = logging.getLogger(__name__)
 
 CHOOSE_SERVICE, DISPLAY_SERVICE, CONFIRM_RESET_SUB, CONFIRM_DELETE = range(4)
+PROMPT_FOR_DATA_AMOUNT, CONFIRM_DATA_PURCHASE = range(4, 6)
 ITEMS_PER_PAGE = 8
 
 # =============================================================================
@@ -123,22 +126,27 @@ async def display_service_details(update: Update, context: ContextTypes.DEFAULT_
         sub_url = user_info.get('subscription_url', 'یافت نشد')
         message = (
             f"📊 **مشخصات سرویس**\n\n"
-            f"▫️ **نام کاربری:** `{marzban_username}`\n"
-            f"▫️ **وضعیت:** 🟢 فعال\n"
-            f"▫️ **حجم:** {usage_str}\n"
+            f"👤 **نام کاربری:** `{marzban_username}`\n"
+            f"🟢 **وضعیت:** فعال\n"
+            f"📶 **حجم:** {usage_str}\n"
             f"▫️ **طول دوره:** {duration_str}\n"
-            f"▫️ **انقضا:** `{expire_str}`\n\n"
-            f"🔗 **لینک اشتراک:**\n`{sub_url}`"
+            f"⏳ **انقضا:** `{expire_str}`\n\n"
+            f"🔗 **لینک اشتراک** (برای کپی کلیک کنید):\n`{sub_url}`"
         )
         
+        # V V V V V MODIFY THIS KEYBOARD V V V V V
         keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("💳 درخواست تمدید", callback_data=f"customer_renew_request_{marzban_username}")],
+            [
+                InlineKeyboardButton("💳 درخواست تمدید", callback_data=f"customer_renew_request_{marzban_username}"),
+                InlineKeyboardButton("➕ خرید حجم اضافه", callback_data=f"purchase_data_{marzban_username}")
+            ],
             [
                 InlineKeyboardButton("🔗 بازسازی لینک", callback_data=f"customer_reset_sub_{marzban_username}"),
                 InlineKeyboardButton("🗑 درخواست حذف", callback_data=f"request_delete_{marzban_username}")
             ],
             [InlineKeyboardButton("🔙 بازگشت به منوی اصلی", callback_data="customer_back_to_main_menu")]
         ])
+        # ^ ^ ^ ^ ^ MODIFY THIS KEYBOARD ^ ^ ^ ^ ^
     
     if not is_active:
         message = (
@@ -326,4 +334,123 @@ async def confirm_delete_request(update: Update, context: ContextTypes.DEFAULT_T
                 )
             except Exception as e:
                 LOGGER.error(f"Failed to send delete request to admin {admin_id} for {username}: {e}", exc_info=True)
+    return ConversationHandler.END
+
+# FILE: modules/customer/actions/service.py
+# ADD THE FOLLOWING FUNCTIONS TO THE END OF THE FILE
+
+# =============================================================================
+#  NEW: Conversation for Purchasing Additional Data
+# =============================================================================
+
+async def start_data_purchase(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Entry point for the 'purchase additional data' conversation."""
+    query = update.callback_query
+    await query.answer()
+    
+    marzban_username = query.data.split('purchase_data_')[-1]
+    context.user_data['purchase_data_username'] = marzban_username
+    
+    pricing_params = await load_pricing_parameters()
+    if not pricing_params.get("tiers"):
+        await query.edit_message_text(
+            "⚠️ متاسفانه امکان خرید حجم اضافه در حال حاضر وجود ندارد (پیکربندی نشده)."
+        )
+        return DISPLAY_SERVICE # Go back to the details panel
+
+    text = (
+        f"➕ **خرید حجم اضافه برای سرویس:** `{marzban_username}`\n\n"
+        "لطفاً مقدار حجم مورد نیاز خود را به **گیگابایت (GB)** وارد کنید (مثلاً: 10)."
+    )
+    
+    await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN)
+    return PROMPT_FOR_DATA_AMOUNT
+
+
+async def calculate_price_and_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Calculates the price for the requested data and asks for confirmation."""
+    try:
+        volume_gb = int(update.message.text.strip())
+        if volume_gb <= 0:
+            raise ValueError
+    except (ValueError, TypeError):
+        await update.message.reply_text("❌ ورودی نامعتبر. لطفاً فقط یک عدد صحیح و مثبت وارد کنید.")
+        return PROMPT_FOR_DATA_AMOUNT
+
+    pricing_params = await load_pricing_parameters()
+    tiers = sorted(pricing_params.get("tiers", []), key=lambda x: x['volume_limit_gb'])
+    
+    price_per_gb = 0
+    if tiers:
+        # Find the correct price tier for the requested volume
+        for tier in tiers:
+            if volume_gb <= tier['volume_limit_gb']:
+                price_per_gb = tier['price_per_gb']
+                break
+        # If volume is larger than the largest tier, use the price of the largest tier
+        if price_per_gb == 0:
+            price_per_gb = tiers[-1]['price_per_gb']
+    
+    if price_per_gb == 0:
+        await update.message.reply_text("❌ خطایی در سیستم قیمت‌گذاری رخ داد. لطفاً با پشتیبانی تماس بگیرید.")
+        return ConversationHandler.END
+
+    total_price = volume_gb * price_per_gb
+    username = context.user_data.get('purchase_data_username')
+    
+    context.user_data['purchase_data_details'] = {
+        "volume": volume_gb,
+        "price": total_price,
+        "plan_type": "data_top_up",
+        "username": username
+    }
+
+    text = (
+        f"🧾 **پیش‌فاکتور خرید حجم اضافه**\n\n"
+        f"▫️ **سرویس:** `{username}`\n"
+        f"▫️ **حجم درخواستی:** {volume_gb} گیگابایت\n"
+        f"-------------------------------------\n"
+        f"💳 **مبلغ قابل پرداخت:** {total_price:,.0f} تومان\n\n"
+        "آیا اطلاعات فوق را تایید می‌کنید؟"
+    )
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("✅ تایید و دریافت فاکتور", callback_data="confirm_data_purchase_final")],
+        [InlineKeyboardButton("❌ لغو", callback_data=f"select_service_{username}")] # Back to details
+    ])
+    
+    await update.message.reply_text(text, reply_markup=keyboard, parse_mode=ParseMode.MARKDOWN)
+    return CONFIRM_DATA_PURCHASE
+
+
+async def generate_data_purchase_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Generates a pending invoice for the data purchase and ends the conversation."""
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text("... در حال صدور فاکتور")
+    
+    user_id = query.from_user.id
+    purchase_details = context.user_data.get('purchase_data_details')
+    
+    if not purchase_details:
+        await query.edit_message_text("❌ خطایی رخ داد. اطلاعات خرید یافت نشد.")
+        return ConversationHandler.END
+
+    price = purchase_details.get('price')
+    invoice_id = await create_pending_invoice(user_id, purchase_details, price)
+    
+    if not invoice_id:
+        await query.edit_message_text("❌ خطایی در سیستم رخ داد. لطفاً دوباره تلاش کنید.")
+        return ConversationHandler.END
+        
+    await query.message.delete()
+    
+    # We can reuse the invoice sending function
+    invoice_display_details = {
+        "volume": f"+{purchase_details['volume']} GB",
+        "duration": "حجم اضافه",
+        "price": price
+    }
+    await send_custom_plan_invoice(update, context, invoice_display_details, invoice_id)
+    
+    context.user_data.clear()
     return ConversationHandler.END

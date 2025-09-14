@@ -9,6 +9,7 @@ from telegram.ext import (
 )
 from telegram.constants import ParseMode
 from telegram.error import TelegramError
+from modules.marzban.actions.api import add_data_to_user_api
 
 # --- Local Imports ---
 from database.db_manager import (
@@ -516,3 +517,69 @@ async def confirm_manual_payment(update: Update, context: ContextTypes.DEFAULT_T
                                         f"(توسط: {admin_user.full_name})",
         parse_mode=ParseMode.MARKDOWN
     )
+
+# =============================================================================
+#  NEW: Handler for Approving Additional Data Purchase
+# =============================================================================
+
+async def approve_data_top_up(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Handles the admin's approval for an additional data purchase.
+    Adds data to the user's account via Marzban API.
+    """
+    query = update.callback_query
+    admin_user = update.effective_user
+    await query.answer("⏳ در حال افزودن حجم...")
+
+    try:
+        invoice_id = int(query.data.split('_')[-1])
+    except (IndexError, ValueError):
+        LOGGER.error(f"Invalid invoice_id in callback data for data top-up: {query.data}")
+        await query.edit_message_caption(caption=query.message.caption + "\n\n❌ **خطا:** شماره فاکتور نامعتبر است.")
+        return
+
+    invoice = await get_pending_invoice(invoice_id)
+    if not invoice or invoice['status'] != 'pending':
+        await query.edit_message_caption(caption=query.message.caption + "\n\n⚠️ **این فاکتور قبلاً پردازش شده یا یافت نشد.**")
+        return
+
+    plan_details = invoice.get('plan_details', {})
+    marzban_username = plan_details.get('username')
+    data_gb_to_add = plan_details.get('volume')
+    customer_id = invoice.get('user_id')
+
+    if not all([marzban_username, data_gb_to_add, customer_id]):
+        LOGGER.error(f"Invoice #{invoice_id} has incomplete details for data top-up: {plan_details}")
+        await query.edit_message_caption(caption=query.message.caption + "\n\n❌ **خطا:** اطلاعات فاکتور ناقص است.")
+        return
+
+    # Call the API to add data to the user
+    success, message = await add_data_to_user_api(marzban_username, data_gb_to_add)
+
+    if success:
+        await update_invoice_status(invoice_id, 'approved')
+        LOGGER.info(f"Admin {admin_user.id} approved data top-up for '{marzban_username}' (Invoice #{invoice_id}). API Message: {message}")
+        
+        # Notify the customer
+        try:
+            await context.bot.send_message(
+                chat_id=customer_id,
+                text=f"✅ پرداخت شما برای فاکتور `{invoice_id}` تایید شد.\n\n"
+                     f"**{data_gb_to_add} گیگابایت** حجم اضافه به سرویس شما افزوده شد."
+            )
+        except Exception as e:
+            LOGGER.error(f"Failed to send data top-up confirmation to customer {customer_id}: {e}")
+
+        # Update the admin's message
+        await query.edit_message_caption(
+            caption=query.message.caption + f"\n\n**✅ حجم با موفقیت به `{marzban_username}` اضافه شد.**\n"
+                                            f"(توسط: {admin_user.full_name})",
+            parse_mode=ParseMode.MARKDOWN
+        )
+
+    else:
+        # If API call fails
+        LOGGER.error(f"Failed to add data for '{marzban_username}' via API. Reason: {message}")
+        await query.edit_message_caption(
+            caption=query.message.caption + f"\n\n❌ **خطا در ارتباط با پنل مرزبان:**\n`{message}`"
+        )    

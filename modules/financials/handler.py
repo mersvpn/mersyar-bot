@@ -21,6 +21,7 @@ from .actions.payment import (
 # --- MODIFIED: Import both new admin panel modules ---
 from .actions import unlimited_plans_admin, volumetric_plans_admin
 from shared.callbacks import show_coming_soon
+from .actions import payment
 
 # --- SETUP ---
 LOGGER = logging.getLogger(__name__)
@@ -70,6 +71,8 @@ def register(application: Application):
     # --- Receipt Approval/Rejection Handlers ---
     application.add_handler(CallbackQueryHandler(approve_payment, pattern=r'^approve_receipt_'), group=0)
     application.add_handler(CallbackQueryHandler(confirm_manual_payment, pattern=r'^confirm_manual_receipt_'), group=0)
+    application.add_handler(CallbackQueryHandler(payment.approve_data_top_up, pattern=r'^approve_data_top_up_'))
+
     application.add_handler(CallbackQueryHandler(reject_payment, pattern=r'^reject_receipt_'), group=0)
 
     # --- Placeholder Handler ---

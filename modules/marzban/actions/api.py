@@ -155,6 +155,39 @@ async def reset_subscription_url_api(username: str) -> Tuple[bool, Union[str, Di
         return True, response
     return False, response.get("error", "Unknown error") if response else "Network error"
 
+# ADD THIS FUNCTION BEFORE `close_client`
+
+async def add_data_to_user_api(username: str, data_gb: int) -> Tuple[bool, str]:
+    """
+    Adds a specified amount of data (in GB) to a user's existing data_limit.
+    """
+    from .constants import GB_IN_BYTES
+    
+    # 1. Fetch the user's current data
+    current_data = await get_user_data(username)
+    if not current_data or "error" in current_data:
+        return False, f"User '{username}' not found or API error during fetch."
+        
+    # 2. Calculate the new data limit
+    current_limit_bytes = current_data.get('data_limit', 0)
+    additional_bytes = data_gb * GB_IN_BYTES
+    new_limit_bytes = current_limit_bytes + additional_bytes
+    
+    # 3. Prepare the payload for modification
+    settings_to_change = {
+        "data_limit": new_limit_bytes
+    }
+    
+    # 4. Call the existing modify_user_api function
+    success, message = await modify_user_api(username, settings_to_change)
+    
+    if success:
+        return True, f"Successfully added {data_gb} GB to user '{username}'."
+    else:
+        return False, f"Failed to add data to user '{username}': {message}"
+
+# ... (the rest of the file, starting with async def close_client():)
+
 async def close_client():
     if not _client.is_closed:
         await _client.aclose()
