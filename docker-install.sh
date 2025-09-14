@@ -46,8 +46,9 @@ setup_backup_job() {
     fi
 
     info "Creating the backup script (backup_script.sh)..."
-    # --- FINAL FIX for mysqldump ---
-    # Pass the MYSQL_PWD variable into the container using "docker exec -e"
+    # --- ULTIMATE FIX for mysqldump Access Denied ---
+    # Instead of reading from .env (which might be outdated), we get the password
+    # directly from the running container's environment variables. This is the "source of truth".
     cat << EOF > "${PROJECT_DIR}/backup_script.sh"
 #!/bin/bash
 set -e
@@ -59,10 +60,11 @@ BACKUP_FILENAME="mersyar_backup_\$(date +%Y-%m-%d_%H-%M-%S).tar.gz"
 
 cd "\$PROJECT_DIR"
 
-# Read password from .env
-DB_ROOT_PASSWORD=\$(grep 'DB_ROOT_PASSWORD' .env | cut -d '=' -f2)
+# Get the TRUE password from the running db container's environment
+# This avoids issues with outdated .env files.
+DB_ROOT_PASSWORD=\$(docker exec "\$DB_CONTAINER" printenv MYSQL_ROOT_PASSWORD | tr -d '\r')
 
-# Execute dump, passing the password as an environment variable directly to docker exec
+# Execute dump, passing the correct password as an environment variable to docker exec
 docker exec -e MYSQL_PWD="\$DB_ROOT_PASSWORD" "\$DB_CONTAINER" mysqldump -u root --all-databases > db_dump.sql
 
 tar -czf "\$BACKUP_FILENAME" db_dump.sql .env
