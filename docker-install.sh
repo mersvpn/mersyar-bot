@@ -18,17 +18,16 @@ setup_backup_job() {
     cd "$PROJECT_DIR"
     info "--- Automated Backup Setup ---"
     warning "This will schedule a periodic backup of your database and .env file."
-    
+
     read -p "Enter backup interval in minutes (e.g., 1440 for daily, 120 for every 2 hours): " INTERVAL
     read -p "Enter the Telegram Bot Token for sending backups: " BACKUP_BOT_TOKEN
     read -p "Enter the destination Telegram Channel/Chat ID: " BACKUP_CHAT_ID
 
     if ! [[ "$INTERVAL" =~ ^[0-9]+$ ]] || [[ "$INTERVAL" -eq 0 ]]; then
         error "Interval must be a positive number."
-        return
+        return 1
     fi
 
-    # --- FIX: Smarter cron schedule generation ---
     local cron_schedule
     if (( INTERVAL >= 1440 && INTERVAL % 1440 == 0 )); then
         local DAYS=$((INTERVAL / 1440))
@@ -45,10 +44,9 @@ setup_backup_job() {
         error "Invalid interval. For intervals of 60 minutes or more, please use a multiple of 60 (e.g., 60, 120, 180, 1440)."
         return 1
     fi
-    # --- END OF FIX ---
 
     info "Creating the backup script (backup_script.sh)..."
-    # The backup script itself is fine, no changes needed here.
+    # --- FIX: Use MYSQL_PWD environment variable for mysqldump to handle special characters in password ---
     cat << EOF > "${PROJECT_DIR}/backup_script.sh"
 #!/bin/bash
 set -e
@@ -57,22 +55,57 @@ CHAT_ID="\$2"
 PROJECT_DIR="${PROJECT_DIR}"
 DB_CONTAINER="mersyar-db"
 BACKUP_FILENAME="mersyar_backup_\$(date +%Y-%m-%d_%H-%M-%S).tar.gz"
+
 cd "\$PROJECT_DIR"
-DB_ROOT_PASSWORD=\$(grep 'DB_ROOT_PASSWORD' .env | cut -d '=' -f2)
-docker exec "\$DB_CONTAINER" mysqldump -u root -p"\$DB_ROOT_PASSWORD" --all-databases > db_dump.sql
+
+# Read password from .env and export it for the mysqldump command
+export MYSQL_PWD=\$(grep 'DB_ROOT_PASSWORD' .env | cut -d '=' -f2)
+
+# Execute dump without password in the command line
+docker exec "\$DB_CONTAINER" mysqldump -u root --all-databases > db_dump.sql
+
+# Unset the variable immediately after use for security
+unset MYSQL_PWD
+
 tar -czf "\$BACKUP_FILENAME" db_dump.sql .env
-curl -s -F "chat_id=\$CHAT_ID" -F "document=@\$BACKUP_FILENAME" -F "caption=Mersyar-Bot Backup: \$(date)" "https://api.telegram.org/bot\$BOT_TOKEN/sendDocument" > /dev/null
+
+# Send the backup
+# --- NEW: Added a check for curl's success ---
+if curl -s -o /dev/null -w "%{http_code}" -F "chat_id=\$CHAT_ID" -F "document=@\$BACKUP_FILENAME" -F "caption=Mersyar-Bot Backup: \$(date)" "https://api.telegram.org/bot\$BOT_TOKEN/sendDocument" | grep -q "200"; then
+    echo "Backup sent successfully."
+else
+    echo "Failed to send backup to Telegram. Check Bot Token and Chat ID." >&2
+fi
+
+# Cleanup
 rm db_dump.sql "\$BACKUP_FILENAME"
 EOF
 
     chmod +x "${PROJECT_DIR}/backup_script.sh"
 
     info "Scheduling the cron job..."
-    cron_job="${cron_schedule} bash ${PROJECT_DIR}/backup_script.sh '$BACKUP_BOT_TOKEN' '$BACKUP_CHAT_ID' > /dev/null 2>&1 # MERSYAR_BACKUP_JOB"
+    # Cron job command to be added
+    cron_job="${cron_schedule} bash ${PROJECT_DIR}/backup_script.sh '$BACKUP_BOT_TOKEN' '$BACKUP_CHAT_ID' >/dev/null 2>&1 # MERSYAR_BACKUP_JOB"
     
-    (crontab -l 2>/dev/null | grep -v "# MERSYAR_BACKUP_JOB" ; echo "\$cron_job") | crontab -
+    # --- FIX: Use printf to add the cron job safely, preventing globbing issues with '*' ---
+    (crontab -l 2>/dev/null | grep -v "# MERSYAR_BACKUP_JOB" ; printf '%s\n' "\$cron_job") | crontab -
     
-    success "Backup job successfully scheduled!"
+    if [ $? -eq 0 ]; then
+        success "Backup job successfully scheduled!"
+        
+        # --- NEW FEATURE: Run a test backup immediately ---
+        info "Running an initial test backup now..."
+        if bash "${PROJECT_DIR}/backup_script.sh" "$BACKUP_BOT_TOKEN" "$BACKUP_CHAT_ID"; then
+            success "Test backup completed. Please check your Telegram chat for the backup file."
+        else
+            error "The test backup failed. Please review the output above."
+            warning "Your backup job is still scheduled, but the credentials or IDs might be incorrect."
+        fi
+        # --- END OF NEW FEATURE ---
+
+    else
+        error "Failed to schedule the cron job. Please check crontab permissions or syntax."
+    fi
 }
 
 # ==============================================================================
