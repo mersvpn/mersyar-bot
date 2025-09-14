@@ -46,7 +46,8 @@ setup_backup_job() {
     fi
 
     info "Creating the backup script (backup_script.sh)..."
-    # The backup script generation is already correct and robust. No changes needed here.
+    # --- FINAL FIX for mysqldump ---
+    # Pass the MYSQL_PWD variable into the container using "docker exec -e"
     cat << EOF > "${PROJECT_DIR}/backup_script.sh"
 #!/bin/bash
 set -e
@@ -57,16 +58,22 @@ DB_CONTAINER="mersyar-db"
 BACKUP_FILENAME="mersyar_backup_\$(date +%Y-%m-%d_%H-%M-%S).tar.gz"
 
 cd "\$PROJECT_DIR"
-export MYSQL_PWD=\$(grep 'DB_ROOT_PASSWORD' .env | cut -d '=' -f2)
-docker exec "\$DB_CONTAINER" mysqldump -u root --all-databases > db_dump.sql
-unset MYSQL_PWD
+
+# Read password from .env
+DB_ROOT_PASSWORD=\$(grep 'DB_ROOT_PASSWORD' .env | cut -d '=' -f2)
+
+# Execute dump, passing the password as an environment variable directly to docker exec
+docker exec -e MYSQL_PWD="\$DB_ROOT_PASSWORD" "\$DB_CONTAINER" mysqldump -u root --all-databases > db_dump.sql
+
 tar -czf "\$BACKUP_FILENAME" db_dump.sql .env
+
 if curl -s -o /dev/null -w "%{http_code}" -F "chat_id=\$CHAT_ID" -F "document=@\$BACKUP_FILENAME" -F "caption=Mersyar-Bot Backup: \$(date)" "https://api.telegram.org/bot\$BOT_TOKEN/sendDocument" | grep -q "200"; then
     echo "Backup sent successfully."
 else
     echo "Failed to send backup to Telegram. Check Bot Token and Chat ID." >&2
-    exit 1 # Exit with error on failure
+    exit 1
 fi
+
 rm db_dump.sql "\$BACKUP_FILENAME"
 EOF
 
@@ -75,23 +82,20 @@ EOF
     info "Scheduling the cron job..."
     local cron_job="${cron_schedule} bash ${PROJECT_DIR}/backup_script.sh '$BACKUP_BOT_TOKEN' '$BACKUP_CHAT_ID' >/dev/null 2>&1 # MERSYAR_BACKUP_JOB"
     
-    # --- FINAL FIX: Use a temporary file to update crontab safely and avoid all shell interpretation issues ---
+    # Use a temporary file to update crontab safely
     local temp_cron_file
     temp_cron_file=$(mktemp)
     
-    # Get current crontab, remove the old job, add the new job, then load it.
     crontab -l 2>/dev/null | grep -v "# MERSYAR_BACKUP_JOB" > "$temp_cron_file"
     echo "$cron_job" >> "$temp_cron_file"
     
     crontab "$temp_cron_file"
-    local crontab_status=$? # Capture the exit status of the crontab command
+    local crontab_status=$?
     rm "$temp_cron_file"
-    # --- END OF FINAL FIX ---
     
     if [ $crontab_status -eq 0 ]; then
         success "Backup job successfully scheduled!"
         
-        # --- Run a test backup immediately ---
         info "Running an initial test backup now..."
         if bash "${PROJECT_DIR}/backup_script.sh" "$BACKUP_BOT_TOKEN" "$BACKUP_CHAT_ID"; then
             success "Test backup completed. Please check your Telegram chat for the backup file."
