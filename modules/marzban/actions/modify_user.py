@@ -7,6 +7,7 @@ from telegram.ext import ContextTypes, ConversationHandler
 from telegram.constants import ParseMode
 from shared.log_channel import send_log
 from telegram.helpers import escape_markdown
+from shared.keyboards import get_back_to_main_menu_keyboard
 
 from .display import show_user_details_panel
 from .constants import GB_IN_BYTES, DEFAULT_RENEW_DAYS
@@ -20,10 +21,8 @@ LOGGER = logging.getLogger(__name__)
 
 ADD_DAYS_PROMPT, ADD_DATA_PROMPT = range(2)
 
-# ==================== مکالمه افزودن روز ====================
 async def prompt_for_add_days(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
-    # روش صحیح و امن برای استخراج نام کاربری
     username = query.data.removeprefix('add_days_')
 
     context.user_data['modify_user_info'] = {
@@ -34,12 +33,48 @@ async def prompt_for_add_days(update: Update, context: ContextTypes.DEFAULT_TYPE
         'page_number': context.user_data.get('current_page', 1)
     }
     await query.answer()
-    await query.edit_message_text(
-        text=f"🗓️ لطفاً تعداد روزهایی که می‌خواهید به اشتراک کاربر `{username}` اضافه شود را وارد کنید:",
+    
+    text = (f"🗓️ لطفاً تعداد روزهایی که می‌خواهید به اشتراک کاربر `{username}` اضافه شود را وارد کنید.\n\n"
+            "برای انصراف، از دکمه زیر استفاده کنید.")
+    
+    # --- CHANGE IS HERE ---
+    # Delete the old inline keyboard message
+    await query.message.delete()
+    # Send a new message with the ReplyKeyboardMarkup
+    await context.bot.send_message(
+        chat_id=query.message.chat_id,
+        text=text,
+        reply_markup=get_back_to_main_menu_keyboard(),
         parse_mode=ParseMode.MARKDOWN
     )
+    # --- END OF CHANGE ---
+
     return ADD_DAYS_PROMPT
 
+async def prompt_for_add_data(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    username = query.data.removeprefix('add_data_')
+        
+    context.user_data['modify_user_info'] = {
+        'username': username,
+        'chat_id': query.message.chat_id,
+        'message_id': query.message.message_id,
+        'list_type': context.user_data.get('current_list_type', 'all'),
+        'page_number': context.user_data.get('current_page', 1)
+    }
+    await query.answer()
+    
+    text = (f"➕ لطفاً مقدار حجمی که می‌خواهید به کاربر `{username}` اضافه شود را به **گیگابایت (GB)** وارد کنید.\n\n"
+            "برای انصراف، از دکمه زیر استفاده کنید.")
+            
+    await query.message.delete()
+    await context.bot.send_message(
+        chat_id=query.message.chat_id,
+        text=text,
+        reply_markup=get_back_to_main_menu_keyboard(),
+        parse_mode=ParseMode.MARKDOWN
+    )
+    return ADD_DATA_PROMPT
 async def do_add_days(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     modify_info = context.user_data.get('modify_user_info')
     if not modify_info:
@@ -84,7 +119,6 @@ async def do_add_days(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
 # ==================== مکالمه افزایش حجم ====================
 async def prompt_for_add_data(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
-    # روش صحیح و امن برای استخراج نام کاربری
     username = query.data.removeprefix('add_data_')
         
     context.user_data['modify_user_info'] = {
@@ -95,10 +129,22 @@ async def prompt_for_add_data(update: Update, context: ContextTypes.DEFAULT_TYPE
         'page_number': context.user_data.get('current_page', 1)
     }
     await query.answer()
-    await query.edit_message_text(
-        text=f"➕ لطفاً مقدار حجمی که می‌خواهید به کاربر `{username}` اضافه شود را به **گیگابایت (GB)** وارد کنید:",
+    
+    text = (f"➕ لطفاً مقدار حجمی که می‌خواهید به کاربر `{username}` اضافه شود را به **گیگابایت (GB)** وارد کنید.\n\n"
+            "برای انصراف، از دکمه زیر استفاده کنید.")
+            
+    # --- CHANGE IS HERE ---
+    # Delete the old inline keyboard message
+    await query.message.delete()
+    # Send a new message with the ReplyKeyboardMarkup
+    await context.bot.send_message(
+        chat_id=query.message.chat_id,
+        text=text,
+        reply_markup=get_back_to_main_menu_keyboard(),
         parse_mode=ParseMode.MARKDOWN
     )
+    # --- END OF CHANGE ---
+    
     return ADD_DATA_PROMPT
 
 async def do_add_data(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:

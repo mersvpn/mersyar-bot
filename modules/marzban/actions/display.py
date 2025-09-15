@@ -206,17 +206,25 @@ async def update_user_page(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 async def show_user_details_panel(
     context: ContextTypes.DEFAULT_TYPE,
     chat_id: int,
-    message_id: int,
     username: str,
     list_type: str,
     page_number: int,
-    success_message: str = None
+    success_message: str = None,
+    message_id: int = None  # Make message_id optional
 ) -> None:
+    # --- Step 1: Fetch user data ---
     user_info = await get_user_data(username)
     if not user_info:
-        await context.bot.edit_message_text(chat_id=chat_id, message_id=message_id, text="❌ خطا: کاربر یافت نشد.")
+        # If the user doesn't exist, we can't do much.
+        # Try to edit the message if an ID was provided.
+        if message_id:
+            try:
+                await context.bot.edit_message_text(chat_id=chat_id, message_id=message_id, text="❌ خطا: کاربر یافت نشد.")
+            except Exception:
+                await context.bot.send_message(chat_id=chat_id, text="❌ خطا: کاربر یافت نشد.")
         return
-        
+
+    # --- Step 2: Format the message content ---
     online_status = "🔘 آفلاین"
     if user_info.get('online_at'):
         try:
@@ -250,6 +258,7 @@ async def show_user_details_panel(
         f"▫️ **انقضا:** `{expire_str}`"
     )
     
+    # --- Step 3: Build the keyboard ---
     back_button_callback = f"list_subs_page_{page_number}" if list_type == 'subs' else f"show_users_page_{list_type}_{page_number}"
     back_button_text = "🔙 بازگشت به لیست اشتراک‌ها" if list_type == 'subs' else "🔙 بازگشت به لیست کاربران"
     
@@ -260,18 +269,35 @@ async def show_user_details_panel(
         [InlineKeyboardButton("🔗 لینک اشتراک", callback_data=f"sub_link_{username}"), InlineKeyboardButton("🗑 حذف کاربر", callback_data=f"delete_{username}")],
         [InlineKeyboardButton(back_button_text, callback_data=back_button_callback)]
     ]
-    
-    try:
-        await context.bot.edit_message_text(
+    reply_markup = InlineKeyboardMarkup(keyboard_rows)
+
+    # --- Step 4: Smartly send or edit the message ---
+    if message_id:
+        try:
+            # Try to edit the existing message first
+            await context.bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=message_id,
+                text=message_text,
+                reply_markup=reply_markup,
+                parse_mode=ParseMode.MARKDOWN
+            )
+        except Exception:
+            # If editing fails (e.g., message was deleted), send a new one
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=message_text,
+                reply_markup=reply_markup,
+                parse_mode=ParseMode.MARKDOWN
+            )
+    else:
+        # If no message_id was provided, we must send a new message
+        await context.bot.send_message(
             chat_id=chat_id,
-            message_id=message_id,
             text=message_text,
-            reply_markup=InlineKeyboardMarkup(keyboard_rows),
+            reply_markup=reply_markup,
             parse_mode=ParseMode.MARKDOWN
         )
-    except Exception as e:
-        LOGGER.error(f"Failed to edit user details panel for {username}: {e}")
-
 
 async def show_user_details(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query

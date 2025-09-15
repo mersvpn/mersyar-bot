@@ -15,6 +15,14 @@ from modules.general.actions import end_conversation_and_show_menu, switch_to_cu
 from shared.callbacks import cancel_to_helper_tools
 from config import config  # Import config to access admin IDs
 
+# V V V V V ADD BOTH OF THESE LINES HERE V V V V V
+# A regex pattern that matches all buttons on the user management submenu
+USER_MANAGEMENT_BUTTONS_REGEX = r'^(👥 نمایش کاربران|⌛️ کاربران رو به اتمام|🔎 جستجوی کاربر|➕ افزودن کاربر|🔙 بازگشت به منوی اصلی)$'
+
+# A regex for main admin menu buttons that could interrupt a conversation
+ADMIN_MAIN_MENU_REGEX = r'^(👤 مدیریت کاربران|📓 مدیریت یادداشت‌ها|⚙️ تنظیمات و ابزارها|📨 ارسال پیام|💻 ورود به پنل کاربری|📚 تنظیمات آموزش|🔙 بازگشت به منوی اصلی)$'
+# ^ ^ ^ ^ ^ ADD BOTH OF THESE LINES HERE ^ ^ ^ ^ ^
+
 def register(application: Application) -> None:
     """Registers all handlers for the Marzban (admin) module."""
 
@@ -74,18 +82,38 @@ def register(application: Application) -> None:
         conversation_timeout=300, per_chat=True, per_user=True
     )
     
+# FILE: modules/marzban/handler.py
+# REPLACE BOTH CONVERSATION HANDLERS
+
     add_days_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(modify_user.prompt_for_add_days, pattern=r'^add_days_')],
-        states={modify_user.ADD_DAYS_PROMPT: [MessageHandler(filters.TEXT & ~filters.COMMAND, modify_user.do_add_days)]},
-        **conv_settings
+        states={
+            modify_user.ADD_DAYS_PROMPT: [MessageHandler(
+                filters.TEXT & ~filters.COMMAND & ~filters.Regex(ADMIN_MAIN_MENU_REGEX), 
+                modify_user.do_add_days
+            )]
+        },
+        fallbacks=[
+            MessageHandler(filters.Regex('^🔙 بازگشت به منوی اصلی$'), end_conversation_and_show_menu),
+            CommandHandler('cancel', end_conversation_and_show_menu)
+        ],
+        conversation_timeout=300, per_chat=True, per_user=True
     )
     
     add_data_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(modify_user.prompt_for_add_data, pattern=r'^add_data_')],
-        states={modify_user.ADD_DATA_PROMPT: [MessageHandler(filters.TEXT & ~filters.COMMAND, modify_user.do_add_data)]},
-        **conv_settings
+        states={
+            modify_user.ADD_DATA_PROMPT: [MessageHandler(
+                filters.TEXT & ~filters.COMMAND & ~filters.Regex(ADMIN_MAIN_MENU_REGEX), 
+                modify_user.do_add_data
+            )]
+        },
+        fallbacks=[
+            MessageHandler(filters.Regex('^🔙 بازگشت به منوی اصلی$'), end_conversation_and_show_menu),
+            CommandHandler('cancel', end_conversation_and_show_menu)
+        ],
+        conversation_timeout=300, per_chat=True, per_user=True
     )
-
     # --- 2. Register All Conversations ---
     application.add_handler(credentials.credential_conv, group=0)
     application.add_handler(add_user_conv, group=0)

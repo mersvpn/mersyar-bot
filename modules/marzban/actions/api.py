@@ -113,22 +113,39 @@ async def get_user_data(username: str) -> Optional[Dict[str, Any]]:
         return None
     return response
 
+# FILE: modules/marzban/actions/api.py
+# REPLACE ONLY THIS FUNCTION
+
 async def modify_user_api(username: str, settings_to_change: dict) -> Tuple[bool, str]:
     current_data = await get_user_data(username)
     if not current_data or "error" in current_data:
         return False, f"User '{username}' not found or API error during fetch."
+    
+    # Clean up read-only or irrelevant fields from the payload
     for key in ['online_at', 'created_at', 'subscription_url', 'usages', 'error', 'status_code']:
         current_data.pop(key, None)
+    
+    # Ensure proxies dictionary is clean
     if 'proxies' in current_data and isinstance(current_data['proxies'], dict):
         current_data['proxies'] = {p: s for p, s in current_data['proxies'].items() if s}
-    # --- FIX: Do not force status to 'active' on every modification ---
-    # current_data['status'] = 'active'
+        
+    # V V V V V THE FINAL FIX IS HERE V V V V V
+    # If the user's current status is not one of the valid writable statuses
+    # (e.g., it's 'expired' or 'limited'), force it back to 'active'.
+    # This ensures that adding days/data to an expired user reactivates them.
+    valid_statuses = ['active', 'disabled', 'on_hold']
+    if current_data.get('status') not in valid_statuses:
+        current_data['status'] = 'active'
+    # ^ ^ ^ ^ ^ THE FINAL FIX IS HERE ^ ^ ^ ^ ^
+
+    # Merge the current data with the new settings
     updated_payload = {**current_data, **settings_to_change}
+    
     response = await _api_request("PUT", f"/api/user/{username}", json=updated_payload)
+    
     if response and "error" not in response:
         return True, "User updated successfully."
     return False, response.get("error", "Unknown error") if response else "Network error"
-
 async def delete_user_api(username: str) -> Tuple[bool, str]:
     response = await _api_request("DELETE", f"/api/user/{username}")
     if response and "error" not in response:

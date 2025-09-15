@@ -53,9 +53,10 @@ def register(application: Application):
                 CallbackQueryHandler(service.confirm_delete_request, pattern=r'^confirm_delete_'),
                 CallbackQueryHandler(service.choose_service, pattern=r'^select_service_')
             ],
-            # V V V V V NEW STATES FOR DATA PURCHASE V V V V V
             service.PROMPT_FOR_DATA_AMOUNT: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, service.calculate_price_and_confirm)
+                # V V V V V MODIFY THIS LINE V V V V V
+                MessageHandler(IGNORE_MAIN_MENU_FILTER, service.calculate_price_and_confirm)
+                # ^ ^ ^ ^ ^ MODIFY THIS LINE ^ ^ ^ ^ ^
             ],
             service.CONFIRM_DATA_PURCHASE: [
                 CallbackQueryHandler(service.generate_data_purchase_invoice, pattern=r'^confirm_data_purchase_final$'),

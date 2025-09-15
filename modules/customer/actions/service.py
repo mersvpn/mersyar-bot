@@ -13,6 +13,7 @@ from modules.marzban.actions.constants import GB_IN_BYTES
 from modules.marzban.actions.data_manager import normalize_username
 from database.db_manager import load_pricing_parameters, create_pending_invoice
 from modules.financials.actions.payment import send_custom_plan_invoice
+from shared.keyboards import get_back_to_main_menu_keyboard
 
 LOGGER = logging.getLogger(__name__)
 
@@ -336,13 +337,8 @@ async def confirm_delete_request(update: Update, context: ContextTypes.DEFAULT_T
                 LOGGER.error(f"Failed to send delete request to admin {admin_id} for {username}: {e}", exc_info=True)
     return ConversationHandler.END
 
-# FILE: modules/customer/actions/service.py
-# ADD THE FOLLOWING FUNCTIONS TO THE END OF THE FILE
 
-# =============================================================================
-#  NEW: Conversation for Purchasing Additional Data
-# =============================================================================
-
+# REPLACE THE ENTIRE `start_data_purchase` FUNCTION WITH THIS VERSION
 async def start_data_purchase(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Entry point for the 'purchase additional data' conversation."""
     query = update.callback_query
@@ -356,16 +352,28 @@ async def start_data_purchase(update: Update, context: ContextTypes.DEFAULT_TYPE
         await query.edit_message_text(
             "⚠️ متاسفانه امکان خرید حجم اضافه در حال حاضر وجود ندارد (پیکربندی نشده)."
         )
-        return DISPLAY_SERVICE # Go back to the details panel
+        # We don't return to the same state, instead we let the user see the message
+        # and they can navigate back manually.
+        return ConversationHandler.END
 
     text = (
         f"➕ **خرید حجم اضافه برای سرویس:** `{marzban_username}`\n\n"
-        "لطفاً مقدار حجم مورد نیاز خود را به **گیگابایت (GB)** وارد کنید (مثلاً: 10)."
+        "لطفاً مقدار حجم مورد نیاز خود را به **گیگابایت (GB)** وارد کنید (مثلاً: 10).\n\n"
+        "برای انصراف، از دکمه زیر استفاده کنید."
     )
     
-    await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN)
+    # Delete the previous message (service details)
+    await query.message.delete()
+    
+    # Send a new message with the prompt and a "Back" ReplyKeyboard
+    await context.bot.send_message(
+        chat_id=query.message.chat_id,
+        text=text,
+        reply_markup=get_back_to_main_menu_keyboard(),
+        parse_mode=ParseMode.MARKDOWN
+    )
+    
     return PROMPT_FOR_DATA_AMOUNT
-
 
 async def calculate_price_and_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Calculates the price for the requested data and asks for confirmation."""
