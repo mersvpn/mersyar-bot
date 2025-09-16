@@ -1,97 +1,99 @@
-# FILE: shared/keyboards.py (COMPLETE AND CORRECT)
+# FILE: shared/keyboards.py (REVISED FOR I18N)
 
 from telegram import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
 from config import config
+# Import the translator
+from shared.translator import _
 
 # =============================================================================
-#  بخش کیبوردهای اصلی (ReplyKeyboardMarkup)
+#  ReplyKeyboardMarkup Section
 # =============================================================================
 
 def get_admin_main_menu_keyboard() -> ReplyKeyboardMarkup:
     keyboard = [
-        [KeyboardButton("👤 مدیریت کاربران")],
-        [KeyboardButton("📓 مدیریت یادداشت‌ها"), KeyboardButton("⚙️ تنظیمات و ابزارها")],
-        [KeyboardButton("📨 ارسال پیام"), KeyboardButton("💻 ورود به پنل کاربری")],
-        [KeyboardButton("📚 تنظیمات آموزش")]
+        [KeyboardButton(_("keyboards.admin_main_menu.user_management"))],
+        [KeyboardButton(_("keyboards.admin_main_menu.notes_management")), KeyboardButton(_("keyboards.admin_main_menu.settings_and_tools"))],
+        [KeyboardButton(_("keyboards.admin_main_menu.send_message")), KeyboardButton(_("keyboards.admin_main_menu.customer_panel_view"))],
+        [KeyboardButton(_("keyboards.admin_main_menu.guides_settings"))]
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
 def get_user_management_keyboard() -> ReplyKeyboardMarkup:
     keyboard = [
-        [KeyboardButton("👥 نمایش کاربران"), KeyboardButton("⌛️ کاربران رو به اتمام")],
-        [KeyboardButton("🔎 جستجوی کاربر"), KeyboardButton("➕ افزودن کاربر")],
-        [KeyboardButton("🔙 بازگشت به منوی اصلی")]
+        [KeyboardButton(_("keyboards.user_management.show_users")), KeyboardButton(_("keyboards.user_management.expiring_users"))],
+        [KeyboardButton(_("keyboards.user_management.search_user")), KeyboardButton(_("keyboards.user_management.add_user"))],
+        [KeyboardButton(_("keyboards.user_management.back_to_main_menu"))]
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
 def get_settings_and_tools_keyboard() -> ReplyKeyboardMarkup:
     keyboard = [
-        [KeyboardButton("🔐 مدیریت پنل مرزبان")],
-        [KeyboardButton("🔧 تنظیمات ربات"), KeyboardButton("💰 تنظیمات مالی")],
-        [KeyboardButton("📣 تنظیم کانال گزارش")],
-        [KeyboardButton("🛠️ ابزارهای کمکی"), KeyboardButton("📊 آمار ربات")],
-        [KeyboardButton("🔙 بازگشت به منوی اصلی")]
+        [KeyboardButton(_("keyboards.settings_and_tools.marzban_panel_management"))],
+        [KeyboardButton(_("keyboards.settings_and_tools.bot_settings")), KeyboardButton(_("keyboards.settings_and_tools.financial_settings"))],
+        [KeyboardButton(_("keyboards.settings_and_tools.set_log_channel"))],
+        [KeyboardButton(_("keyboards.settings_and_tools.helper_tools")), KeyboardButton(_("keyboards.settings_and_tools.bot_stats"))],
+        [KeyboardButton(_("keyboards.settings_and_tools.back_to_main_menu"))]
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
 def get_helper_tools_keyboard() -> ReplyKeyboardMarkup:
     keyboard = [
-        [KeyboardButton("⚙️ اتوماسیون روزانه"), KeyboardButton("⚙️ تنظیم کاربر الگو")],
-        [KeyboardButton("🔗 ایجاد لینک اتصال")],
-        [KeyboardButton("🔙 بازگشت به تنظیمات")]
+        [KeyboardButton(_("keyboards.helper_tools.daily_automation")), KeyboardButton(_("keyboards.helper_tools.set_template_user"))],
+        [KeyboardButton(_("keyboards.helper_tools.create_connect_link"))],
+        [KeyboardButton(_("keyboards.helper_tools.back_to_settings"))]
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
 def get_customer_main_menu_keyboard() -> ReplyKeyboardMarkup:
     keyboard_layout = [
-        [KeyboardButton("🛍️فــــــــــروشـــــــــــگاه")],
-        [KeyboardButton("📊ســـــــــــرویس‌های من"), KeyboardButton("📱 راهــــــــــنمای اتصال")]
+        [KeyboardButton(_("keyboards.customer_main_menu.shop"))],
+        [KeyboardButton(_("keyboards.customer_main_menu.my_services")), KeyboardButton(_("keyboards.customer_main_menu.connection_guide"))]
     ]
     if config.SUPPORT_USERNAME:
-        keyboard_layout.append([KeyboardButton("💬 پشتیبانی")])
+        keyboard_layout.append([KeyboardButton(_("keyboards.customer_main_menu.support"))])
     return ReplyKeyboardMarkup(keyboard_layout, resize_keyboard=True)
 
 def get_customer_shop_keyboard() -> ReplyKeyboardMarkup:
     keyboard = [
-        [KeyboardButton("👨‍💻 ساخت اشتراک توسط پشتیبانی")],
-        [KeyboardButton("♻️ اشتراک با حجم دلخواه"), KeyboardButton("💎 اشتراک با حجم نامحدود")],
-        [KeyboardButton("🧾 ارسال رسید پرداخت")],
-        [KeyboardButton("🔙 بازگشت به منوی اصلی")]
+        [KeyboardButton(_("keyboards.customer_shop.assisted_purchase"))],
+        [KeyboardButton(_("keyboards.customer_shop.custom_volume_plan")), KeyboardButton(_("keyboards.customer_shop.unlimited_volume_plan"))],
+        [KeyboardButton(_("keyboards.customer_shop.send_receipt"))],
+        [KeyboardButton(_("keyboards.customer_shop.back_to_main_menu"))]
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
 def get_back_to_main_menu_keyboard() -> ReplyKeyboardMarkup:
     keyboard = [
-        [KeyboardButton("🔙 بازگشت به منوی اصلی")]
+        [KeyboardButton(_("keyboards.general.back_to_main_menu"))]
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
 def get_customer_view_for_admin_keyboard() -> ReplyKeyboardMarkup:
     keyboard_layout = [
-        [KeyboardButton("🛍️فــــــــــروشـــــــــــگاه")],
-        [KeyboardButton("📊ســـــــــــرویس‌های من"), KeyboardButton("📱 راهــــــــــنمای اتصال")]
+        [KeyboardButton(_("keyboards.customer_main_menu.shop"))],
+        [KeyboardButton(_("keyboards.customer_main_menu.my_services")), KeyboardButton(_("keyboards.customer_main_menu.connection_guide"))]
     ]
     if config.SUPPORT_USERNAME:
-        keyboard_layout.append([KeyboardButton("💬 پشتیبانی")])
-    keyboard_layout.append([KeyboardButton("↩️ بازگشت به پنل ادمین")])
+        keyboard_layout.append([KeyboardButton(_("keyboards.customer_main_menu.support"))])
+    keyboard_layout.append([KeyboardButton(_("keyboards.general.back_to_admin_panel"))])
     return ReplyKeyboardMarkup(keyboard_layout, resize_keyboard=True)
 
 def get_notes_management_keyboard() -> ReplyKeyboardMarkup:
     keyboard = [
-        [KeyboardButton("🗒️ یادداشت‌های روزانه"), KeyboardButton("👤 اشتراک‌های ثبت‌شده")],
-        [KeyboardButton("🔙 بازگشت به منوی اصلی")]
+        [KeyboardButton(_("keyboards.notes_management.daily_notes")), KeyboardButton(_("keyboards.notes_management.registered_subscriptions"))],
+        [KeyboardButton(_("keyboards.notes_management.back_to_main_menu"))]
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
 def get_financial_settings_keyboard() -> ReplyKeyboardMarkup:
     keyboard = [
-        [KeyboardButton("💳 تنظیمات پرداخت"), KeyboardButton("📊 مدیریت پلن‌های فروش")],
-        [KeyboardButton("🔙 بازگشت به تنظیمات")]
+        [KeyboardButton(_("keyboards.financial_settings.payment_settings")), KeyboardButton(_("keyboards.financial_settings.sales_plan_management"))],
+        [KeyboardButton(_("keyboards.financial_settings.back_to_settings"))]
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
 # =============================================================================
-#  بخش کیبوردهای شیشه‌ای (InlineKeyboardMarkup)
+#  InlineKeyboardMarkup Section (Unchanged, but good to keep for context)
 # =============================================================================
 
 def get_payment_methods_keyboard() -> InlineKeyboardMarkup:

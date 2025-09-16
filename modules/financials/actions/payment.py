@@ -281,10 +281,8 @@ async def send_manual_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE
         LOGGER.error(f"Failed to send manual invoice for user {username}: {e}", exc_info=True)
         await context.bot.send_message(admin_chat_id, f"❌ **خطای ناشناخته**.", parse_mode=ParseMode.MARKDOWN)
 
-# --- FIX: تابع approve_payment اصلاح شد تا در انتها منوی اصلی صحیح را نمایش دهد ---
 async def approve_payment(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    from database.db_manager import save_subscription_note
-
+    # No need to import save_subscription_note here, it's handled inside the logic
     query = update.callback_query
     admin_user = update.effective_user
     await query.answer("⏳ در حال پردازش تاییدیه...")
@@ -313,6 +311,8 @@ async def approve_payment(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     from modules.marzban.actions.api import get_user_data
     existing_user = await get_user_data(marzban_username)
 
+    # This block handles payments for users that already exist (e.g., manual invoices)
+    # It will now be skipped if the user does not exist.
     if existing_user and "error" not in existing_user:
         LOGGER.info(f"User '{marzban_username}' already exists. Confirming payment for invoice #{invoice_id}.")
         await update_invoice_status(invoice_id, 'approved')
@@ -330,99 +330,116 @@ async def approve_payment(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                                             f"(توسط: {admin_user.full_name})",
             parse_mode=ParseMode.MARKDOWN
         )
-        await send_main_menu(update, context, message_text="پرداخت با موفقیت تایید شد.")
+        return # End execution here as no new user needs to be created
 
+    # This block handles creation of a new user
+    LOGGER.info(f"User '{marzban_username}' not found. Creating new user for invoice #{invoice_id}.")
+    
+    # ✨✨✨ KEY FIX HERE ✨✨✨
+    # Correctly define all variables from plan_details at the beginning of the block
+    plan_type = plan_details.get("plan_type")
+    duration_days = plan_details.get('duration')
+    price = plan_details.get('price')
+    max_ips = plan_details.get('max_ips') 
+
+    if plan_type == "unlimited":
+        data_limit_gb = 0
     else:
-        LOGGER.info(f"User '{marzban_username}' not found. Creating new user for invoice #{invoice_id}.")
-        
         data_limit_gb = plan_details.get('volume')
-        duration_days = plan_details.get('duration')
-        price = plan_details.get('price')
-        max_ips = plan_details.get('max_ips') 
 
-        if not all([data_limit_gb is not None, duration_days is not None, price is not None]):
-            LOGGER.error(f"Invoice #{invoice_id} has incomplete plan_details: {plan_details}")
-            await query.edit_message_caption(caption=query.message.caption + "\n\n❌ **خطا:** اطلاعات پلن در فاکتور ناقص است.")
-            return
+    if not all([data_limit_gb is not None, duration_days is not None, price is not None]):
+        LOGGER.error(f"Invoice #{invoice_id} has incomplete plan_details for user creation: {plan_details}")
+        await query.edit_message_caption(caption=query.message.caption + "\n\n❌ **خطا:** اطلاعات پلن در فاکتور برای ساخت کاربر ناقص است.")
+        return
 
-        try:
-            new_user_data = await create_marzban_user_from_template(
-                data_limit_gb=data_limit_gb, 
-                expire_days=duration_days,
-                username=marzban_username,
-                max_ips=max_ips
-            )
-            if not new_user_data or 'username' not in new_user_data:
-                raise Exception("Failed to create user in Marzban, received empty response.")
-        except Exception as e:
-            LOGGER.error(f"Failed to create Marzban user for invoice #{invoice_id}: {e}", exc_info=True)
-            await query.edit_message_caption(caption=query.message.caption + "\n\n❌ **خطا در ساخت کاربر در مرزبان.**")
-            return
-        
-        # This part for saving note is not strictly necessary for unlimited plans but good for consistency
-        # try:
-        #     await save_subscription_note(
-        #         username=marzban_username,
-        #         duration=duration_days,
-        #         price=price,
-        #         data_limit_gb=data_limit_gb
-        #     )
-        #     LOGGER.info(f"Successfully saved subscription note for new user '{marzban_username}'.")
-        # except Exception as e:
-        #     LOGGER.error(f"CRITICAL: Failed to save subscription note for '{marzban_username}' after creation: {e}", exc_info=True)
-        
-        await link_user_to_telegram(marzban_username, customer_id)
-        await update_invoice_status(invoice_id, 'approved')
-        
-        try:
-            subscription_url = new_user_data.get('subscription_url')
-            if subscription_url:
-                qr_image = qrcode.make(subscription_url)
-                bio = io.BytesIO()
-                bio.name = 'qrcode.png'
-                qr_image.save(bio, 'PNG')
-                bio.seek(0)
-
-                volume_text = "نامحدود" if plan_details.get("plan_type") == "unlimited" else f"{data_limit_gb} گیگابایت"
-                user_limit_text = f"\n👥 **تعداد کاربر:** {max_ips} دستگاه همزمان" if max_ips else ""
-
-                caption = (
-                    "🎉 **اشتراک شما با موفقیت فعال شد!**\n\n"
-                    f"👤 **نام کاربری:** `{marzban_username}`\n"
-                    f"📦 **حجم:** {volume_text}\n"
-                    f"🗓️ **مدت:** {duration_days} روز{user_limit_text}\n\n"
-                    "👇 **برای اتصال از روش‌های زیر استفاده کنید:**\n\n"
-                    "1️⃣ **اسکن QR کد:**\n"
-                    "کد QR بالا را با برنامه خود اسکن کنید.\n\n"
-                    "2️⃣ **کپی لینک** (روی لینک زیر کلیک کنید تا کپی شود):\n"
-                    f"`{subscription_url}`"
-                )
-                
-                await context.bot.send_photo(
-                    chat_id=customer_id,
-                    photo=bio,
-                    caption=caption,
-                    parse_mode=ParseMode.MARKDOWN
-                )
-            else:
-                fallback_message = (
-                    "✅ پرداخت شما تایید شد و سرویس جدیدتان با موفقیت ساخته شد!\n\n"
-                    f"👤 **نام کاربری:** `{marzban_username}`\n"
-                    "⚠️ متاسفانه لینک اتصال خودکار ساخته نشد. لطفاً از ادمین درخواست کنید."
-                )
-                await context.bot.send_message(
-                    chat_id=customer_id, text=fallback_message, parse_mode=ParseMode.MARKDOWN
-                )
-        except Exception as e:
-            LOGGER.error(f"Failed to send success message/photo to customer {customer_id} for invoice #{invoice_id}: {e}", exc_info=True)
-        
-        final_caption = query.message.caption + (
-            f"\n\n**✅ پرداخت تایید و سرویس `{marzban_username}` با موفقیت ساخته شد.**\n"
-            f"(توسط: {admin_user.full_name})"
+    try:
+        new_user_data = await create_marzban_user_from_template(
+            data_limit_gb=data_limit_gb, 
+            expire_days=duration_days,
+            username=marzban_username,
+            max_ips=max_ips
         )
-        await query.edit_message_caption(caption=final_caption, parse_mode=ParseMode.MARKDOWN)
-        
-        await send_main_menu(update, context, message_text="سرویس جدید با موفقیت برای کاربر فعال شد.")
+        if not new_user_data or 'username' not in new_user_data:
+            raise Exception("Failed to create user in Marzban, received empty response.")
+    except Exception as e:
+        LOGGER.error(f"Failed to create Marzban user for invoice #{invoice_id}: {e}", exc_info=True)
+        await query.edit_message_caption(caption=query.message.caption + "\n\n❌ **خطا در ساخت کاربر در مرزبان.**")
+        return
+    
+    # Now the condition will work correctly
+    if price > 0 and duration_days > 0:
+        from database.db_manager import save_subscription_note
+        try:
+            await save_subscription_note(
+                username=marzban_username,
+                duration=duration_days,
+                price=price,
+                data_limit_gb=data_limit_gb
+            )
+            LOGGER.info(f"Successfully saved subscription note for new user '{marzban_username}'.")
+        except Exception as e:
+            LOGGER.error(f"CRITICAL: Failed to save subscription note for '{marzban_username}' after creation: {e}", exc_info=True)
+    
+    # ... The rest of the function remains the same ...
+    await link_user_to_telegram(marzban_username, customer_id)
+    await update_invoice_status(invoice_id, 'approved')
+    
+    try:
+
+        subscription_url = new_user_data.get('subscription_url')
+        if subscription_url:
+            qr_image = qrcode.make(subscription_url)
+            bio = io.BytesIO()
+            bio.name = 'qrcode.png'
+            qr_image.save(bio, 'PNG')
+            bio.seek(0)
+
+            volume_text = "نامحدود" if plan_type == "unlimited" else f"{data_limit_gb} گیگابایت"
+            user_limit_text = f"\n👥 **تعداد کاربر:** {max_ips} دستگاه همزمان" if max_ips else ""
+
+            caption = (
+                "🎉 **اشتراک شما با موفقیت فعال شد!**\n\n"
+                f"👤 **نام کاربری:** `{marzban_username}`\n"
+                f"📦 **حجم:** {volume_text}\n"
+                f"🗓️ **مدت:** {duration_days} روز{user_limit_text}\n\n"
+                "👇 **برای اتصال از روش‌های زیر استفاده کنید:**\n\n"
+                "1️⃣ **اسکن QR کد:**\n"
+                "کد QR بالا را با برنامه خود اسکن کنید.\n\n"
+                "2️⃣ **کپی لینک** (روی لینک زیر کلیک کنید تا کپی شود):\n"
+                f"`{subscription_url}`"
+            )
+            
+            await context.bot.send_photo(
+                chat_id=customer_id,
+                photo=bio,
+                caption=caption,
+                parse_mode=ParseMode.MARKDOWN
+            )
+        else:
+            fallback_message = (
+                "✅ پرداخت شما تایید شد و سرویس جدیدتان با موفقیت ساخته شد!\n\n"
+                f"👤 **نام کاربری:** `{marzban_username}`\n"
+                "⚠️ متاسفانه لینک اتصال خودکار ساخته نشد. لطفاً از ادمین درخواست کنید."
+            )
+            await context.bot.send_message(
+                chat_id=customer_id, text=fallback_message, parse_mode=ParseMode.MARKDOWN
+            )
+    except Exception as e:
+        LOGGER.error(f"Failed to send success message/photo to customer {customer_id} for invoice #{invoice_id}: {e}", exc_info=True)
+    
+    final_caption = query.message.caption + (
+        f"\n\n**✅ پرداخت تایید و سرویس `{marzban_username}` با موفقیت ساخته شد.**\n"
+        f"(توسط: {admin_user.full_name})"
+    )
+    await query.edit_message_caption(caption=final_caption, parse_mode=ParseMode.MARKDOWN)
+    
+    # Using `send_message` instead of `send_main_menu` for admin confirmation
+    await context.bot.send_message(
+        chat_id=update.effective_chat.id,
+        text="سرویس جدید با موفقیت برای کاربر فعال شد.",
+        reply_markup=get_admin_main_menu_keyboard()
+    )
+
 async def reject_payment(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     pass
 

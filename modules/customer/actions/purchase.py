@@ -1,16 +1,13 @@
-# FILE: modules/customer/actions/purchase.py (REVISED AND CORRECTED)
+# FILE: modules/customer/actions/purchase.py (REVISED FOR I18N)
 
 import logging
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import ContextTypes, ConversationHandler
 from telegram.constants import ParseMode
 from telegram.helpers import escape_markdown
-
 from config import config
-from shared.keyboards import (
-    get_back_to_main_menu_keyboard,
-    get_customer_shop_keyboard 
-)
+from shared.keyboards import get_back_to_main_menu_keyboard, get_customer_shop_keyboard
+from shared.translator import _
 
 LOGGER = logging.getLogger(__name__)
 
@@ -21,20 +18,16 @@ async def start_purchase(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     Starts the purchase conversation and presents confirmation buttons.
     """
     keyboard = [
-        [InlineKeyboardButton("✅ بله، درخواست را ارسال کن", callback_data="confirm_purchase_request")],
-        [InlineKeyboardButton("❌ خیر، بازگشت به فروشگاه", callback_data="back_to_shop_menu")]
+        [InlineKeyboardButton(_("buttons.confirm_purchase_request"), callback_data="confirm_purchase_request")],
+        [InlineKeyboardButton(_("buttons.back_to_shop_menu"), callback_data="back_to_shop_menu")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    text = "آیا از درخواست خرید اشتراک جدید اطمینان دارید؟"
+    text = _("manual_purchase.confirm_request")
 
-    await update.message.reply_text(
-        text=text, 
-        reply_markup=reply_markup
-    )
+    await update.message.reply_text(text=text, reply_markup=reply_markup)
     
-    # Send another message to change the reply keyboard for the duration of the conversation
     await update.message.reply_text(
-        "برای لغو کلی و بازگشت به منوی اصلی از دکمه زیر استفاده کنید.",
+        _("manual_purchase.cancellation_prompt"),
         reply_markup=get_back_to_main_menu_keyboard()
     )
 
@@ -48,25 +41,20 @@ async def confirm_purchase(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     await query.answer()
     user = update.effective_user
 
-    await query.edit_message_text(
-        "✅ درخواست شما برای خرید اشتراک با موفقیت برای ادمین ارسال شد.\n\n"
-        "لطفاً منتظر بمانید، به زودی با شما تماس گرفته خواهد شد."
-    )
+    await query.edit_message_text(_("manual_purchase.request_sent_success"))
 
     if config.AUTHORIZED_USER_IDS:
         safe_full_name = escape_markdown(user.full_name, version=2)
         user_info = f"کاربر {safe_full_name}"
         if user.username:
             safe_username = escape_markdown(user.username, version=2)
-            user_info += f" \(@{safe_username}\)"
+            user_info += f" \\(@{safe_username}\\)"
         user_info += f"\nUser ID: `{user.id}`"
-        message_to_admin = (
-            f"🔔 *درخواست خرید جدید* 🔔\n\n"
-            f"{user_info}\n\n"
-            "این کاربر قصد خرید اشتراک جدید را دارد\."
-        )
+        
+        message_to_admin = _("manual_purchase.admin_notification", user_info=user_info)
+
         admin_keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("➕ ساخت کانفیگ برای این کاربر", callback_data=f"create_user_for_{user.id}")]
+            [InlineKeyboardButton(_("buttons.create_config_for_user"), callback_data=f"create_user_for_{user.id}")]
         ])
 
         for admin_id in config.AUTHORIZED_USER_IDS:
@@ -83,18 +71,15 @@ async def confirm_purchase(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 async def back_to_shop_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """
     Handles the 'back_to_shop_menu' callback.
-    Deletes the inline message and sends a new message with the shop keyboard.
     """
     query = update.callback_query
     await query.answer()
     
-    # Delete the confirmation message to clean up the chat
     await query.message.delete()
     
-    # Send a new message to restore the shop keyboard
     await context.bot.send_message(
         chat_id=update.effective_chat.id,
-        text="به فروشگاه بازگشتید.",
+        text=_("manual_purchase.back_to_shop"),
         reply_markup=get_customer_shop_keyboard()
     )
     
@@ -104,10 +89,7 @@ async def handle_support_button(update: Update, context: ContextTypes.DEFAULT_TY
     if config.SUPPORT_USERNAME:
         clean_username = config.SUPPORT_USERNAME.lstrip('@')
         support_link = f"https://t.me/{clean_username}"
-        message = (
-            "برای ارتباط با تیم پشتیبانی و دریافت راهنمایی، لطفاً روی لینک زیر کلیک کنید:\n\n"
-            f"➡️ **[@{clean_username}]({support_link})** ⬅️"
-        )
+        message = _("manual_purchase.support_prompt", username=clean_username, support_link=support_link)
         await update.message.reply_text(message, parse_mode=ParseMode.MARKDOWN, disable_web_page_preview=True)
     else:
-        await update.message.reply_text("متاسفانه در حال حاضر امکان ارتباط با پشتیبانی وجود ندارد.")
+        await update.message.reply_text(_("manual_purchase.support_unavailable"))

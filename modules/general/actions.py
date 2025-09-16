@@ -1,4 +1,4 @@
-# FILE: modules/general/actions.py (COMPLETE, MERGED, AND FINAL VERSION)
+# FILE: modules/general/actions.py (REVISED FOR I18N)
 
 import logging
 from telegram import Update
@@ -7,15 +7,17 @@ from telegram.constants import ParseMode
 from database import db_manager
 from config import config
 
-from modules.marzban.actions.data_manager import link_user_to_telegram, normalize_username
-from modules.marzban.actions.api import get_user_data
-
+# Import the new translator function
+from shared.translator import _
 from shared.keyboards import (
     get_customer_main_menu_keyboard,
     get_admin_main_menu_keyboard,
     get_customer_view_for_admin_keyboard
 )
 from modules.auth import admin_only
+from modules.marzban.actions.data_manager import link_user_to_telegram, normalize_username
+from modules.marzban.actions.api import get_user_data
+
 
 LOGGER = logging.getLogger(__name__)
 
@@ -27,17 +29,18 @@ async def send_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, mes
     user = update.effective_user
     
     if not message_text:
-        message_text = f"سلام {user.first_name} عزیز!\nبه ربات ما خوش آمدید."
+        # Using the translator
+        message_text = _("general.welcome", first_name=user.first_name)
 
     if user.id in config.AUTHORIZED_USER_IDS and not context.user_data.get('is_admin_in_customer_view'):
         reply_markup = get_admin_main_menu_keyboard()
-        message_text += "\n\nداشبورد مدیریتی برای شما فعال است."
+        message_text += _("general.admin_dashboard_active")
     else:
         if context.user_data.get('is_admin_in_customer_view'):
             reply_markup = get_customer_view_for_admin_keyboard()
         else:
             reply_markup = get_customer_main_menu_keyboard()
-        message_text += "\n\nبرای شروع، می‌توانید از دکمه‌های زیر استفاده کنید."
+        message_text += _("general.customer_dashboard_prompt")
 
     target_message = update.effective_message
     if update.callback_query:
@@ -50,7 +53,7 @@ async def send_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, mes
         await target_message.reply_text(message_text, reply_markup=reply_markup)
 
 # =============================================================================
-#  Core Action Functions (ALL ORIGINAL FUNCTIONS ARE PRESERVED)
+#  Core Action Functions
 # =============================================================================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -58,14 +61,15 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     try:
         await db_manager.add_or_update_user(user)
     except Exception as e:
-        LOGGER.error(f"Failed to save user {user.id} to the database: {e}")
+        log_message = _("errors.db_user_save_failed", user_id=user.id, error=e)
+        LOGGER.error(log_message)
     await send_main_menu(update, context)
 
 @admin_only
 async def switch_to_customer_view(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     context.user_data['is_admin_in_customer_view'] = True
     await update.message.reply_text(
-        "✅ شما اکنون در **نمای کاربری** هستید.",
+        _("views.switched_to_customer"),
         reply_markup=get_customer_view_for_admin_keyboard(), parse_mode=ParseMode.MARKDOWN
     )
 
@@ -73,7 +77,7 @@ async def switch_to_customer_view(update: Update, context: ContextTypes.DEFAULT_
 async def switch_to_admin_view(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     context.user_data.pop('is_admin_in_customer_view', None)
     await update.message.reply_text(
-        "✅ شما به **پنل ادمین** بازگشتید.",
+        _("views.switched_to_admin"),
         reply_markup=get_admin_main_menu_keyboard(), parse_mode=ParseMode.MARKDOWN
     )
     
@@ -83,7 +87,8 @@ async def handle_user_linking(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 async def show_my_id(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
-    await update.message.reply_text(f"Your Telegram User ID is:\n`{user_id}`", parse_mode=ParseMode.MARKDOWN)
+    message_text = _("general.your_telegram_id", user_id=user_id)
+    await update.message.reply_text(message_text, parse_mode=ParseMode.MARKDOWN)
 
 # =============================================================================
 #  Reusable Conversation Ending Functions
@@ -93,7 +98,7 @@ async def end_conversation_and_show_menu(update: Update, context: ContextTypes.D
     """Standard function to end a conversation triggered by 'Back to main menu'."""
     LOGGER.info(f"--- Fallback triggered for user {update.effective_user.id}. Ending conversation. ---")
     context.user_data.clear()
-    await send_main_menu(update, context, message_text="عملیات لغو شد. به منوی اصلی بازگشتید.")
+    await send_main_menu(update, context, message_text=_("general.operation_cancelled"))
     return ConversationHandler.END
 
 async def end_conv_and_reroute(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -103,7 +108,8 @@ async def end_conv_and_reroute(update: Update, context: ContextTypes.DEFAULT_TYP
     """
     # Import locally to prevent circular import errors
     from modules.customer.actions import panel, service, guide
-
+    # NOTE: Text for buttons is in keyboards.py and will be handled separately.
+    # This logic remains the same.
     text = update.message.text
     LOGGER.info(f"--- Main menu override for user {update.effective_user.id} by '{text}'. Ending conversation. ---")
     
@@ -115,9 +121,8 @@ async def end_conv_and_reroute(update: Update, context: ContextTypes.DEFAULT_TYP
     elif 'راهنمای اتصال' in text:
         await guide.handle_customer_guide(update, context)
     else: 
-        await start(update, context) # Fallback to the main menu if no specific button is matched
+        await start(update, context)
     
-    # Crucially, end the conversation state
     return ConversationHandler.END
 
 async def handle_deep_link(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -128,7 +133,6 @@ async def handle_deep_link(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     user = update.effective_user
     args = context.args
 
-    # Check if the /start command has a payload (e.g., /start link-some_username)
     if args and len(args) > 0 and args[0].startswith("link-"):
         marzban_username_raw = args[0].split('-', 1)[1]
         marzban_username_normalized = normalize_username(marzban_username_raw)
@@ -136,29 +140,22 @@ async def handle_deep_link(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
         LOGGER.info(f"User {telegram_user_id} started bot with deep link for Marzban user '{marzban_username_raw}'.")
         
-        # Check if the Marzban user exists
         marzban_user_data = await get_user_data(marzban_username_normalized)
         if not marzban_user_data or "error" in marzban_user_data:
-            await update.message.reply_text("❌ متاسفانه حساب کاربری مرزبانی که با آن لینک شده‌اید، یافت نشد.")
-            # Show the main menu as a fallback
+            await update.message.reply_text(_("linking.user_not_found"))
             await start(update, context)
             return
 
-        # Link the user in the database
         success = await link_user_to_telegram(marzban_username_normalized, telegram_user_id)
 
         if success:
             await update.message.reply_text(
-                f"✅ حساب کاربری مرزبان شما (`{marzban_username_raw}`) با موفقیت به حساب تلگرام شما متصل شد!\n\n"
-                "اکنون می‌توانید از دکمه «📊ســـــــــــرویس‌های من» برای مشاهده وضعیت سرویس خود استفاده کنید.",
+                _("linking.link_successful", username=marzban_username_raw),
                 parse_mode=ParseMode.MARKDOWN
             )
         else:
-            await update.message.reply_text("❌ خطایی در اتصال حساب شما رخ داد. لطفاً با پشتیبانی تماس بگیرید.")
+            await update.message.reply_text(_("linking.link_error"))
         
-        # Finally, show the main menu
         await start(update, context)
-
     else:
-        # If there's no deep link, just run the normal start process
         await start(update, context)

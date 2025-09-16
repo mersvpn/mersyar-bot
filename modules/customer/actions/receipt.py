@@ -1,11 +1,8 @@
-# FILE: modules/customer/actions/receipt.py (FINAL, DUAL-ENTRY VERSION)
+# FILE: modules/customer/actions/receipt.py (REVISED FOR I18N)
 
 import logging
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardRemove
-from telegram.ext import (
-    ContextTypes, ConversationHandler, CallbackQueryHandler,
-    MessageHandler, filters
-)
+from telegram.ext import ContextTypes, ConversationHandler, CallbackQueryHandler, MessageHandler, filters
 from telegram.constants import ParseMode
 from telegram.error import BadRequest
 
@@ -13,101 +10,88 @@ from config import config
 from database.db_manager import get_pending_invoices_for_user
 from shared.keyboards import get_customer_shop_keyboard
 from modules.general.actions import end_conversation_and_show_menu
+from shared.translator import _
 
 LOGGER = logging.getLogger(__name__)
 
-# --- Conversation States ---
 CHOOSE_INVOICE, GET_RECEIPT_PHOTO = range(2)
 
-# --- Entry Point 1: From Text Button (User has multiple invoices) ---
 async def start_receipt_from_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Starts the receipt upload process when user clicks the text button in the shop menu."""
     user_id = update.effective_user.id
-    
-    processing_message = await update.message.reply_text("در حال بررسی فاکتورهای شما...", reply_markup=ReplyKeyboardRemove())
+    processing_message = await update.message.reply_text(_("receipt.checking_invoices"), reply_markup=ReplyKeyboardRemove())
     
     pending_invoices = await get_pending_invoices_for_user(user_id)
     await processing_message.delete()
 
     if not pending_invoices:
-        await update.message.reply_text("شما هیچ فاکتور پرداخت نشده‌ای ندارید.", reply_markup=get_customer_shop_keyboard())
+        await update.message.reply_text(_("receipt.no_pending_invoices"), reply_markup=get_customer_shop_keyboard())
         return ConversationHandler.END
 
-    # If user has only one invoice, go straight to asking for a photo
     if len(pending_invoices) == 1:
         invoice = pending_invoices[0]
         context.user_data['invoice_id'] = invoice['invoice_id']
-        keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("❌ لغو عملیات", callback_data="cancel_receipt_upload")]])
+        keyboard = InlineKeyboardMarkup([[InlineKeyboardButton(_("buttons.cancel_operation"), callback_data="cancel_receipt_upload")]])
         await update.message.reply_text(
-            text=f"🧾 شما یک فاکتور به مبلغ `{invoice['price']:,}` تومان دارید.\n\n"
-                 f"لطفاً تصویر واضح از رسید پرداخت خود را ارسال کنید.",
+            text=_("receipt.single_invoice_prompt", price=invoice['price']),
             reply_markup=keyboard, parse_mode=ParseMode.MARKDOWN
         )
         return GET_RECEIPT_PHOTO
     
-    # If user has multiple invoices, ask them to choose one
     else:
         buttons = []
-        text = "شما چندین فاکتور پرداخت نشده دارید. لطفاً انتخاب کنید که این رسید برای کدام فاکتور است:\n\n"
+        text = _("receipt.multiple_invoices_prompt")
         for inv in pending_invoices:
             details = inv.get('plan_details', {})
-            btn_text = f"فاکتور #{inv['invoice_id']} - {details.get('volume','N/A')}GB/{details.get('duration','N/A')} روز - {inv.get('price', 0):,} تومان"
+            btn_text = _("receipt.invoice_button_format", 
+                         id=inv['invoice_id'], 
+                         volume=details.get('volume','N/A'), 
+                         duration=details.get('duration','N/A'), 
+                         price=inv.get('price', 0))
             buttons.append([InlineKeyboardButton(btn_text, callback_data=f"select_invoice_{inv['invoice_id']}")])
         
-        buttons.append([InlineKeyboardButton("❌ لغو عملیات", callback_data="cancel_receipt_upload")])
+        buttons.append([InlineKeyboardButton(_("buttons.cancel_operation"), callback_data="cancel_receipt_upload")])
         keyboard = InlineKeyboardMarkup(buttons)
         await update.message.reply_text(text=text, reply_markup=keyboard)
         return CHOOSE_INVOICE
 
-# --- Entry Point 2: From Inline Button (User has a specific invoice) ---
 async def start_receipt_from_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Starts the receipt upload process when user clicks the inline button under an invoice."""
     query = update.callback_query
-    user_id = update.effective_user.id
-    
     await query.answer()
 
-    # The invoice message itself contains the invoice ID in its text
     message_text = query.message.text
     try:
-        # Extract invoice ID from a line like "*شماره فاکتور: `123`*"
-        invoice_id = int(message_text.split("شماره فاکتور: `")[1].split("`")[0])
+        invoice_id_str = message_text.split("شماره فاکتور: `")[1].split("`")[0]
+        invoice_id = int(invoice_id_str)
         context.user_data['invoice_id'] = invoice_id
     except (IndexError, ValueError):
-        LOGGER.error(f"Could not parse invoice ID from message for user {user_id}.")
-        await query.edit_message_text("❌ خطا در شناسایی فاکتور. لطفاً از منوی فروشگاه اقدام کنید.")
+        LOGGER.error(f"Could not parse invoice ID from message for user {update.effective_user.id}.")
+        await query.edit_message_text(_("receipt.invoice_id_parse_error"))
         return ConversationHandler.END
 
-    LOGGER.info(f"User {user_id} started receipt upload for specific invoice #{invoice_id} from inline button.")
+    LOGGER.info(f"User {update.effective_user.id} started receipt upload for invoice #{invoice_id} from inline button.")
     
-    keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("❌ لغو عملیات", callback_data="cancel_receipt_upload")]])
-    # Edit the invoice message to ask for the photo
+    keyboard = InlineKeyboardMarkup([[InlineKeyboardButton(_("buttons.cancel_operation"), callback_data="cancel_receipt_upload")]])
     await query.edit_message_text(
-        text=f"{query.message.text}\n\n"
-             "✅ بسیار خب! لطفاً تصویر واضح از رسید پرداخت خود را برای این فاکتور ارسال کنید.",
+        text=_("receipt.photo_prompt_for_invoice", invoice_text=query.message.text),
         reply_markup=keyboard,
         parse_mode=ParseMode.MARKDOWN
     )
     return GET_RECEIPT_PHOTO
 
-
-# --- Subsequent Conversation States (Mostly Unchanged) ---
-
 async def select_invoice_for_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    # This function is now only called when the user starts from the main menu and has multiple invoices
     query = update.callback_query
     try:
         invoice_id = int(query.data.split('_')[-1])
     except (ValueError, IndexError):
-        await query.answer("خطای داخلی رخ داد.", show_alert=True)
+        await query.answer(_("errors.internal_error"), show_alert=True)
         return ConversationHandler.END
 
     context.user_data['invoice_id'] = invoice_id
     await query.answer()
     
-    keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("❌ لغو عملیات", callback_data="cancel_receipt_upload")]])
+    keyboard = InlineKeyboardMarkup([[InlineKeyboardButton(_("buttons.cancel_operation"), callback_data="cancel_receipt_upload")]])
     await query.edit_message_text(
-        text="✅ بسیار خب! لطفاً تصویر واضح از رسید پرداخت خود را ارسال کنید.",
+        text=_("receipt.photo_prompt_for_invoice", invoice_text="").split('\n\n')[1], # Get the second part
         reply_markup=keyboard
     )
     return GET_RECEIPT_PHOTO
@@ -118,52 +102,55 @@ async def handle_receipt_photo(update: Update, context: ContextTypes.DEFAULT_TYP
     invoice_id = context.user_data.get('invoice_id')
 
     if not invoice_id:
-        await update.message.reply_text("خطای داخلی رخ داد. لطفاً از ابتدا شروع کنید.", reply_markup=get_customer_shop_keyboard())
+        await update.message.reply_text(_("receipt.internal_error_start_over"), reply_markup=get_customer_shop_keyboard())
         return ConversationHandler.END
         
     from database.db_manager import get_pending_invoice
     invoice_details = await get_pending_invoice(invoice_id)
     if not invoice_details:
-        await update.message.reply_text("خطا: اطلاعات فاکتور شما یافت نشد.", reply_markup=get_customer_shop_keyboard())
+        await update.message.reply_text(_("receipt.invoice_info_not_found"), reply_markup=get_customer_shop_keyboard())
         return ConversationHandler.END
 
     plan = invoice_details.get('plan_details', {})
     price = invoice_details.get('price', 0)
-    # Safely get volume and duration with defaults
     volume = plan.get('volume', 'N/A')
     duration = plan.get('duration', 'N/A')
     
-    caption = (f"🧾 *رسید پرداخت جدید برای فاکتور #{invoice_id}*\n\n"
-               f"👤 *کاربر:* {user.full_name}\n"
-               f"🆔 *آیدی:* `{user.id}`\n"
-               f"-------------------------------------\n"
-               f"📦 *جزئیات پلن:*\n"
-               f"  - حجم: *{volume if volume != 999 else 'نامحدود'} گیگابایت*\n"
-               f"  - مدت: *{duration} روز*\n"
-               f"  - مبلغ: *{price:,} تومان*")
-
+    volume_str = _("receipt.unlimited_volume_label") if plan.get("plan_type") == "unlimited" else volume
+    
+    caption = _("receipt.admin_caption", 
+                invoice_id=invoice_id, 
+                full_name=user.full_name, 
+                user_id=f"`{user.id}`", 
+                volume=volume_str, 
+                duration=duration, 
+                price=price)
 
     plan_type = plan.get("plan_type")
 
+    # ✨✨✨ KEY FIX HERE ✨✨✨
+    # This logic now correctly routes all new service types (including unlimited)
+    # to the powerful `approve_receipt` handler. The manual confirmation is
+    # reserved ONLY for cases where volume/duration are literally zero (manual admin requests).
+
     if plan_type == "data_top_up":
-        approve_button_text = "✅ تایید و افزودن حجم"
+        approve_button_text = _("buttons.approve_data_top_up")
         approve_callback = f"approve_data_top_up_{invoice_id}"
-    elif plan_type == "unlimited" or (volume == 0 or duration == 0):
-        # This handles both unlimited plans and manual purchases
-        approve_button_text = "✅ تایید پرداخت"
-        approve_callback = f"confirm_manual_receipt_{invoice_id}"
-    else:
-        # This handles standard new service purchases
-        approve_button_text = "✅ تایید و ساخت سرویس"
+    # This covers custom plans, unlimited plans, and any other defined plan type
+    elif plan_type in ["custom", "unlimited"] or (isinstance(volume, int) and volume > 0 and isinstance(duration, int) and duration > 0):
+        approve_button_text = _("buttons.approve_and_create_service")
         approve_callback = f"approve_receipt_{invoice_id}"
+    else:
+        # This is now the fallback for truly manual payments where no service is being created
+        approve_button_text = _("buttons.approve_payment")
+        approve_callback = f"confirm_manual_receipt_{invoice_id}"
 
     keyboard = InlineKeyboardMarkup([
         [
             InlineKeyboardButton(approve_button_text, callback_data=approve_callback),
-            InlineKeyboardButton("❌ رد کردن", callback_data=f"reject_receipt_{invoice_id}")
+            InlineKeyboardButton(_("buttons.reject"), callback_data=f"reject_receipt_{invoice_id}")
         ]
     ])
-
 
     num_sent = 0
     for admin_id in config.AUTHORIZED_USER_IDS:
@@ -174,37 +161,32 @@ async def handle_receipt_photo(update: Update, context: ContextTypes.DEFAULT_TYP
             LOGGER.error(f"Failed to forward receipt for invoice #{invoice_id} to admin {admin_id}: {e}")
 
     if num_sent > 0:
-        await update.message.reply_text("✅ رسید شما با موفقیت برای پشتیبانی ارسال شد. منتظر تایید بمانید.", reply_markup=get_customer_shop_keyboard())
+        await update.message.reply_text(_("receipt.sent_to_support_success"), reply_markup=get_customer_shop_keyboard())
     else:
-        await update.message.reply_text("❌ خطا در ارسال رسید به پشتیبانی. لطفاً بعداً دوباره تلاش کنید.", reply_markup=get_customer_shop_keyboard())
+        await update.message.reply_text(_("receipt.sent_to_support_fail"), reply_markup=get_customer_shop_keyboard())
 
     context.user_data.clear()
     return ConversationHandler.END
 
 async def warn_for_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    await update.message.reply_text("❌ ورودی نامعتبر است. لطفاً **عکس رسید** را ارسال کنید یا عملیات را لغو نمایید.")
+    await update.message.reply_text(_("receipt.invalid_input_warning"))
     return GET_RECEIPT_PHOTO
 
 async def cancel_receipt_upload(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if update.callback_query:
         await update.callback_query.answer()
         try:
-            # Edit the message to show cancellation, don't just delete it.
-            await update.callback_query.edit_message_text("عملیات ارسال رسید لغو شد.")
+            await update.callback_query.edit_message_text(_("receipt.upload_cancelled"))
         except BadRequest:
             pass
     
-    # Send a new message to show the shop menu keyboard again.
-    await context.bot.send_message(chat_id=update.effective_chat.id, text="به منوی فروشگاه بازگشتید.", reply_markup=get_customer_shop_keyboard())
+    await context.bot.send_message(chat_id=update.effective_chat.id, text=_("receipt.back_to_shop_menu"), reply_markup=get_customer_shop_keyboard())
     context.user_data.clear()
     return ConversationHandler.END
 
-# --- The final ConversationHandler with DUAL entry points ---
 receipt_conv = ConversationHandler(
     entry_points=[
-        # Entry Point 1: From the text button in the shop menu
-        MessageHandler(filters.Regex('^🧾 ارسال رسید پرداخت$'), start_receipt_from_menu),
-        # Entry Point 2: From the inline button under an invoice
+        MessageHandler(filters.Regex(f'^{_("keyboards.customer_shop.send_receipt")}$'), start_receipt_from_menu),
         CallbackQueryHandler(start_receipt_from_invoice, pattern='^customer_send_receipt$')
     ],
     states={
@@ -216,7 +198,7 @@ receipt_conv = ConversationHandler(
     },
     fallbacks=[
         CallbackQueryHandler(cancel_receipt_upload, pattern='^cancel_receipt_upload$'),
-        MessageHandler(filters.Regex('^🔙 بازگشت به منوی اصلی$'), end_conversation_and_show_menu)
+        MessageHandler(filters.Regex(f'^{_("keyboards.general.back_to_main_menu")}$'), end_conversation_and_show_menu)
     ],
     conversation_timeout=600 
 )

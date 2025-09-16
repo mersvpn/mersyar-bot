@@ -1,4 +1,4 @@
-# FILE: modules/marzban/actions/note.py (REVISED)
+# FILE: modules/marzban/actions/note.py (REVISED FOR I18N)
 import math
 import logging
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
@@ -8,133 +8,117 @@ from telegram.helpers import escape_markdown
 
 from .data_manager import normalize_username
 from shared.keyboards import get_user_management_keyboard
-# V V V V V THE FIX IS HERE (IMPORTS) V V V V V
 from modules.general.actions import end_conversation_and_show_menu
-# ^ ^ ^ ^ ^ THE FIX IS HERE (IMPORTS) ^ ^ ^ ^ ^
 from .api import get_all_users as get_all_marzban_users
 
 LOGGER = logging.getLogger(__name__)
 
-# وضعیت‌های جدید برای مکالمه
 GET_DURATION, GET_DATA_LIMIT, GET_PRICE = range(3)
 USERS_PER_PAGE = 10
 
 async def prompt_for_note_details(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    from shared.translator import _
     from database.db_manager import get_user_note
 
     query = update.callback_query
     await query.answer()
-    username_raw = query.data.split('_', 1)[1]
-    username = normalize_username(username_raw)
+    username = normalize_username(query.data.split('_', 1)[1])
     context.user_data['note_username'] = username
     context.user_data['note_details'] = {}
     
     current_note = await get_user_note(username)
-    current_duration = current_note.get('subscription_duration', 'تعیین نشده') if current_note else 'تعیین نشده'
-    current_datalimit = current_note.get('subscription_data_limit_gb', 'تعیین نشده') if current_note else 'تعیین نشده'
-    current_price = f"{current_note.get('subscription_price', 0):,}" if current_note and current_note.get('subscription_price') is not None else 'تعیین نشده'
+    undefined_str = _("marzban_note.undefined")
+    current_duration = current_note.get('subscription_duration', undefined_str) if current_note else undefined_str
+    current_datalimit = current_note.get('subscription_data_limit_gb', undefined_str) if current_note else undefined_str
+    current_price = f"{current_note.get('subscription_price', 0):,}" if current_note and current_note.get('subscription_price') is not None else undefined_str
     username_md = escape_markdown(username, version=2)
 
-    message = (
-        f"✍️ *مدیریت اطلاعات اشتراک برای:* `{username_md}`\n\n"
-        f"▫️ **مدت فعلی:** {current_duration} روز\n"
-        f"▫️ **حجم فعلی:** {current_datalimit} GB\n"
-        f"▫️ **قیمت فعلی:** {current_price} تومان\n\n"
-        f"۱/۳: لطفاً **مدت زمان اشتراک** جدید را به **روز** وارد کنید \(مثال: 30\)\.\n"
-        f"برای لغو /cancel را بزنید\\."
-    )
+    message = _("marzban_note.title", username=username_md)
+    message += _("marzban_note.current_duration", duration=current_duration)
+    message += _("marzban_note.current_datalimit", datalimit=current_datalimit)
+    message += _("marzban_note.current_price", price=current_price)
+    message += _("marzban_note.step1_ask_duration")
+
     keyboard = []
     if current_note and any(current_note.values()):
-        keyboard.append([InlineKeyboardButton("🗑 حذف اطلاعات فعلی", callback_data=f"delete_note_{username}")])
+        keyboard.append([InlineKeyboardButton(_("marzban_note.button_delete_note"), callback_data=f"delete_note_{username}")])
 
-    await query.edit_message_text(
-        message, reply_markup=InlineKeyboardMarkup(keyboard) if keyboard else None, parse_mode=ParseMode.MARKDOWN_V2
-    )
+    await query.edit_message_text(message, reply_markup=InlineKeyboardMarkup(keyboard) if keyboard else None, parse_mode=ParseMode.MARKDOWN_V2)
     return GET_DURATION
 
 async def get_duration_and_ask_for_data_limit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    from shared.translator import _
     try:
         duration = int(update.message.text)
         if duration <= 0:
-            await update.message.reply_text("❌ مدت زمان باید یک عدد مثبت باشد.")
-            return GET_DURATION
+            await update.message.reply_text(_("marzban_note.duration_must_be_positive")); return GET_DURATION
     except (ValueError, TypeError):
-        await update.message.reply_text("❌ ورودی نامعتبر است. لطفاً فقط عدد وارد کنید.")
-        return GET_DURATION
+        await update.message.reply_text(_("marzban_note.invalid_number_input")); return GET_DURATION
         
     context.user_data['note_details']['subscription_duration'] = duration
-    await update.message.reply_text(
-        f"✅ مدت زمان: **{duration} روز** ثبت شد.\n\n"
-        f"۲/۳: حالا لطفاً **حجم اشتراک** را به **گیگابایت (GB)** وارد کنید (فقط عدد).", 
-        parse_mode=ParseMode.HTML
-    )
+    message = _("marzban_note.duration_saved", duration=duration) + _("marzban_note.step2_ask_datalimit")
+    await update.message.reply_text(message, parse_mode=ParseMode.HTML)
     return GET_DATA_LIMIT
 
 async def get_data_limit_and_ask_for_price(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    from shared.translator import _
     try:
         data_limit = int(update.message.text)
         if data_limit < 0:
-            await update.message.reply_text("❌ حجم نمی‌تواند منفی باشد.")
-            return GET_DATA_LIMIT
+            await update.message.reply_text(_("marzban_note.datalimit_cannot_be_negative")); return GET_DATA_LIMIT
     except (ValueError, TypeError):
-        await update.message.reply_text("❌ ورودی نامعتبر است. لطفاً فقط عدد وارد کنید.")
-        return GET_DATA_LIMIT
+        await update.message.reply_text(_("marzban_note.invalid_number_input")); return GET_DATA_LIMIT
         
     context.user_data['note_details']['subscription_data_limit_gb'] = data_limit
-    await update.message.reply_text(
-        f"✅ حجم: **{data_limit} GB** ثبت شد.\n\n"
-        f"۳/۳: در نهایت، **قیمت اشتراک** را به **تومان** وارد کنید (فقط عدد).", 
-        parse_mode=ParseMode.HTML
-    )
+    message = _("marzban_note.datalimit_saved", datalimit=data_limit) + _("marzban_note.step3_ask_price")
+    await update.message.reply_text(message, parse_mode=ParseMode.HTML)
     return GET_PRICE
 
 async def get_price_and_save_note(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    from shared.translator import _
     from database.db_manager import save_user_note
 
     username = context.user_data.get('note_username')
-    # V V V V V THE FIX IS HERE (FUNCTION CALL) V V V V V
     if not username: return await end_conversation_and_show_menu(update, context)
-    # ^ ^ ^ ^ ^ THE FIX IS HERE (FUNCTION CALL) ^ ^ ^ ^ ^
+    
     try:
         price = int(update.message.text)
         if price < 0:
-            await update.message.reply_text("❌ قیمت نمی‌تواند منفی باشد.")
-            return GET_PRICE
+            await update.message.reply_text(_("marzban_note.price_cannot_be_negative")); return GET_PRICE
     except (ValueError, TypeError):
-        await update.message.reply_text("❌ ورودی نامعتبر است. لطفاً فقط عدد وارد کنید.")
-        return GET_PRICE
+        await update.message.reply_text(_("marzban_note.invalid_number_input")); return GET_PRICE
         
     context.user_data['note_details']['subscription_price'] = price
     await save_user_note(username, context.user_data['note_details'])
     await update.message.reply_text(
-        f"✅ اطلاعات اشتراک برای `{username}` ذخیره شد.", parse_mode=ParseMode.MARKDOWN, reply_markup=get_user_management_keyboard()
+        _("marzban_note.note_saved_successfully", username=f"`{username}`"), 
+        parse_mode=ParseMode.MARKDOWN, reply_markup=get_user_management_keyboard()
     )
     context.user_data.clear()
     return ConversationHandler.END
 
 async def delete_note_from_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    from shared.translator import _
     from database.db_manager import delete_user_note
 
     query = update.callback_query
-    await query.answer("✅ اطلاعات با موفقیت حذف شد.", show_alert=True)
-    username_raw = query.data.split('_', 2)[2]
-    username = normalize_username(username_raw)
+    await query.answer(_("marzban_note.note_deleted_successfully"), show_alert=True)
+    username = normalize_username(query.data.split('_', 2)[2])
     
     await delete_user_note(username)
     
     keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🔙 بازگشت به لیست اشتراک‌ها", callback_data="list_subs_page_1")]
+        [InlineKeyboardButton(_("marzban_display.back_to_subs_list"), callback_data="list_subs_page_1")]
     ])
     await query.edit_message_text(
-        f"✅ اطلاعات اشتراک برای کاربر `{username}` با موفقیت حذف شد.",
-        reply_markup=keyboard,
-        parse_mode=ParseMode.MARKDOWN
+        _("marzban_note.note_deleted_message", username=f"`{username}`"),
+        reply_markup=keyboard, parse_mode=ParseMode.MARKDOWN
     )
-    
     context.user_data.clear()
     return ConversationHandler.END
 
 async def list_users_with_subscriptions(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    from shared.translator import _
     from database.db_manager import get_all_users_with_notes
 
     query = update.callback_query
@@ -142,18 +126,16 @@ async def list_users_with_subscriptions(update: Update, context: ContextTypes.DE
     
     if query:
         await query.answer()
-        if query.data.startswith('list_subs_page_'):
-            page = int(query.data.split('_')[-1])
+        if query.data.startswith('list_subs_page_'): page = int(query.data.split('_')[-1])
         message_to_edit = query.message
     else:
-        message_to_edit = await update.message.reply_text("در حال دریافت لیست اشتراک‌های ثبت‌شده...")
+        message_to_edit = await update.message.reply_text(_("marzban_note.loading_subscriptions"))
 
     all_notes = await get_all_users_with_notes()
     marzban_users = await get_all_marzban_users()
     
     if marzban_users is None:
-        await message_to_edit.edit_text("❌ خطا در ارتباط با پنل مرزبان.")
-        return
+        await message_to_edit.edit_text(_("marzban_display.panel_connection_error")); return
         
     marzban_usernames = {normalize_username(u['username']) for u in marzban_users if u.get('username')}
     valid_notes = sorted(
@@ -162,59 +144,38 @@ async def list_users_with_subscriptions(update: Update, context: ContextTypes.DE
     )
 
     if not valid_notes:
-        await message_to_edit.edit_text("هیچ اشتراک فعالی برای نمایش ثبت نشده است.")
-        return
+        await message_to_edit.edit_text(_("marzban_note.no_active_subscriptions")); return
 
-    total_users = len(valid_notes)
-    total_pages = math.ceil(total_users / USERS_PER_PAGE)
+    total_pages = math.ceil(len(valid_notes) / USERS_PER_PAGE)
     page = max(1, min(page, total_pages))
-    start_index = (page - 1) * USERS_PER_PAGE
-    end_index = start_index + USERS_PER_PAGE
-    page_notes = valid_notes[start_index:end_index]
+    page_notes = valid_notes[(page - 1) * USERS_PER_PAGE : page * USERS_PER_PAGE]
 
     keyboard_rows = []
     it = iter(page_notes)
     for note1 in it:
-        row = []
-        username1 = note1['username']
-        row.append(InlineKeyboardButton(f"👤 {username1}", callback_data=f"user_details_{username1}_subs_{page}"))
+        row = [InlineKeyboardButton(_("marzban_note.button_user_prefix", username=note1['username']), callback_data=f"user_details_{note1['username']}_subs_{page}")]
         try:
             note2 = next(it)
-            username2 = note2['username']
-            row.append(InlineKeyboardButton(f"👤 {username2}", callback_data=f"user_details_{username2}_subs_{page}"))
-        except StopIteration:
-            pass
+            row.append(InlineKeyboardButton(_("marzban_note.button_user_prefix", username=note2['username']), callback_data=f"user_details_{note2['username']}_subs_{page}"))
+        except StopIteration: pass
         keyboard_rows.append(row)
 
     nav_row = []
-    if page > 1:
-        nav_row.append(InlineKeyboardButton("⬅️ قبلی", callback_data=f"list_subs_page_{page - 1}"))
-    if total_pages > 1:
-        nav_row.append(InlineKeyboardButton(f"{page}/{total_pages}", callback_data="noop"))
-    if page < total_pages:
-        nav_row.append(InlineKeyboardButton("➡️ بعدی", callback_data=f"list_subs_page_{page + 1}"))
-    if nav_row:
-        keyboard_rows.append(nav_row)
-    keyboard_rows.append([InlineKeyboardButton("✖️ بستن", callback_data="close_pagination")])
+    if page > 1: nav_row.append(InlineKeyboardButton(_("marzban_display.pagination_prev"), callback_data=f"list_subs_page_{page - 1}"))
+    if total_pages > 1: nav_row.append(InlineKeyboardButton(f"{page}/{total_pages}", callback_data="noop"))
+    if page < total_pages: nav_row.append(InlineKeyboardButton(_("marzban_display.pagination_next"), callback_data=f"list_subs_page_{page + 1}"))
+    if nav_row: keyboard_rows.append(nav_row)
+    keyboard_rows.append([InlineKeyboardButton(_("marzban_display.pagination_close"), callback_data="close_pagination")])
     
-    message_parts = ["👤 **لیست اشتراک‌های ثبت‌شده:**\n"]
+    message_parts = [_("marzban_note.subscriptions_list_title")]
+    undefined_str = _("marzban_note.undefined")
     for note in page_notes:
-        uname = note['username']
-        dur = note.get('subscription_duration') or "نامشخص"
-        datalimit = note.get('subscription_data_limit_gb') or "نامشخص"
         price = note.get('subscription_price')
-        price_f = f"{price:,}" if price is not None else "نامشخص"
-        
-        line = (
-            f"▫️ **{uname}**\n"
-            f"   ⏳ {dur} روزه  |  📦 {datalimit} GB  |  💰 {price_f} تومان"
-        )
+        line = _("marzban_note.subscription_list_item", 
+                 username=note['username'],
+                 duration=note.get('subscription_duration') or undefined_str,
+                 datalimit=note.get('subscription_data_limit_gb') or undefined_str,
+                 price=f"{price:,}" if price is not None else undefined_str)
         message_parts.append(line)
 
-    message_text = "\n\n".join(message_parts)
-
-    await message_to_edit.edit_text(
-        message_text,
-        reply_markup=InlineKeyboardMarkup(keyboard_rows),
-        parse_mode=ParseMode.MARKDOWN,
-    )
+    await message_to_edit.edit_text("\n\n".join(message_parts), reply_markup=InlineKeyboardMarkup(keyboard_rows), parse_mode=ParseMode.MARKDOWN)

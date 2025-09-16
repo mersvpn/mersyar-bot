@@ -6,6 +6,14 @@ import sys
 import os
 import asyncio
 # ✨ NEW: Import argparse to read command-line arguments
+
+# ... other imports ...
+from shared.translator import init_translator
+
+# Initialize the translator at the very beginning
+init_translator()
+
+# ... rest of your bot.py file, including the main() function ...
 import argparse
 
 from telegram import Update

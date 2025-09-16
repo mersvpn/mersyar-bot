@@ -1,23 +1,17 @@
-# FILE: modules/customer/actions/renewal.py (FIXED WITH LAZY IMPORT)
+# FILE: modules/customer/actions/renewal.py (REVISED FOR I18N AND MARKDOWN SAFETY)
 
 import logging
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
-from telegram.ext import ContextTypes
-from telegram.constants import ParseMode
 from telegram.ext import ContextTypes, ConversationHandler
+from telegram.constants import ParseMode
+from telegram.helpers import escape_markdown  # Ensure this import is at the top
 from config import config
-# --- START OF FIX: The global import from db_manager is removed to prevent circular dependency ---
-# from database.db_manager import add_to_non_renewal_list
 from modules.marzban.actions.data_manager import normalize_username
-# --- END OF FIX ---
+from shared.translator import _
 
 LOGGER = logging.getLogger(__name__)
 
-# ==================== REPLACE THIS FUNCTION in modules/customer/actions/renewal.py ====================
 async def handle_renewal_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    # وارد کردن تابع escape_markdown
-    from telegram.helpers import escape_markdown
-
     query = update.callback_query
     await query.answer()
 
@@ -26,30 +20,30 @@ async def handle_renewal_request(update: Update, context: ContextTypes.DEFAULT_T
     normalized_user = normalize_username(marzban_username)
 
     if config.AUTHORIZED_USER_IDS:
-        # --- بخش اصلاح شده برای جلوگیری از خطای ParseMode ---
-        # Escape کردن نام و نام کاربری برای جلوگیری از خطا
+        # --- SAFE MARKDOWN V2 ---
         safe_full_name = escape_markdown(user.full_name, version=2)
         user_info = f"کاربر {safe_full_name}"
         if user.username:
             safe_username = escape_markdown(user.username, version=2)
-            user_info += f" \(@{safe_username}\)"
+            user_info += f" \\(@{safe_username}\\)"
         user_info += f"\nUser ID: `{user.id}`"
 
-        message_to_admin = (
-            f"🔔 *درخواست تمدید اشتراک* 🔔\n\n"
-            f"{user_info}\n"
-            f"نام کاربری در پنل: `{normalized_user}`\n\n"
-            "این کاربر قصد تمدید اشتراک خود را دارد\."
-        )
+        # ✨✨✨ KEY FIX HERE ✨✨✨
+        # The username from Marzban is now also escaped to handle characters like '_'
+        safe_normalized_user = escape_markdown(normalized_user, version=2)
 
-        # --- دکمه‌های جدید برای ادمین ---
-        # ساخت لینک مستقیم برای مشاهده جزئیات کاربر
+        message_to_admin = _("renewal.admin_notification", 
+                             user_info=user_info, 
+                             username=f"`{safe_normalized_user}`")
+
         bot_username = context.bot.username
+        # Note: URL encoding for usernames in deep links is handled by Telegram,
+        # so no escaping is needed for `details_url`.
         details_url = f"https://t.me/{bot_username}?start=details_{normalized_user}"
 
         keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton(f"🔄 تمدید هوشمند برای {normalized_user}", callback_data=f"renew_{normalized_user}")],
-            [InlineKeyboardButton("👤 مشاهده جزئیات کاربر", url=details_url)]
+            [InlineKeyboardButton(_("buttons.smart_renew_for_user", username=normalized_user), callback_data=f"renew_{normalized_user}")],
+            [InlineKeyboardButton(_("buttons.view_user_details"), url=details_url)]
         ])
 
         num_sent = 0
@@ -64,24 +58,16 @@ async def handle_renewal_request(update: Update, context: ContextTypes.DEFAULT_T
                 LOGGER.error(f"Failed to send renewal notification to admin {admin_id} for user {normalized_user}: {e}")
         
         if num_sent > 0:
-            confirmation_text = "✅ درخواست تمدید شما با موفقیت برای پشتیبانی ارسال شد."
+            confirmation_text = _("renewal.request_sent_success")
         else:
-            # این پیام حالا فقط زمانی نمایش داده می‌شود که ربات نتواند به هیچ ادمینی پیام دهد
-            confirmation_text = "❌ مشکلی در ارسال درخواست به پشتیبانی رخ داد. لطفاً بعداً دوباره تلاش کنید."
+            confirmation_text = _("renewal.request_sent_fail")
             
         await query.edit_message_text(text=confirmation_text, reply_markup=None)
         
-    # این خط مکالمه را به درستی پایان می‌دهد
     return ConversationHandler.END
-# =======================================================================================================
 
 async def handle_do_not_renew(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    Handles 'Do Not Renew' button click, adding the user to the non-renewal table in the database.
-    """
-    # --- START OF FIX: Import is moved inside the function that needs it ---
     from database.db_manager import add_to_non_renewal_list
-    # --- END OF FIX ---
 
     query = update.callback_query
     await query.answer()
@@ -92,26 +78,25 @@ async def handle_do_not_renew(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     LOGGER.info(f"User {user.id} ({normalized_user}) opted out of renewal reminders.")
 
-    # Use the database function
     await add_to_non_renewal_list(normalized_user)
 
-    await query.edit_message_text(
-        "✅ درخواست شما ثبت شد.\n\n"
-        "دیگر پیام یادآور تمدید برای این اشتراک دریافت نخواهید کرد."
-    )
+    await query.edit_message_text(_("renewal.do_not_renew_success"))
 
-    # Notify admins about this action
     if config.AUTHORIZED_USER_IDS:
-        user_info = f"کاربر {user.full_name}"
+        # --- SAFE MARKDOWN (LEGACY) ---
+        safe_full_name = escape_markdown(user.full_name, version=1)
+        user_info = f"کاربر {safe_full_name}"
         if user.username:
+            # Note: No need to escape '@' in legacy markdown
             user_info += f" (@{user.username})"
 
-        message_to_admin = (
-            f"ℹ️ **اطلاع‌رسانی عدم تمدید** ℹ️\n\n"
-            f"{user_info}\n"
-            f"نام کاربری در پنل: `{normalized_user}`\n\n"
-            "این کاربر اعلام کرد که **تمایلی به تمدید ندارد**."
-        )
+        # ✨✨✨ SECONDARY FIX HERE ✨✨✨
+        # Also escape the Marzban username for this notification
+        safe_normalized_user = escape_markdown(normalized_user, version=1)
+
+        message_to_admin = _("renewal.do_not_renew_admin_notification", 
+                             user_info=user_info, 
+                             username=f"`{safe_normalized_user}`")
 
         for admin_id in config.AUTHORIZED_USER_IDS:
             try:
