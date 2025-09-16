@@ -90,6 +90,7 @@ async def handle_service_page_change(update: Update, context: ContextTypes.DEFAU
 # =============================================================================
 
 async def display_service_details(update: Update, context: ContextTypes.DEFAULT_TYPE, marzban_username: str) -> int:
+    from shared.translator import _ # Local import
     from database.db_manager import get_user_note
     
     target_message = update.callback_query.message if update.callback_query else update.message
@@ -136,12 +137,15 @@ async def display_service_details(update: Update, context: ContextTypes.DEFAULT_
         
         sub_url = user_info.get('subscription_url', _("customer_service.not_found"))
         
+        # ✨✨✨ KEY FIX HERE ✨✨✨
+        # All f-string formatting with backticks is removed.
+        # Python now only passes raw data to the translator.
         message = _("customer_service.active_details_message",
-                    username=f"`{marzban_username}`",
+                    username=marzban_username,
                     usage=usage_str,
                     duration=duration_str,
-                    expiry=f"`{expire_str}`",
-                    sub_url=f"`{sub_url}`")
+                    expiry=expire_str,
+                    sub_url=sub_url)
         
         keyboard = InlineKeyboardMarkup([
             [
@@ -156,6 +160,7 @@ async def display_service_details(update: Update, context: ContextTypes.DEFAULT_
         ])
     
     if not is_active:
+        # This part also needs fixing for consistency
         message = _("customer_service.inactive_details_message", username=f"`{marzban_username}`")
         keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton(_("buttons.renew_this_service"), callback_data=f"customer_renew_request_{marzban_username}")],
@@ -238,6 +243,7 @@ async def confirm_reset_subscription(update: Update, context: ContextTypes.DEFAU
     return CONFIRM_RESET_SUB
 
 async def execute_reset_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    from shared.translator import _ # Local import
     query = update.callback_query
     await query.answer()
     username = query.data.split('_')[-1]
@@ -250,15 +256,19 @@ async def execute_reset_subscription(update: Update, context: ContextTypes.DEFAU
 
     if success:
         new_sub_url = result.get('subscription_url', _("customer_service.not_found"))
-        text = _("customer_service.reset_sub_successful", sub_url=f"`{new_sub_url}`")
+        
+        # ✨✨✨ KEY FIX HERE ✨✨✨
+        # Removed the f-string and backticks. Now passing raw data.
+        text = _("customer_service.reset_sub_successful", sub_url=new_sub_url)
+        
         keyboard = InlineKeyboardMarkup([[InlineKeyboardButton(_("buttons.back_to_details"), callback_data=f"select_service_{username}")]])
         await query.edit_message_text(text, reply_markup=keyboard, parse_mode=ParseMode.MARKDOWN)
     else:
         text = _("customer_service.reset_sub_failed", error=result)
         keyboard = InlineKeyboardMarkup([[InlineKeyboardButton(_("buttons.back_to_details"), callback_data=f"select_service_{username}")]])
         await query.edit_message_text(text, reply_markup=keyboard)
+        
     return DISPLAY_SERVICE
-
 async def back_to_main_menu_customer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()
