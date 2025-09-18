@@ -25,21 +25,23 @@ LOGGER = logging.getLogger(__name__)
 #  Central helper function for displaying the main menu
 # =============================================================================
 
+# FILE: modules/general/actions.py
+
+# تابع زیر را به طور کامل جایگزین کنید
 async def send_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, message_text: str = ""):
     user = update.effective_user
     
     if not message_text:
-        # Using the translator
         message_text = _("general.welcome", first_name=user.first_name)
 
     if user.id in config.AUTHORIZED_USER_IDS and not context.user_data.get('is_admin_in_customer_view'):
-        reply_markup = get_admin_main_menu_keyboard()
+        reply_markup = get_admin_main_menu_keyboard() # This one remains sync
         message_text += _("general.admin_dashboard_active")
     else:
         if context.user_data.get('is_admin_in_customer_view'):
-            reply_markup = get_customer_view_for_admin_keyboard()
+            reply_markup = await get_customer_view_for_admin_keyboard() # <-- ADDED await
         else:
-            reply_markup = get_customer_main_menu_keyboard()
+            reply_markup = await get_customer_main_menu_keyboard() # <-- ADDED await
         message_text += _("general.customer_dashboard_prompt")
 
     target_message = update.effective_message
@@ -47,7 +49,7 @@ async def send_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, mes
         try:
             await target_message.delete()
         except Exception:
-            pass # Message might already be gone
+            pass
         await context.bot.send_message(chat_id=update.effective_chat.id, text=message_text, reply_markup=reply_markup)
     else:
         await target_message.reply_text(message_text, reply_markup=reply_markup)
@@ -65,12 +67,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         LOGGER.error(log_message)
     await send_main_menu(update, context)
 
+
 @admin_only
 async def switch_to_customer_view(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     context.user_data['is_admin_in_customer_view'] = True
     await update.message.reply_text(
         _("views.switched_to_customer"),
-        reply_markup=get_customer_view_for_admin_keyboard(), parse_mode=ParseMode.MARKDOWN
+        reply_markup=await get_customer_view_for_admin_keyboard(), # <-- ADDED await
+        parse_mode=ParseMode.MARKDOWN
     )
 
 @admin_only

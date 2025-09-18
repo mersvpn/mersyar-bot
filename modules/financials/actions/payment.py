@@ -13,7 +13,8 @@ from modules.marzban.actions.api import add_data_to_user_api
 from database.db_manager import (
     load_financials, get_pending_invoice, update_invoice_status,
     link_user_to_telegram, get_user_note, get_telegram_id_from_marzban_username,
-    create_pending_invoice
+    create_pending_invoice,
+    create_pending_invoice, get_user_wallet_balance
 )
 from shared.keyboards import get_admin_main_menu_keyboard
 from modules.general.actions import send_main_menu, start as back_to_main_menu_action
@@ -145,10 +146,23 @@ async def send_renewal_invoice_to_user(context: ContextTypes.DEFAULT_TYPE, user_
         invoice_text += _("financials_payment.invoice_payment_details", card_number=f"`{financials['card_number']}`", card_holder=f"`{financials['card_holder']}`")
         invoice_text += _("financials_payment.invoice_footer_prompt")
         
-        keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton(_("financials_payment.button_send_receipt"), callback_data="customer_send_receipt")],
-            [InlineKeyboardButton(_("financials_payment.button_back_to_menu"), callback_data="payment_back_to_menu")]
-        ])
+        # === START: WALLET PAYMENT BUTTON LOGIC ===
+        user_id = user_telegram_id # The variable name is different here
+        
+        keyboard_rows = [
+            [InlineKeyboardButton(_("financials_payment.button_send_receipt"), callback_data="customer_send_receipt")]
+        ]
+        
+        user_balance = await get_user_wallet_balance(user_id)
+        if user_balance is not None and user_balance >= price: # `price` is available here
+            wallet_button_text = _("financials_payment.button_pay_with_wallet", balance=f"{int(user_balance):,}")
+            keyboard_rows.insert(0, [
+                InlineKeyboardButton(wallet_button_text, callback_data=f"wallet_pay_{invoice_id}")
+            ])
+
+        keyboard_rows.append([InlineKeyboardButton(_("financials_payment.button_back_to_menu"), callback_data="payment_back_to_menu")])
+        keyboard = InlineKeyboardMarkup(keyboard_rows)
+        # === END: WALLET PAYMENT BUTTON LOGIC ===
 
         await context.bot.send_message(chat_id=user_telegram_id, text=invoice_text, parse_mode=ParseMode.MARKDOWN, reply_markup=keyboard)
         LOGGER.info(f"Renewal invoice #{invoice_id} sent to user {username} ({user_telegram_id}).")
@@ -173,7 +187,7 @@ async def send_manual_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE
     try:
         customer_id = await get_telegram_id_from_marzban_username(username)
         if not customer_id:
-            await context.bot.send_message(admin_chat_id, _("financials_payment.error_customer_telegram_not_found", username=f"`{username}`"), parse_mode=ParseMode.MARKDOWN); return
+         await context.bot.send_message(admin_chat_id, _("financials_payment.error_customer_telegram_not_found", username=f"`{username}`"), parse_mode=ParseMode.MARKDOWN); return
             
         note_data = await get_user_note(username)
         price, duration = note_data.get('subscription_price'), note_data.get('subscription_duration')
@@ -208,6 +222,7 @@ async def send_manual_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE
         await context.bot.send_message(admin_chat_id, _("financials_payment.unknown_error"), parse_mode=ParseMode.MARKDOWN)
 
 async def approve_payment(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    
     from shared.translator import _
     query = update.callback_query
     admin_user = update.effective_user
@@ -222,6 +237,7 @@ async def approve_payment(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await query.edit_message_caption(caption=f"{query.message.caption}\n\n{_('financials_payment.invoice_already_processed')}"); return
 
     customer_id, plan_details = invoice['user_id'], invoice['plan_details']
+     
     marzban_username = plan_details.get('username')
     if not marzban_username:
         await query.edit_message_caption(caption=f"{query.message.caption}\n\n{_('financials_payment.error_username_not_in_invoice')}"); return
@@ -323,10 +339,24 @@ async def send_custom_plan_invoice(update: Update, context: ContextTypes.DEFAULT
     invoice_text += _("financials_payment.invoice_payment_details", card_number=f"`{card_number}`", card_holder=f"`{card_holder}`")
     invoice_text += _("financials_payment.invoice_footer_prompt")
     
-    keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton(_("financials_payment.button_send_receipt"), callback_data="customer_send_receipt")],
-        [InlineKeyboardButton(_("financials_payment.button_back_to_menu"), callback_data="payment_back_to_menu")]
-    ])
+    # === START: WALLET PAYMENT BUTTON LOGIC ===
+    user_id = update.effective_user.id # Get user_id from update
+    price = plan_details.get('price')
+
+    keyboard_rows = [
+        [InlineKeyboardButton(_("financials_payment.button_send_receipt"), callback_data="customer_send_receipt")]
+    ]
+    
+    user_balance = await get_user_wallet_balance(user_id)
+    if user_balance is not None and user_balance >= price:
+        wallet_button_text = _("financials_payment.button_pay_with_wallet", balance=f"{int(user_balance):,}")
+        keyboard_rows.insert(0, [
+            InlineKeyboardButton(wallet_button_text, callback_data=f"wallet_pay_{invoice_id}")
+        ])
+
+    keyboard_rows.append([InlineKeyboardButton(_("financials_payment.button_back_to_menu"), callback_data="payment_back_to_menu")])
+    keyboard = InlineKeyboardMarkup(keyboard_rows)
+    # === END: WALLET PAYMENT BUTTON LOGIC ===
     
     try:
         await context.bot.send_message(chat_id=user_id, text=invoice_text, parse_mode=ParseMode.MARKDOWN, reply_markup=keyboard)
@@ -337,6 +367,7 @@ async def send_custom_plan_invoice(update: Update, context: ContextTypes.DEFAULT
         except Exception: pass
 
 async def confirm_manual_payment(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    from database.db_manager import increase_wallet_balance
     from shared.translator import _
     query = update.callback_query
     admin_user = update.effective_user
@@ -346,6 +377,34 @@ async def confirm_manual_payment(update: Update, context: ContextTypes.DEFAULT_T
     except (IndexError, ValueError): await query.edit_message_caption(caption=f"{query.message.caption}\n\n{_('errors.internal_error')}"); return
 
     invoice = await get_pending_invoice(invoice_id)
+
+        # === START: NEW LOGIC FOR WALLET CHARGE ===
+    if invoice and invoice.get('plan_details', {}).get("type") == "wallet_charge":
+        customer_id = invoice['user_id']
+        price = invoice.get('price', 0)
+        amount_to_add = invoice.get('plan_details', {}).get("amount", price)
+        new_balance = await increase_wallet_balance(user_id=customer_id, amount=float(amount_to_add))
+
+        if new_balance is not None:
+            await update_invoice_status(invoice_id, 'approved')
+            
+            try:
+                await context.bot.send_message(
+                    customer_id,
+                    _("financials_payment.wallet_charge_success_customer", 
+                      amount=f"{amount_to_add:,}", 
+                      new_balance=f"{int(new_balance):,}")
+                )
+            except Exception as e:
+                LOGGER.error(f"Failed to send wallet charge confirmation to customer {customer_id}: {e}")
+            
+            final_caption = f"{query.message.caption}{_('financials_payment.admin_log_wallet_charge_success', amount=f'{amount_to_add:,}', admin_name=admin_user.full_name)}"
+            await query.edit_message_caption(caption=final_caption, parse_mode=ParseMode.MARKDOWN)
+        else:
+            await query.edit_message_caption(caption=f"{query.message.caption}\n\n{_('financials_payment.error_updating_wallet_db')}")
+        
+        return # End of execution for wallet charge
+    # === END: NEW LOGIC FOR WALLET CHARGE ===
     if not invoice or invoice['status'] != 'pending':
         await query.edit_message_caption(caption=f"{query.message.caption}\n\n{_('financials_payment.invoice_already_processed')}"); return
 
@@ -391,3 +450,103 @@ async def approve_data_top_up(update: Update, context: ContextTypes.DEFAULT_TYPE
     else:
         LOGGER.error(f"Failed to add data for '{marzban_username}' via API. Reason: {message}")
         await query.edit_message_caption(caption=f"{query.message.caption}\n\n{_('financials_payment.error_marzban_connection', error=message)}")
+
+       
+
+async def send_wallet_charge_invoice(context: ContextTypes.DEFAULT_TYPE, user_id: int, invoice_id: int, amount: int):
+    from shared.translator import _
+    
+    financials = await load_financials()
+    card_holder, card_number = financials.get("card_holder"), financials.get("card_number")
+    
+    if not card_holder or not card_number:
+        LOGGER.error(f"Cannot send wallet charge invoice to user {user_id}: Financials not set.")
+        try:
+            await context.bot.send_message(chat_id=user_id, text=_("financials_payment.invoice_generation_unavailable"))
+        except Exception: pass
+        return
+
+    invoice_text = _("financials_payment.invoice_title_wallet_charge")
+    invoice_text += _("financials_payment.invoice_number", id=invoice_id)
+    invoice_text += "-------------------------------------\n"
+    invoice_text += _("financials_payment.invoice_price", price=f"`{amount:,.0f}`")
+    invoice_text += _("financials_payment.invoice_payment_details", card_number=f"`{card_number}`", card_holder=f"`{card_holder}`")
+    invoice_text += _("financials_payment.invoice_footer_prompt")
+    
+    # === START: WALLET PAYMENT BUTTON LOGIC ===
+    # It doesn't make sense to pay for a wallet charge from the wallet itself,
+    # but we add the logic for completeness and future use cases.
+    keyboard_rows = [
+        [InlineKeyboardButton(_("financials_payment.button_send_receipt"), callback_data="customer_send_receipt")]
+    ]
+    
+    user_balance = await get_user_wallet_balance(user_id)
+    if user_balance is not None and user_balance >= amount: # Here the variable is `amount`
+        wallet_button_text = _("financials_payment.button_pay_with_wallet", balance=f"{int(user_balance):,}")
+        keyboard_rows.insert(0, [
+            InlineKeyboardButton(wallet_button_text, callback_data=f"wallet_pay_{invoice_id}")
+        ])
+
+    keyboard_rows.append([InlineKeyboardButton(_("financials_payment.button_back_to_menu"), callback_data="payment_back_to_menu")])
+    keyboard = InlineKeyboardMarkup(keyboard_rows)
+    # === END: WALLET PAYMENT BUTTON LOGIC ===
+    try:
+        await context.bot.send_message(chat_id=user_id, text=invoice_text, parse_mode=ParseMode.MARKDOWN, reply_markup=keyboard)
+        LOGGER.info(f"Wallet charge invoice #{invoice_id} for {amount:,} Tomans sent to user {user_id}.")
+    except Exception as e:
+        LOGGER.error(f"Failed to send wallet charge invoice #{invoice_id} to user {user_id}: {e}", exc_info=True)
+
+async def pay_with_wallet(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    from shared.translator import _
+    from database.db_manager import decrease_wallet_balance
+
+    query = update.callback_query
+    await query.answer(_("financials_payment.processing_wallet_payment"))
+
+    try:
+        invoice_id = int(query.data.split('_')[-1])
+    except (IndexError, ValueError):
+        await query.edit_message_text(_("errors.internal_error"))
+        return
+
+    invoice = await get_pending_invoice(invoice_id)
+    if not invoice or invoice['status'] != 'pending':
+        await query.edit_message_text(_("financials_payment.invoice_already_processed_simple"))
+        return
+
+    user_id = update.effective_user.id
+    price = float(invoice.get('price', 0))
+
+    new_balance = await decrease_wallet_balance(user_id=user_id, amount=price)
+
+    if new_balance is not None:
+        # Payment successful!
+        await query.edit_message_text(
+            _("financials_payment.wallet_payment_successful", 
+              price=f"{int(price):,}", 
+              new_balance=f"{int(new_balance):,}")
+        )
+        
+        # Now, we need to trigger the same approval logic as the admin.
+        # To do this safely, we will call the appropriate approval function.
+        # We create a "mock" admin user for the logs.
+        class MockUser:
+            id = 0
+            full_name = "پرداخت خودکار (کیف پول)"
+
+        class MockQuery:
+            data = f"approve_receipt_{invoice_id}" # This matches the admin's button
+            message = None # Not needed for this flow
+            async def answer(self, *args, **kwargs): pass
+            async def edit_message_caption(self, *args, **kwargs): pass # We already edited the message
+        
+        class MockUpdate:
+            effective_user = MockUser()
+            callback_query = MockQuery()
+            
+        # IMPORTANT: Call the correct approval function
+        await approve_payment(MockUpdate(), context)
+
+    else:
+        # Payment failed (insufficient funds)
+        await query.answer(_("financials_payment.wallet_payment_failed_insufficient_funds"), show_alert=True)

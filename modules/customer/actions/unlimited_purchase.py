@@ -122,7 +122,7 @@ async def cancel_unlimited_purchase(update: Update, context: ContextTypes.DEFAUL
 
 
 # --- Regex to match ALL main menu buttons ---
-MAIN_MENU_REGEX = r'^(🛍️فــــــــــروشـــــــــــگاه|📊ســـــــــــرویس‌های من|📱 راهــــــــــنمای اتصال|🔙 بازگشت به منوی اصلی)$'
+MAIN_MENU_REGEX = r'^(🛍️فــــــــــروشـــــــــــگاه|📊ســــــــرویس‌های من|📱 راهــــــــــنمای اتصال|🔙 بازگشت به منوی اصلی)$'
 # --- Filter to IGNORE all main menu buttons, for use in states ---
 IGNORE_MAIN_MENU_FILTER = filters.TEXT & ~filters.COMMAND & ~filters.Regex(MAIN_MENU_REGEX)
 

@@ -16,7 +16,8 @@ from .actions.payment import (
     handle_payment_back_button,
     approve_payment,
     reject_payment,
-    confirm_manual_payment
+    confirm_manual_payment,
+    pay_with_wallet
 )
 # --- MODIFIED: Import both new admin panel modules ---
 from .actions import unlimited_plans_admin, volumetric_plans_admin
@@ -84,6 +85,7 @@ def register(application: Application):
     #  2. ثبت هندلرهای مشتری (گروه 1)
     # =============================================================================
     application.add_handler(CallbackQueryHandler(handle_payment_back_button, pattern=r'^payment_back_to_menu$'), group=1)
+    application.add_handler(CallbackQueryHandler(pay_with_wallet, pattern=r'^wallet_pay_'), group=1)
     
     LOGGER.info("Financials module handlers registered successfully.")
 

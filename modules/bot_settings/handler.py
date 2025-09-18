@@ -11,7 +11,7 @@ from .actions import (
     start_bot_settings,
     toggle_maintenance_mode,
     toggle_log_channel,
-    # toggle_auto_delete, <-- حذف شد
+    toggle_wallet_status, 
     back_to_tools,
     show_helper_tools_menu,
     back_to_settings_menu,
@@ -35,7 +35,7 @@ def register(application: Application) -> None:
             MENU_STATE: [
                 CallbackQueryHandler(toggle_maintenance_mode, pattern=r'^toggle_maintenance_'),
                 CallbackQueryHandler(toggle_log_channel, pattern=r'^toggle_log_channel_'),
-                # CallbackQueryHandler(toggle_auto_delete, pattern=r'^toggle_auto_delete_'), <-- حذف شد
+                CallbackQueryHandler(toggle_wallet_status, pattern=r'^toggle_wallet_'),
                 CallbackQueryHandler(back_to_tools, pattern=r'^bot_status_back$'),
             ]
         },

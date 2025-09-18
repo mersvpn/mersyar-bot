@@ -4,6 +4,7 @@ from telegram import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, 
 from config import config
 # Import the translator
 from shared.translator import _
+from database.db_manager import load_bot_settings
 
 # =============================================================================
 #  ReplyKeyboardMarkup Section
@@ -44,14 +45,32 @@ def get_helper_tools_keyboard() -> ReplyKeyboardMarkup:
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
-def get_customer_main_menu_keyboard() -> ReplyKeyboardMarkup:
+# START OF MODIFIED SECTION
+
+async def get_customer_main_menu_keyboard() -> ReplyKeyboardMarkup:
+    # Load bot settings from the database
+    bot_settings = await load_bot_settings()
+    is_wallet_enabled = bot_settings.get('is_wallet_enabled', False)
+
+    # Define the base layout
     keyboard_layout = [
         [KeyboardButton(_("keyboards.customer_main_menu.shop"))],
-        [KeyboardButton(_("keyboards.customer_main_menu.my_services")), KeyboardButton(_("keyboards.customer_main_menu.connection_guide"))]
+        [KeyboardButton(_("keyboards.customer_main_menu.my_services")), KeyboardButton(_("keyboards.customer_main_menu.test_account"))],
     ]
+
+    # Conditionally add the wallet button
+    if is_wallet_enabled:
+        keyboard_layout.append([KeyboardButton(_("keyboards.customer_main_menu.wallet_charge"))])
+
+    # Create the last row and add the support button conditionally
+    last_row = [KeyboardButton(_("keyboards.customer_main_menu.connection_guide"))]
     if config.SUPPORT_USERNAME:
-        keyboard_layout.append([KeyboardButton(_("keyboards.customer_main_menu.support"))])
+        last_row.append(KeyboardButton(_("keyboards.customer_main_menu.support")))
+    
+    keyboard_layout.append(last_row)
+    
     return ReplyKeyboardMarkup(keyboard_layout, resize_keyboard=True)
+
 
 def get_customer_shop_keyboard() -> ReplyKeyboardMarkup:
     keyboard = [
@@ -68,14 +87,33 @@ def get_back_to_main_menu_keyboard() -> ReplyKeyboardMarkup:
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
-def get_customer_view_for_admin_keyboard() -> ReplyKeyboardMarkup:
+# START OF MODIFIED SECTION
+
+async def get_customer_view_for_admin_keyboard() -> ReplyKeyboardMarkup:
+    # Load bot settings from the database
+    bot_settings = await load_bot_settings() 
+    is_wallet_enabled = bot_settings.get('is_wallet_enabled', False) 
+
+    # Define the base layout
     keyboard_layout = [
         [KeyboardButton(_("keyboards.customer_main_menu.shop"))],
-        [KeyboardButton(_("keyboards.customer_main_menu.my_services")), KeyboardButton(_("keyboards.customer_main_menu.connection_guide"))]
+        [KeyboardButton(_("keyboards.customer_main_menu.my_services")), KeyboardButton(_("keyboards.customer_main_menu.test_account"))],
     ]
+
+    # Conditionally add the wallet button
+    if is_wallet_enabled: 
+        keyboard_layout.append([KeyboardButton(_("keyboards.customer_main_menu.wallet_charge"))])
+    
+    # Create the last row and add the support button conditionally
+    last_row = [KeyboardButton(_("keyboards.customer_main_menu.connection_guide"))]
     if config.SUPPORT_USERNAME:
-        keyboard_layout.append([KeyboardButton(_("keyboards.customer_main_menu.support"))])
+        last_row.append(KeyboardButton(_("keyboards.customer_main_menu.support")))
+        
+    keyboard_layout.append(last_row)
+    
+    # Add the "Back to Admin Panel" button for the admin view
     keyboard_layout.append([KeyboardButton(_("keyboards.general.back_to_admin_panel"))])
+    
     return ReplyKeyboardMarkup(keyboard_layout, resize_keyboard=True)
 
 def get_notes_management_keyboard() -> ReplyKeyboardMarkup:
@@ -99,27 +137,27 @@ def get_financial_settings_keyboard() -> ReplyKeyboardMarkup:
 def get_payment_methods_keyboard() -> InlineKeyboardMarkup:
     keyboard = [
         [
-            InlineKeyboardButton("💳 تنظیم کارت به کارت", callback_data="admin_set_card_info"),
-            InlineKeyboardButton("🅿️ تنظیم درگاه پرداخت (بزودی)", callback_data="coming_soon")
+            InlineKeyboardButton(_("inline_keyboards.payment_methods.set_card_info"), callback_data="admin_set_card_info"),
+            InlineKeyboardButton(_("inline_keyboards.payment_methods.set_payment_gateway"), callback_data="coming_soon")
         ],
         [
-            InlineKeyboardButton("₿ تنظیم پرداخت با رمز ارز (بزودی)", callback_data="coming_soon")
+            InlineKeyboardButton(_("inline_keyboards.payment_methods.set_crypto"), callback_data="coming_soon")
         ],
-        [InlineKeyboardButton("🔙 بازگشت به تنظیمات مالی", callback_data="back_to_financial_settings")]
+        [InlineKeyboardButton(_("inline_keyboards.payment_methods.back_to_financial_settings"), callback_data="back_to_financial_settings")]
     ]
     return InlineKeyboardMarkup(keyboard)
 
 def get_plan_management_keyboard() -> InlineKeyboardMarkup:
     keyboard = [
         [
-            InlineKeyboardButton("💎 مدیریت پلن‌های نامحدود", callback_data="admin_manage_unlimited"),
-            InlineKeyboardButton("💡 مدیریت پلن‌های حجمی", callback_data="admin_manage_volumetric")
+            InlineKeyboardButton(_("inline_keyboards.plan_management.manage_unlimited"), callback_data="admin_manage_unlimited"),
+            InlineKeyboardButton(_("inline_keyboards.plan_management.manage_volumetric"), callback_data="admin_manage_volumetric")
         ],
         [
-            InlineKeyboardButton("✏️ تنظیم نام پلن‌ها", callback_data="admin_set_plan_names")
+            InlineKeyboardButton(_("inline_keyboards.plan_management.set_plan_names"), callback_data="admin_set_plan_names")
         ],
         [
-            InlineKeyboardButton("🔙 بازگشت به تنظیمات مالی", callback_data="back_to_financial_settings")
+            InlineKeyboardButton(_("inline_keyboards.plan_management.back_to_financial_settings"), callback_data="back_to_financial_settings")
         ]
     ]
     return InlineKeyboardMarkup(keyboard)

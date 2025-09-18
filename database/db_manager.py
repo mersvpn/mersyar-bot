@@ -75,7 +75,16 @@ async def _run_migrations(conn):
         except Exception as e:
             LOGGER.error(f"Failed to apply migration for 'base_daily_price': {e}", exc_info=True)
         
-        # We must commit DDL changes from migrations
+        try:
+            await cur.execute("SHOW COLUMNS FROM users LIKE 'wallet_balance';")
+            if not await cur.fetchone():
+                LOGGER.info("Applying migration: Adding 'wallet_balance' to 'users' table.")
+                await cur.execute("ALTER TABLE users ADD COLUMN wallet_balance DECIMAL(15, 2) NOT NULL DEFAULT 0.00;")
+                LOGGER.info("Migration successful for 'wallet_balance'.")
+        except Exception as e:
+            LOGGER.error(f"Failed to apply migration for 'wallet_balance': {e}", exc_info=True)
+
+        # We must commit DDL changes from migrations ONCE at the end.
         await conn.commit()
         LOGGER.info("Database migrations finished.")
 
@@ -202,6 +211,81 @@ async def execute_query(query, args=None, fetch=None):
         LOGGER.error(f"Query failed: {query} | Error: {e}", exc_info=True)
         # For write operations, we should not hide the error
         return None
+
+# =============================================================================
+#  Wallet Management Functions (NEW SECTION)
+# =============================================================================
+
+async def get_user_wallet_balance(user_id: int) -> Optional[float]:
+    """
+    Retrieves the current wallet balance for a specific user.
+    Returns the balance as a float, or None if the user is not found.
+    """
+    query = "SELECT wallet_balance FROM users WHERE user_id = %s;"
+    result = await execute_query(query, (user_id,), fetch='one')
+    
+    if result and 'wallet_balance' in result:
+        # The balance is stored as DECIMAL, which aiomysql returns as a Decimal object.
+        # We convert it to a float for easier use in the bot logic.
+        return float(result['wallet_balance'])
+    
+    LOGGER.warning(f"Could not retrieve wallet balance for user_id: {user_id}. User may not exist.")
+    return None
+
+
+
+async def increase_wallet_balance(user_id: int, amount: float) -> Optional[float]:
+    """
+    Increases a user's wallet balance by a given amount and returns the new balance.
+    This operation is atomic to prevent race conditions.
+    Returns the new balance, or None if the operation fails.
+    """
+    if amount <= 0:
+        LOGGER.warning(f"Attempted to increase wallet balance with non-positive amount: {amount}")
+        return None
+
+    query = "UPDATE users SET wallet_balance = wallet_balance + %s WHERE user_id = %s;"
+    result = await execute_query(query, (amount, user_id))
+
+    if result is not None and result > 0:
+        # If the update was successful, fetch the new balance to return it
+        new_balance = await get_user_wallet_balance(user_id)
+        return new_balance
+    
+    LOGGER.error(f"Failed to increase wallet balance for user_id: {user_id}. User may not exist or DB error.")
+    return None
+
+# FILE: database/db_manager.py
+
+async def decrease_wallet_balance(user_id: int, amount: float) -> Optional[float]:
+    """
+    Decreases a user's wallet balance by a given amount.
+    This operation is atomic and checks for sufficient funds.
+    Returns the new balance if successful, or None if funds are insufficient or an error occurs.
+    """
+    if amount <= 0:
+        LOGGER.warning(f"Attempted to decrease wallet balance with non-positive amount: {amount}")
+        return None
+
+    # This query atomically updates the balance ONLY IF the user has enough funds.
+    query = """
+        UPDATE users 
+        SET wallet_balance = wallet_balance - %s 
+        WHERE user_id = %s AND wallet_balance >= %s;
+    """
+    
+    # The amount is passed twice: once for subtraction, once for the check.
+    result = await execute_query(query, (amount, user_id, amount))
+
+    if result is not None and result > 0:
+        # The update was successful (1 row affected). Fetch the new balance.
+        new_balance = await get_user_wallet_balance(user_id)
+        return new_balance
+    
+    # If result is 0, it means the WHERE clause failed (insufficient funds).
+    # If result is None, a DB error occurred.
+    LOGGER.warning(f"Failed to decrease wallet balance for user {user_id}. Insufficient funds or DB error.")
+    return None
 
 # FIX 3: Add explicit commit for direct cursor usage.
 async def add_or_update_user(user) -> bool:

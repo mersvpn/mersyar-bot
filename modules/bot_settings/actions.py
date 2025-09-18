@@ -60,13 +60,20 @@ async def _build_and_send_menu(update: Update, context: ContextTypes.DEFAULT_TYP
     bot_settings = await load_bot_settings()
     is_active_status = await is_bot_active()
     
+    # --- Maintenance Status Section ---
     maintenance_btn_text = _("bot_settings.status_on") if is_active_status else _("bot_settings.status_off_maintenance")
     maintenance_callback = "toggle_maintenance_disable" if is_active_status else "toggle_maintenance_enable"
 
+    # --- Log Channel Status Section ---
     log_channel_is_enabled = bot_settings.get('is_log_channel_enabled', False)
     log_channel_btn_text = _("bot_settings.status_active") if log_channel_is_enabled else _("bot_settings.status_inactive")
     log_channel_callback = "toggle_log_channel_disable" if log_channel_is_enabled else "toggle_log_channel_enable"
     
+    # --- Wallet Status Section (NEW) ---
+    is_wallet_enabled = bot_settings.get('is_wallet_enabled', False) # Assumes default is False
+    wallet_btn_text = _("bot_settings.status_active") if is_wallet_enabled else _("bot_settings.status_inactive")
+    wallet_callback = "toggle_wallet_disable" if is_wallet_enabled else "toggle_wallet_enable"
+
     keyboard = [
         [
             InlineKeyboardButton(maintenance_btn_text, callback_data=maintenance_callback),
@@ -75,6 +82,10 @@ async def _build_and_send_menu(update: Update, context: ContextTypes.DEFAULT_TYP
         [
             InlineKeyboardButton(log_channel_btn_text, callback_data=log_channel_callback),
             InlineKeyboardButton(_("bot_settings.label_log_channel"), callback_data="noop")
+        ],
+        [ # <-- ADDED THIS ROW
+            InlineKeyboardButton(wallet_btn_text, callback_data=wallet_callback),
+            InlineKeyboardButton(_("bot_settings.label_wallet_status"), callback_data="noop")
         ],
         [InlineKeyboardButton(_("bot_settings.button_back_to_tools"), callback_data="bot_status_back")]
     ]
@@ -142,3 +153,16 @@ async def back_to_tools(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     )
     context.user_data.clear()
     return ConversationHandler.END
+
+async def toggle_wallet_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    from shared.translator import _
+    from database.db_manager import save_bot_settings
+    
+    query = update.callback_query
+    new_status = (query.data == "toggle_wallet_enable")
+    await save_bot_settings({"is_wallet_enabled": new_status})
+    
+    feedback = _("bot_settings.feedback_wallet_enabled") if new_status else _("bot_settings.feedback_wallet_disabled")
+    await query.answer(feedback, show_alert=True)
+    await _build_and_send_menu(update, context)
+    return MENU_STATE
