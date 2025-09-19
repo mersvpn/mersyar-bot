@@ -113,8 +113,7 @@ async def get_user_data(username: str) -> Optional[Dict[str, Any]]:
         return None
     return response
 
-# FILE: modules/marzban/actions/api.py
-# REPLACE ONLY THIS FUNCTION
+
 
 async def modify_user_api(username: str, settings_to_change: dict) -> Tuple[bool, str]:
     current_data = await get_user_data(username)
@@ -129,23 +128,24 @@ async def modify_user_api(username: str, settings_to_change: dict) -> Tuple[bool
     if 'proxies' in current_data and isinstance(current_data['proxies'], dict):
         current_data['proxies'] = {p: s for p, s in current_data['proxies'].items() if s}
         
-    # V V V V V THE FINAL FIX IS HERE V V V V V
-    # If the user's current status is not one of the valid writable statuses
-    # (e.g., it's 'expired' or 'limited'), force it back to 'active'.
-    # This ensures that adding days/data to an expired user reactivates them.
     valid_statuses = ['active', 'disabled', 'on_hold']
     if current_data.get('status') not in valid_statuses:
         current_data['status'] = 'active'
-    # ^ ^ ^ ^ ^ THE FINAL FIX IS HERE ^ ^ ^ ^ ^
 
     # Merge the current data with the new settings
     updated_payload = {**current_data, **settings_to_change}
+    
+    # (⭐ تغییر کلیدی ⭐) اگر درخواست ریست ترافیک داده شده، آن را اعمال کن
+    if settings_to_change.get('used_traffic') == 0:
+        updated_payload['used_traffic'] = 0
     
     response = await _api_request("PUT", f"/api/user/{username}", json=updated_payload)
     
     if response and "error" not in response:
         return True, "User updated successfully."
     return False, response.get("error", "Unknown error") if response else "Network error"
+
+
 async def delete_user_api(username: str) -> Tuple[bool, str]:
     response = await _api_request("DELETE", f"/api/user/{username}")
     if response and "error" not in response:
@@ -204,6 +204,80 @@ async def add_data_to_user_api(username: str, data_gb: int) -> Tuple[bool, str]:
         return False, f"Failed to add data to user '{username}': {message}"
 
 # ... (the rest of the file, starting with async def close_client():)
+
+# این تابع را به api.py اضافه کنید
+
+# این تابع را در api.py جایگزین کنید
+
+async def add_days_to_user_api(username: str, days_to_add: int) -> Tuple[bool, str]:
+    """
+    Extends a user's subscription by a specified number of days.
+    """
+    import datetime
+
+    current_data = await get_user_data(username)
+    if not current_data:
+        return False, f"User '{username}' not found or API error during fetch."
+        
+    current_expire_ts = current_data.get('expire')
+    
+    # Use now() as the base if the user is already expired or has no expiry
+    now_ts = int(datetime.datetime.now().timestamp())
+    start_ts = current_expire_ts if current_expire_ts and current_expire_ts > now_ts else now_ts
+    
+    start_date = datetime.datetime.fromtimestamp(start_ts)
+    new_expire_date = start_date + datetime.timedelta(days=days_to_add)
+    new_expire_ts = int(new_expire_date.timestamp())
+
+    settings_to_change = {
+        "expire": new_expire_ts
+    }
+    
+    # The success of this operation depends on the success of modify_user_api
+    success, message = await modify_user_api(username, settings_to_change)
+    
+    if success:
+        return True, f"Successfully added {days_to_add} days to user '{username}'."
+    else:
+        # Pass the error message from the nested call
+        return False, f"Failed to add days to user '{username}': {message}"
+    
+# در فایل: modules/marzban/actions/api.py
+# همچنین این تابع را با نسخه ساده‌تر زیر جایگزین کنید:
+
+async def renew_user_subscription_api(username: str, days_to_add: int) -> Tuple[bool, str]:
+    """
+    Performs a full subscription renewal in a single, atomic API call.
+    It extends the expiry date and resets used traffic simultaneously.
+    """
+    import datetime
+    LOGGER.info(f"Renewing subscription for '{username}' for {days_to_add} days (atomic operation).")
+
+    current_data = await get_user_data(username)
+    if not current_data:
+        return False, f"User '{username}' not found or API error during fetch."
+        
+    current_expire_ts = current_data.get('expire')
+    
+    now_ts = int(datetime.datetime.now().timestamp())
+    start_ts = current_expire_ts if current_expire_ts and current_expire_ts > now_ts else now_ts
+    
+    start_date = datetime.datetime.fromtimestamp(start_ts)
+    new_expire_date = start_date + datetime.timedelta(days=days_to_add)
+    new_expire_ts = int(new_expire_date.timestamp())
+
+    # حالا هر دو تغییر را در یک دیکشنری آماده می‌کنیم
+    settings_to_change = {
+        "expire": new_expire_ts,
+        "used_traffic": 0  # <--- ریست ترافیک همینجا درخواست می‌شود
+    }
+    
+    success, message = await modify_user_api(username, settings_to_change)
+    
+    if success:
+        return True, f"Successfully renewed for {days_to_add} days and reset traffic."
+    else:
+        return False, f"Failed to renew user '{username}': {message}"
 
 async def close_client():
     if not _client.is_closed:

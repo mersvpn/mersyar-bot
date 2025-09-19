@@ -83,6 +83,16 @@ async def _run_migrations(conn):
                 LOGGER.info("Migration successful for 'wallet_balance'.")
         except Exception as e:
             LOGGER.error(f"Failed to apply migration for 'wallet_balance': {e}", exc_info=True)
+                    # Migration for auto-renewal feature
+        try:
+            await cur.execute("SHOW COLUMNS FROM marzban_telegram_links LIKE 'auto_renew';")
+            if not await cur.fetchone():
+                LOGGER.info("Applying migration: Adding 'auto_renew' to 'marzban_telegram_links' table.")
+                # BOOLEAN is stored as TINYINT(1) in MySQL. Default is FALSE (0).
+                await cur.execute("ALTER TABLE marzban_telegram_links ADD COLUMN auto_renew BOOLEAN NOT NULL DEFAULT FALSE;")
+                LOGGER.info("Migration successful for 'auto_renew'.")
+        except Exception as e:
+            LOGGER.error(f"Failed to apply migration for 'auto_renew': {e}", exc_info=True)
 
         # We must commit DDL changes from migrations ONCE at the end.
         await conn.commit()
@@ -779,3 +789,76 @@ async def get_user_by_id(user_id: int) -> dict:
     """Retrieves basic user info by their Telegram ID."""
     query = "SELECT user_id, first_name, username FROM users WHERE user_id = %s;"
     return await execute_query(query, (user_id,), fetch='one')
+
+# این سه تابع را به db_manager.py اضافه کنید
+
+async def is_auto_renew_enabled(telegram_user_id: int, marzban_username: str) -> bool:
+    """Checks if auto-renewal is enabled for a specific user service."""
+    query = "SELECT auto_renew FROM marzban_telegram_links WHERE telegram_user_id = %s AND marzban_username = %s;"
+    result = await execute_query(query, (telegram_user_id, marzban_username), fetch='one')
+    # The result will be 1 for TRUE and 0 for FALSE
+    return bool(result['auto_renew']) if result else False
+
+async def set_auto_renew_status(telegram_user_id: int, marzban_username: str, status: bool) -> bool:
+    """Sets the auto-renewal status for a specific user service."""
+    query = "UPDATE marzban_telegram_links SET auto_renew = %s WHERE telegram_user_id = %s AND marzban_username = %s;"
+    result = await execute_query(query, (status, telegram_user_id, marzban_username))
+    return result is not None and result > 0
+
+async def get_all_auto_renew_users() -> List[Dict[str, Any]]:
+    """Fetches all user services that have auto-renewal enabled."""
+    query = "SELECT telegram_user_id, marzban_username FROM marzban_telegram_links WHERE auto_renew = TRUE;"
+    return await execute_query(query, fetch='all') or []
+
+# =============================================================================
+#  Optimized Auto-Renewal Job Functions (NEW - FOR PERFORMANCE)
+# =============================================================================
+
+async def get_users_ready_for_auto_renewal() -> List[Dict[str, Any]]:
+    """
+    (OPTIMIZED) Fetches all users who are ready for immediate auto-renewal.
+    This single query joins multiple tables to get users who meet ALL criteria:
+    1. Auto-renewal is enabled for their service.
+    2. They have sufficient wallet balance to cover the subscription price.
+    Returns a list of users with all necessary data for renewal.
+    """
+    query = """
+        SELECT
+            mtl.telegram_user_id,
+            mtl.marzban_username,
+            un.subscription_price,
+            un.subscription_duration,
+            u.wallet_balance
+        FROM marzban_telegram_links AS mtl
+        JOIN users AS u ON mtl.telegram_user_id = u.user_id
+        JOIN user_notes AS un ON mtl.marzban_username = un.username
+        WHERE
+            mtl.auto_renew = TRUE
+            AND u.wallet_balance >= un.subscription_price
+            AND un.subscription_price IS NOT NULL AND un.subscription_price > 0
+            AND un.subscription_duration IS NOT NULL AND un.subscription_duration > 0;
+    """
+    return await execute_query(query, fetch='all') or []
+
+
+async def get_users_for_auto_renewal_warning() -> List[Dict[str, Any]]:
+    """
+    (OPTIMIZED) Fetches users whose auto-renewal is enabled but have insufficient funds.
+    This is used to send a warning message to the user.
+    """
+    query = """
+        SELECT
+            mtl.telegram_user_id,
+            mtl.marzban_username,
+            un.subscription_price,
+            u.wallet_balance
+        FROM marzban_telegram_links AS mtl
+        JOIN users AS u ON mtl.telegram_user_id = u.user_id
+        JOIN user_notes AS un ON mtl.marzban_username = un.username
+        WHERE
+            mtl.auto_renew = TRUE
+            AND u.wallet_balance < un.subscription_price
+            AND un.subscription_price IS NOT NULL AND un.subscription_price > 0
+            AND un.subscription_duration IS NOT NULL AND un.subscription_duration > 0;
+    """
+    return await execute_query(query, fetch='all') or []

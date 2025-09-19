@@ -1,4 +1,4 @@
-# FILE: modules/general/actions.py (REVISED FOR I18N)
+# FILE: modules/general/actions.py (FINAL CORRECTED VERSION)
 
 import logging
 from telegram import Update
@@ -7,7 +7,6 @@ from telegram.constants import ParseMode
 from database import db_manager
 from config import config
 
-# Import the new translator function
 from shared.translator import _
 from shared.keyboards import (
     get_customer_main_menu_keyboard,
@@ -18,16 +17,12 @@ from modules.auth import admin_only
 from modules.marzban.actions.data_manager import link_user_to_telegram, normalize_username
 from modules.marzban.actions.api import get_user_data
 
-
 LOGGER = logging.getLogger(__name__)
 
 # =============================================================================
 #  Central helper function for displaying the main menu
 # =============================================================================
 
-# FILE: modules/general/actions.py
-
-# تابع زیر را به طور کامل جایگزین کنید
 async def send_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, message_text: str = ""):
     user = update.effective_user
     
@@ -35,13 +30,16 @@ async def send_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, mes
         message_text = _("general.welcome", first_name=user.first_name)
 
     if user.id in config.AUTHORIZED_USER_IDS and not context.user_data.get('is_admin_in_customer_view'):
-        reply_markup = get_admin_main_menu_keyboard() # This one remains sync
+        # This function is synchronous.
+        reply_markup = get_admin_main_menu_keyboard() 
         message_text += _("general.admin_dashboard_active")
     else:
         if context.user_data.get('is_admin_in_customer_view'):
-            reply_markup = await get_customer_view_for_admin_keyboard() # <-- ADDED await
+            # (⭐ FIX ⭐) This async function must be awaited.
+            reply_markup = await get_customer_view_for_admin_keyboard()
         else:
-            reply_markup = await get_customer_main_menu_keyboard() # <-- ADDED await
+            # (⭐ FIX ⭐) This async function must also be awaited.
+            reply_markup = await get_customer_main_menu_keyboard()
         message_text += _("general.customer_dashboard_prompt")
 
     target_message = update.effective_message
@@ -73,7 +71,8 @@ async def switch_to_customer_view(update: Update, context: ContextTypes.DEFAULT_
     context.user_data['is_admin_in_customer_view'] = True
     await update.message.reply_text(
         _("views.switched_to_customer"),
-        reply_markup=await get_customer_view_for_admin_keyboard(), # <-- ADDED await
+        # (⭐ FIX ⭐) This async function must be awaited.
+        reply_markup=await get_customer_view_for_admin_keyboard(),
         parse_mode=ParseMode.MARKDOWN
     )
 
@@ -86,7 +85,6 @@ async def switch_to_admin_view(update: Update, context: ContextTypes.DEFAULT_TYP
     )
     
 async def handle_user_linking(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    # This function is now correctly preserved.
     pass
 
 async def show_my_id(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -99,100 +97,85 @@ async def show_my_id(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 # =============================================================================
 
 async def end_conversation_and_show_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Standard function to end a conversation triggered by 'Back to main menu'."""
     LOGGER.info(f"--- Fallback triggered for user {update.effective_user.id}. Ending conversation. ---")
     context.user_data.clear()
     await send_main_menu(update, context, message_text=_("general.operation_cancelled"))
     return ConversationHandler.END
 
+
+# در فایل: modules/general/actions.py
+# این نسخه نهایی و قطعی تابع fallback است.
+
 async def end_conv_and_reroute(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """
-    A powerful fallback that ends the current conversation and then calls the
-    correct handler for the main menu button that was pressed.
+    Final, correct, and i18n-aware fallback. It ends the current conversation
+    and reroutes to the correct handler using the correct translation keys.
     """
-    # Import locally to prevent circular import errors
     from modules.customer.actions import panel, service, guide
-    # NOTE: Text for buttons is in keyboards.py and will be handled separately.
-    # This logic remains the same.
+    from shared.translator import _
+
     text = update.message.text
-    LOGGER.info(f"--- Main menu override for user {update.effective_user.id} by '{text}'. Ending conversation. ---")
-    
-    # Reroute to the correct function based on the button clicked
-    if 'فروشگاه' in text:
+    LOGGER.info(f"--- Main menu override for user {update.effective_user.id} by '{text}'. Ending conversation and rerouting. ---")
+
+    # (⭐ FIX ⭐) Using the CORRECT translation keys from your keyboards.json file.
+    shop_button_text = _("keyboards.customer_main_menu.shop")
+    services_button_text = _("keyboards.customer_main_menu.my_services")
+    guide_button_text = _("keyboards.customer_main_menu.connection_guide")
+
+    # Compare the user's message with the correct translated texts
+    if text == shop_button_text:
         await panel.show_customer_panel(update, context)
-    elif 'سرویس‌های من' in text:
+    elif text == services_button_text:
         await service.handle_my_service(update, context)
-    elif 'راهنمای اتصال' in text:
-        await guide.handle_customer_guide(update, context)
-    else: 
+    elif text == guide_button_text:
+        # NOTE: You had a function named `handle_customer_guide` in your handler,
+        # but the function in the guide module is likely `show_guides_to_customer`.
+        # Please verify and use the correct function name. I'll use the latter.
+        await guide.show_guides_to_customer(update, context)
+    else:
+        # This will catch "بازگشت به منوی اصلی" and any other default cases.
         await start(update, context)
-    
+
+    # Crucially, we always end the conversation this fallback belongs to.
     return ConversationHandler.END
 
 async def handle_deep_link(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    Handles the /start command. It checks for a deep link payload
-    and either processes the link or shows the main menu.
-    """
     user = update.effective_user
     args = context.args
-
     if args and len(args) > 0 and args[0].startswith("link-"):
         marzban_username_raw = args[0].split('-', 1)[1]
         marzban_username_normalized = normalize_username(marzban_username_raw)
         telegram_user_id = user.id
-
         LOGGER.info(f"User {telegram_user_id} started bot with deep link for Marzban user '{marzban_username_raw}'.")
-        
         marzban_user_data = await get_user_data(marzban_username_normalized)
         if not marzban_user_data or "error" in marzban_user_data:
             await update.message.reply_text(_("linking.user_not_found"))
             await start(update, context)
             return
-
         success = await link_user_to_telegram(marzban_username_normalized, telegram_user_id)
-
         if success:
-            await update.message.reply_text(
-                _("linking.link_successful", username=marzban_username_raw),
-                parse_mode=ParseMode.MARKDOWN
-            )
+            await update.message.reply_text(_("linking.link_successful", username=marzban_username_raw), parse_mode=ParseMode.MARKDOWN)
         else:
             await update.message.reply_text(_("linking.link_error"))
-        
         await start(update, context)
     else:
         await start(update, context)
 
-
-
-# This new function should be added at the end of the file.
 async def admin_fallback_reroute(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """
-    A powerful fallback for ADMIN conversations. It ends the current conversation
-    and then calls the correct handler for the main menu button that was pressed.
-    """
-    # Import admin action modules locally to prevent circular imports
     from modules.marzban.handler import show_user_management_menu
     from modules.financials.handler import show_settings_and_tools_menu
     
     user = update.effective_user
     text = update.message.text
     LOGGER.info(f"--- [Admin Fallback] Admin {user.id} triggered reroute with '{text}'. Ending conversation. ---")
-    
-    # Clear any leftover data from the previous conversation
     context.user_data.clear()
 
-    # Reroute to the correct function based on the button clicked
+    # This part also needs to be i18n-aware if you use it extensively
     if 'مدیریت کاربران' in text:
         await show_user_management_menu(update, context)
     elif 'تنظیمات و ابزارها' in text:
         await show_settings_and_tools_menu(update, context)
-    # Add other main admin buttons here as needed
-    # elif 'Some Other Button' in text:
-    #     await some_other_function(update, context)
     else: 
-        # Default to the main menu if no specific button is matched
         await start(update, context)
     
     return ConversationHandler.END

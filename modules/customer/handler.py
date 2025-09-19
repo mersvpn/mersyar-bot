@@ -13,6 +13,8 @@ from .actions import (
     unlimited_purchase as unlimited_purchase_actions,
     charge as charge_actions
 )
+from .actions import purchase, renewal, service, panel, guide, wallet
+
 from modules.general.actions import end_conversation_and_show_menu, end_conv_and_reroute, start
 from config import config
 
@@ -45,7 +47,9 @@ def register(application: Application):
                 CallbackQueryHandler(renewal.handle_renewal_request, pattern=r'^customer_renew_request_'),
                 CallbackQueryHandler(service.confirm_reset_subscription, pattern=r'^customer_reset_sub_'),
                 CallbackQueryHandler(service.request_delete_service, pattern=r'^request_delete_'),
-                CallbackQueryHandler(service.start_data_purchase, pattern=r'^purchase_data_')
+                CallbackQueryHandler(service.start_data_purchase, pattern=r'^purchase_data_'),
+                CallbackQueryHandler(service.toggle_auto_renew, pattern=r'^toggle_autorenew_')
+                
             ],
             service.CONFIRM_RESET_SUB: [
                 CallbackQueryHandler(service.execute_reset_subscription, pattern=r'^do_reset_sub_'),
@@ -173,7 +177,7 @@ def register(application: Application):
     application.add_handler(MessageHandler(filters.Regex(r'^🔙 بازگشت به منوی اصلی$'), start), group=1)
     application.add_handler(CallbackQueryHandler(renewal.handle_renewal_request, pattern=r'^customer_renew_request_'), group=1)
     if config.SUPPORT_USERNAME:
-        application.add_handler(MessageHandler(filters.Regex(r'^💬 پشتیبانی$'), purchase.handle_support_button), group=1)
+        application.add_handler(MessageHandler(filters.Regex(r'^💬 پشتیبـــانی$'), purchase.handle_support_button), group=1)
 
     application.add_handler(CallbackQueryHandler(guide.send_guide_content_to_customer, pattern=r'^customer_show_guide_'), group=1)
     application.add_handler(CallbackQueryHandler(guide.show_guides_to_customer, pattern=r'^customer_back_to_guides$'), group=1)
