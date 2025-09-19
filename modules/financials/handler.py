@@ -1,4 +1,4 @@
-# FILE: financials/handler.py (FINAL VERSION - HANDLER DEFINITIONS)
+# FILE: financials/handler.py (FINAL COMPLETE AND CORRECTED VERSION)
 
 import logging
 from telegram.ext import (
@@ -40,6 +40,7 @@ def register(application: Application):
     LOGGER.info("Registering financials module handlers...")
     
     # --- Define Conversations with Shared Fallbacks ---
+    # This assumes these convs are imported correctly from other files
     card_settings_conv.fallbacks.extend(ADMIN_CONV_FALLBACKS)
     payment_request_conv.fallbacks.extend(ADMIN_CONV_FALLBACKS)
     plan_name_settings_conv.fallbacks.extend(ADMIN_CONV_FALLBACKS)
@@ -49,12 +50,18 @@ def register(application: Application):
     volumetric_plans_admin.edit_tier_conv.fallbacks.extend(ADMIN_CONV_FALLBACKS)
     wallet_admin.edit_amounts_conv.fallbacks.extend(ADMIN_CONV_FALLBACKS)
 
+    # (⭐ FIX ⭐) This is the fully corrected ConversationHandler for balance management
     balance_management_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(balance_management.start_balance_management, pattern='^admin_manage_balance$')],
         states={
-            balance_management.GET_USER_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, balance_management.process_user_id)],
+            balance_management.GET_USER_ID: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, balance_management.process_user_id),
+                # Add a handler for the cancel button in the first step
+                CallbackQueryHandler(balance_management.cancel_management, pattern=r'^cancel_balance_management$')
+            ],
             balance_management.SHOW_USER_BALANCE: [
-                CallbackQueryHandler(balance_management.cancel_management, pattern=r'^balance_back$'),
+                # The callback data for back button is now standardized
+                CallbackQueryHandler(balance_management.cancel_management, pattern=r'^cancel_balance_management$'),
                 CallbackQueryHandler(balance_management.prompt_for_amount, pattern=r'^balance_')
             ],
             balance_management.GET_AMOUNT: [
@@ -62,7 +69,12 @@ def register(application: Application):
                 CallbackQueryHandler(balance_management.show_user_balance_menu, pattern=r'^cancel_amount_entry$')
             ],
         },
-        fallbacks=[*ADMIN_CONV_FALLBACKS]
+        fallbacks=[
+            # A specific fallback for the cancel button to ensure it always works
+            CallbackQueryHandler(balance_management.cancel_management, pattern=r'^cancel_balance_management$'),
+            # The general admin fallbacks for main menu buttons
+            *ADMIN_CONV_FALLBACKS
+        ]
     )
 
     # =============================================================================

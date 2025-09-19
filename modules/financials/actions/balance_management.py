@@ -1,11 +1,11 @@
-# FILE: modules/financials/actions/balance_management.py (FINAL - LOGIC ONLY)
+# FILE: modules/financials/actions/balance_management.py (FINAL CORRECTED VERSION)
 
 import logging
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
-from telegram.ext import ContextTypes, ConversationHandler, MessageHandler, filters, CommandHandler
+from telegram.ext import ContextTypes, ConversationHandler
 from database.db_manager import get_user_wallet_balance, increase_wallet_balance, decrease_wallet_balance, get_user_by_id
 from shared.translator import _
-from .settings import show_financial_menu
+from .wallet_admin import show_wallet_settings_menu # (⭐ FIX ⭐) Import from the correct file: wallet_admin.py
 
 LOGGER = logging.getLogger(__name__)
 
@@ -19,8 +19,8 @@ async def start_balance_management(update: Update, context: ContextTypes.DEFAULT
     query = update.callback_query
     await query.answer()
     text = _("financials_balance.prompt_for_user_id")
-    # Add a cancel button to the very first step
-    keyboard = [[InlineKeyboardButton(_("financials_balance.button_back"), callback_data="balance_back")]]
+    # This button now correctly points to a function that will end the conversation.
+    keyboard = [[InlineKeyboardButton(_("financials_balance.button_back_to_wallet_menu"), callback_data="cancel_balance_management")]]
     await query.edit_message_text(text=text, reply_markup=InlineKeyboardMarkup(keyboard))
     return GET_USER_ID
 
@@ -40,7 +40,11 @@ async def process_user_id(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     context.user_data['managed_user_id'] = user_id
     context.user_data['managed_user_info'] = user_info
     
+    # Delete the message where admin typed the ID
     await update.message.delete()
+    # Also delete the prompt message ("Please enter the user ID")
+    await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=update.message.message_id - 1)
+    
     return await show_user_balance_menu(update, context)
 
 
@@ -63,10 +67,12 @@ async def show_user_balance_menu(update: Update, context: ContextTypes.DEFAULT_T
             InlineKeyboardButton(_("financials_balance.button_increase"), callback_data=f"balance_{INCREASE}"),
             InlineKeyboardButton(_("financials_balance.button_decrease"), callback_data=f"balance_{DECREASE}")
         ],
-        [InlineKeyboardButton(_("financials_balance.button_back"), callback_data="balance_back")]
+        # (⭐ FIX ⭐) This button now correctly points back to the main wallet settings menu
+        [InlineKeyboardButton(_("financials_balance.button_back_to_wallet_menu"), callback_data="cancel_balance_management")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
+    # This logic handles both initial entry and returning after an action
     if update.callback_query:
         await update.callback_query.edit_message_text(text, reply_markup=reply_markup)
     else:
@@ -80,10 +86,7 @@ async def prompt_for_amount(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     action = query.data.split('_')[1]
     context.user_data['balance_action'] = action
     
-    if action == INCREASE:
-        prompt_text = _("financials_balance.prompt_for_increase_amount")
-    else:
-        prompt_text = _("financials_balance.prompt_for_decrease_amount")
+    prompt_text = _(f"financials_balance.prompt_for_{action}_amount")
         
     await query.answer()
     
@@ -107,29 +110,36 @@ async def process_amount(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     
     if action == INCREASE:
         await increase_wallet_balance(user_id, amount)
-        await update.message.reply_text(_("financials_balance.update_successful"))
+        feedback_msg = await update.message.reply_text(_("financials_balance.update_successful"))
     else: # DECREASE
         new_balance = await decrease_wallet_balance(user_id, amount)
         if new_balance is not None:
-            await update.message.reply_text(_("financials_balance.update_successful"))
+            feedback_msg = await update.message.reply_text(_("financials_balance.update_successful"))
         else:
-            await update.message.reply_text(_("financials_balance.decrease_failed_insufficient"))
+            feedback_msg = await update.message.reply_text(_("financials_balance.decrease_failed_insufficient"))
             
-    # We need to manually delete the message where the user typed the amount
+    # Clean up messages
     try:
         await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=update.message.message_id - 1)
         await update.message.delete()
+        await context.bot.delete_message(chat_id=feedback_msg.chat_id, message_id=feedback_msg.message_id)
     except Exception:
-        pass # Ignore if messages can't be deleted
+        pass
 
+    # Return to the user's balance menu
     return await show_user_balance_menu(update, context)
 
 
 async def cancel_management(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """
+    (⭐ FIX ⭐) This function now cleanly ends the conversation and shows the previous menu.
+    """
     query = update.callback_query
     await query.answer()
     
     context.user_data.clear()
-    await query.edit_message_text(_("financials_balance.operation_cancelled"))
-    # The END of conversation will be handled by the fallback which reroutes to the main financial menu
+    
+    # We don't just send a text, we redisplay the wallet settings menu
+    await show_wallet_settings_menu(update, context)
+    
     return ConversationHandler.END
