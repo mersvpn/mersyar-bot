@@ -774,3 +774,8 @@ async def load_pricing_parameters() -> Dict[str, Any]:
         "base_daily_price": base_price,
         "tiers": tiers
     }
+
+async def get_user_by_id(user_id: int) -> dict:
+    """Retrieves basic user info by their Telegram ID."""
+    query = "SELECT user_id, first_name, username FROM users WHERE user_id = %s;"
+    return await execute_query(query, (user_id,), fetch='one')

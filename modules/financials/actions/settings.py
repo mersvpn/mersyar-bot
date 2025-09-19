@@ -22,27 +22,40 @@ LOGGER = logging.getLogger(__name__)
 # 1. Main Financial Menu Functions
 # =============================================================================
 
+
+
 @admin_only
 async def show_financial_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     from shared.translator import _
-    text = _("financials_settings.main_menu_title")
-    keyboard = get_financial_settings_keyboard()
+    text = _("financials_settings.main_menu_title_inline")
+    
+    bot_settings = await load_bot_settings()
+    is_wallet_enabled = bot_settings.get('is_wallet_enabled', False)
+    
+    keyboard_rows = [
+        [
+            InlineKeyboardButton(_("financials_settings.button_payment_settings"), callback_data="show_payment_methods"),
+            InlineKeyboardButton(_("financials_settings.button_plan_management"), callback_data="show_plan_management")
+        ]
+    ]
+
+    if is_wallet_enabled:
+        keyboard_rows.append([
+            InlineKeyboardButton(_("financials_settings.button_wallet_settings"), callback_data="admin_wallet_settings")
+        ])
+
+    keyboard_rows.append(
+        [InlineKeyboardButton(_("financials_settings.button_back_to_settings"), callback_data="back_to_main_settings")]
+    )
+    
+    keyboard = InlineKeyboardMarkup(keyboard_rows)
 
     if update.callback_query:
-        query = update.callback_query
-        await query.answer()
-        back_text = _("financials_settings.back_to_financial_menu")
-        if query.message.text != back_text:
-            await query.edit_message_text(back_text)
-        await context.bot.send_message(
-            chat_id=update.effective_chat.id, text=text,
-            reply_markup=keyboard, parse_mode=ParseMode.MARKDOWN
-        )
+        await update.callback_query.answer()
+        await update.callback_query.edit_message_text(text=text, reply_markup=keyboard)
     else:
-        await update.message.reply_text(
-            text=text, reply_markup=keyboard, parse_mode=ParseMode.MARKDOWN
-        )
-
+        await update.message.delete()
+        await context.bot.send_message(chat_id=update.effective_chat.id, text=text, reply_markup=keyboard)
 @admin_only
 async def show_payment_methods_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     from shared.translator import _
@@ -236,3 +249,23 @@ plan_name_settings_conv = ConversationHandler(
     fallbacks=[CommandHandler('cancel', end_conversation_and_show_menu)],
     conversation_timeout=300
 )
+
+# این تابع را به انتهای settings.py اضافه کنید
+
+async def back_to_main_settings_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Deletes the current message and shows the main 'Settings & Tools' menu."""
+    from shared.keyboards import get_settings_and_tools_keyboard
+    from shared.translator import _
+
+    query = update.callback_query
+    await query.answer()
+    
+    # Delete the inline menu message
+    await query.message.delete()
+    
+    # Send the ReplyKeyboardMarkup menu
+    await context.bot.send_message(
+        chat_id=update.effective_chat.id,
+        text=_("financials_settings.back_to_main_settings_text"),
+        reply_markup=get_settings_and_tools_keyboard()
+    )

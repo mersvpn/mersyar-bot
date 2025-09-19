@@ -123,13 +123,15 @@ def get_notes_management_keyboard() -> ReplyKeyboardMarkup:
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
+
+
+# This function is now synchronous again
 def get_financial_settings_keyboard() -> ReplyKeyboardMarkup:
     keyboard = [
         [KeyboardButton(_("keyboards.financial_settings.payment_settings")), KeyboardButton(_("keyboards.financial_settings.sales_plan_management"))],
         [KeyboardButton(_("keyboards.financial_settings.back_to_settings"))]
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
-
 # =============================================================================
 #  InlineKeyboardMarkup Section (Unchanged, but good to keep for context)
 # =============================================================================

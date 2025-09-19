@@ -163,3 +163,36 @@ async def handle_deep_link(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         await start(update, context)
     else:
         await start(update, context)
+
+
+
+# This new function should be added at the end of the file.
+async def admin_fallback_reroute(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """
+    A powerful fallback for ADMIN conversations. It ends the current conversation
+    and then calls the correct handler for the main menu button that was pressed.
+    """
+    # Import admin action modules locally to prevent circular imports
+    from modules.marzban.handler import show_user_management_menu
+    from modules.financials.handler import show_settings_and_tools_menu
+    
+    user = update.effective_user
+    text = update.message.text
+    LOGGER.info(f"--- [Admin Fallback] Admin {user.id} triggered reroute with '{text}'. Ending conversation. ---")
+    
+    # Clear any leftover data from the previous conversation
+    context.user_data.clear()
+
+    # Reroute to the correct function based on the button clicked
+    if 'مدیریت کاربران' in text:
+        await show_user_management_menu(update, context)
+    elif 'تنظیمات و ابزارها' in text:
+        await show_settings_and_tools_menu(update, context)
+    # Add other main admin buttons here as needed
+    # elif 'Some Other Button' in text:
+    #     await some_other_function(update, context)
+    else: 
+        # Default to the main menu if no specific button is matched
+        await start(update, context)
+    
+    return ConversationHandler.END
