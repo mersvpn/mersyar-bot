@@ -6,20 +6,23 @@ from telegram import Update
 from telegram.ext import ContextTypes, ConversationHandler, MessageHandler, filters, CommandHandler
 
 from config import config
-# Note: We remove the top-level import of general.actions to break the cycle.
 
 LOGGER = logging.getLogger(__name__)
 
 # =============================================================================
-#  1. Authorization Decorators
+#  1. Helper function & Authorization Decorators
 # =============================================================================
+
+async def is_admin(user_id: int) -> bool:
+    """A simple, reusable check if a user is an admin."""
+    return user_id in config.AUTHORIZED_USER_IDS
 
 def admin_only(func):
     """Decorator for standard handlers (non-conversation)."""
     @wraps(func)
     async def wrapped(update: Update, context: ContextTypes.DEFAULT_TYPE, *args, **kwargs):
         user = update.effective_user
-        if not user or user.id not in config.AUTHORIZED_USER_IDS:
+        if not user or not await is_admin(user.id):
             LOGGER.warning(f"Unauthorized access denied for {user.id if user else 'Unknown'} in '{func.__name__}'.")
             if update.message:
                 await update.message.reply_text("⛔️ شما اجازه دسترسی به این دستور را ندارید.")
@@ -29,13 +32,12 @@ def admin_only(func):
         return await func(update, context, *args, **kwargs)
     return wrapped
 
-
 def admin_only_conv(func):
     """Decorator for CONVERSATION HANDLER entry points."""
     @wraps(func)
     async def wrapped(update: Update, context: ContextTypes.DEFAULT_TYPE, *args, **kwargs):
         user = update.effective_user
-        if not user or user.id not in config.AUTHORIZED_USER_IDS:
+        if not user or not await is_admin(user.id):
             LOGGER.warning(f"Unauthorized access for {user.id if user else 'Unknown'} to conv '{func.__name__}'.")
             if update.message:
                 await update.message.reply_text("⛔️ شما اجازه دسترسی به این بخش را ندارید.")
@@ -52,8 +54,10 @@ def get_admin_fallbacks():
     Returns a list of shared fallback handlers for admin conversations.
     We use a function to do a local import, breaking the circular dependency.
     """
+    # (⭐ FIX ⭐) Import is moved inside the function.
     from modules.general.actions import admin_fallback_reroute, end_conversation_and_show_menu
     
+    # This regex should be based on translation keys for best practice, but for now this works.
     ADMIN_MAIN_MENU_REGEX = r'^(👤 مدیریت کاربران|⚙️ تنظیمات و ابزارها|📓 مدیریت یادداشت‌ها|📨 ارسال پیام|💻 ورود به پنل کاربری|📚 تنظیمات آموزش|🔙 بازگشت به منوی اصلی)$'
     
     return [
@@ -61,5 +65,4 @@ def get_admin_fallbacks():
         CommandHandler('cancel', end_conversation_and_show_menu)
     ]
 
-# For convenience, you can still have a top-level variable if needed elsewhere
 ADMIN_CONV_FALLBACKS = get_admin_fallbacks()

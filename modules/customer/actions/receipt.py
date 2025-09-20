@@ -54,31 +54,74 @@ async def start_receipt_from_menu(update: Update, context: ContextTypes.DEFAULT_
         await update.message.reply_text(text=text, reply_markup=keyboard)
         return CHOOSE_INVOICE
 
+
 async def start_receipt_from_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """
+    Handles the 'Send Receipt' button click directly from an invoice.
+    It deletes the invoice message and sends a guide photo with a caption as a prompt.
+    This is now a self-contained, robust function.
+    """
     query = update.callback_query
     await query.answer()
 
     message_text = query.message.text
     try:
+        # Parse the invoice ID from the invoice text to store it in context.
         invoice_id_str = message_text.split("شماره فاکتور: `")[1].split("`")[0]
         invoice_id = int(invoice_id_str)
         context.user_data['invoice_id'] = invoice_id
     except (IndexError, ValueError):
         LOGGER.error(f"Could not parse invoice ID from message for user {update.effective_user.id}.")
-        await query.edit_message_text(_("receipt.invoice_id_parse_error"))
+        # Send a new message as we can't reliably edit or delete the old one.
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=_("receipt.invoice_id_parse_error")
+        )
         return ConversationHandler.END
 
-    LOGGER.info(f"User {update.effective_user.id} started receipt upload for invoice #{invoice_id} from inline button.")
+    LOGGER.info(f"User {update.effective_user.id} started receipt upload for invoice #{invoice_id} from an inline button.")
     
-    keyboard = InlineKeyboardMarkup([[InlineKeyboardButton(_("buttons.cancel_operation"), callback_data="cancel_receipt_upload")]])
-    await query.edit_message_text(
-        text=_("receipt.photo_prompt_for_invoice", invoice_text=query.message.text),
-        reply_markup=keyboard,
-        parse_mode=ParseMode.MARKDOWN
-    )
+    # First, delete the old invoice message to keep the chat clean.
+    try:
+        await query.message.delete()
+    except Exception as e:
+        LOGGER.warning(f"Could not delete the original invoice message (ID: {query.message.message_id}): {e}")
+
+    # Prepare the simple text prompt and the cancel button.
+    text_prompt = _("receipt.photo_prompt_simple")
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton(_("buttons.cancel_operation"), callback_data="cancel_receipt_upload")]
+    ])
+    
+    try:
+        # Attempt to open the local photo file in binary read mode.
+        with open("assets/receipt_guide.png", "rb") as photo_file:
+            await context.bot.send_photo(
+                chat_id=update.effective_chat.id,
+                photo=photo_file,  # Send the file object directly from the disk.
+                caption=text_prompt,
+                reply_markup=keyboard,
+                parse_mode=ParseMode.MARKDOWN
+            )
+    except FileNotFoundError:
+        # Fallback: If the guide photo is missing from the project assets,
+        # send a normal text message instead to avoid crashing.
+        LOGGER.warning("assets/receipt_guide.png not found. Sending a text prompt as a fallback.")
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=text_prompt,
+            reply_markup=keyboard,
+            parse_mode=ParseMode.MARKDOWN
+        )
+    
     return GET_RECEIPT_PHOTO
 
+
 async def select_invoice_for_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """
+    Handles the case where a user selects an invoice from a list.
+    It also deletes the list and sends a guide photo with a caption as a prompt.
+    """
     query = update.callback_query
     try:
         invoice_id = int(query.data.split('_')[-1])
@@ -89,11 +132,36 @@ async def select_invoice_for_receipt(update: Update, context: ContextTypes.DEFAU
     context.user_data['invoice_id'] = invoice_id
     await query.answer()
     
+    # First, delete the invoice list message.
+    try:
+        await query.message.delete()
+    except Exception as e:
+        LOGGER.warning(f"Could not delete the invoice list message (ID: {query.message.message_id}): {e}")
+
+    # Prepare the prompt and cancel button.
+    text_prompt = _("receipt.photo_prompt_simple")
     keyboard = InlineKeyboardMarkup([[InlineKeyboardButton(_("buttons.cancel_operation"), callback_data="cancel_receipt_upload")]])
-    await query.edit_message_text(
-        text=_("receipt.photo_prompt_for_invoice", invoice_text="").split('\n\n')[1], # Get the second part
-        reply_markup=keyboard
-    )
+    
+    try:
+        # Attempt to open the local photo file.
+        with open("assets/receipt_guide.png", "rb") as photo_file:
+            await context.bot.send_photo(
+                chat_id=update.effective_chat.id,
+                photo=photo_file,
+                caption=text_prompt,
+                reply_markup=keyboard,
+                parse_mode=ParseMode.MARKDOWN
+            )
+    except FileNotFoundError:
+        # Fallback: If the photo is missing, send a text message.
+        LOGGER.warning("assets/receipt_guide.png not found. Sending a text prompt as a fallback.")
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=text_prompt,
+            reply_markup=keyboard,
+            parse_mode=ParseMode.MARKDOWN
+        )
+    
     return GET_RECEIPT_PHOTO
 
 async def handle_receipt_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:

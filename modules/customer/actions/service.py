@@ -3,6 +3,9 @@
 import datetime
 import jdatetime
 import logging
+import asyncio
+import datetime
+
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import ContextTypes, ConversationHandler
 from telegram.constants import ParseMode
@@ -160,18 +163,16 @@ async def display_service_details(user_id: int, message_to_edit, context: Contex
     await message_to_edit.edit_text(message, reply_markup=keyboard, parse_mode=ParseMode.MARKDOWN)
     return DISPLAY_SERVICE
 
-
-
 async def handle_my_service(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """
     (OPTIMIZED VERSION) Handles the 'My Services' button click.
-    Instead of fetching all Marzban users, it now fetches data only for the
-    services linked to the specific Telegram user, dramatically improving performance.
+    Fetches data for all linked services concurrently using asyncio.gather,
+    dramatically improving performance. Also cleans up dead links.
     """
     from database.db_manager import get_linked_marzban_usernames, unlink_user_from_telegram
-    
+    from modules.marzban.actions.api import get_user_data # Import local to function
+
     user_id = update.effective_user.id
-    # Send a "loading" message immediately to improve user experience
     loading_message = await update.message.reply_text(_("customer_service.loading"))
 
     # 1. Get linked services from our fast local database
@@ -180,48 +181,51 @@ async def handle_my_service(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         await loading_message.edit_text(_("customer_service.no_service_linked"))
         return ConversationHandler.END
 
+    # --- START: ASYNC OPTIMIZATION ---
+    # 2. Create a list of concurrent tasks to fetch user data
+    tasks = [get_user_data(username) for username in linked_usernames_raw]
+    
+    # 3. Execute all API calls simultaneously and wait for all to complete
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    # --- END: ASYNC OPTIMIZATION ---
+
     valid_linked_accounts = []
     dead_links_to_cleanup = []
 
-    # 2. Loop through the (usually small) list of linked services
-    for username_raw in linked_usernames_raw:
-        # 3. For each service, make a small, fast API call to get its data
-        user_info = await get_user_data(username_raw)
-        
-        if user_info and "error" not in user_info:
-            # The user exists in Marzban, add their data to our valid list
-            valid_linked_accounts.append(user_info)
+    # 4. Process the results of the concurrent calls
+    for i, result in enumerate(results):
+        username_raw = linked_usernames_raw[i]
+        if isinstance(result, dict) and "error" not in result and result is not None:
+            # Successful API call
+            valid_linked_accounts.append(result)
         else:
-            # The user does NOT exist in Marzban, it's a dead link
+            # API call failed (user not found, network error, etc.)
             dead_links_to_cleanup.append(normalize_username(username_raw))
+            if not isinstance(result, Exception): # Log exceptions from gather if any
+                LOGGER.warning(f"Failed to get data for user '{username_raw}': {result}")
 
-    # 4. Clean up any dead links found
+    # 5. Clean up any dead links found (same as before)
     if dead_links_to_cleanup:
         LOGGER.info(f"Cleaning up {len(dead_links_to_cleanup)} dead links for user {user_id}: {dead_links_to_cleanup}")
-        for dead_username in dead_links_to_cleanup:
-            await unlink_user_from_telegram(dead_username)
+        cleanup_tasks = [unlink_user_from_telegram(dead_username) for dead_username in dead_links_to_cleanup]
+        await asyncio.gather(*cleanup_tasks) # Cleanup can also be concurrent
 
-    # 5. Check if any valid services remain after cleanup
+    # 6. Check if any valid services remain after cleanup
     if not valid_linked_accounts:
         await loading_message.edit_text(_("customer_service.no_valid_service_found"))
         return ConversationHandler.END
-
-
     
-    # If only one service, display it directly
+    # 7. Display results (same logic as before)
     if len(valid_linked_accounts) == 1:
         original_username = valid_linked_accounts[0]['username']
         return await display_service_details(user_id, loading_message, context, original_username)
 
-    # If multiple services, show the paginated menu
     sorted_services = sorted(valid_linked_accounts, key=lambda u: u['username'].lower())
     context.user_data['services_list'] = sorted_services
 
     reply_markup = await _build_paginated_service_keyboard(sorted_services, page=0)
-    
     await loading_message.edit_text(_("customer_service.multiple_services_prompt"), reply_markup=reply_markup)
     return CHOOSE_SERVICE
-
 
 async def choose_service(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
@@ -279,10 +283,16 @@ async def back_to_main_menu_customer(update: Update, context: ContextTypes.DEFAU
     await query.answer()
     user_id = update.effective_user.id
     message_text = _("general.operation_cancelled")
+    
+    # (⭐ FIX ⭐) The keyboard functions must be awaited if they are async.
     if user_id in config.AUTHORIZED_USER_IDS:
+        # Assuming get_admin_main_menu_keyboard is synchronous as per your previous code.
+        # If it's also async, it will need an await too.
         final_keyboard = get_admin_main_menu_keyboard()
     else:
-        final_keyboard = get_customer_main_menu_keyboard()
+        # This is the line that was causing the crash.
+        final_keyboard = await get_customer_main_menu_keyboard()
+        
     await query.message.delete()
     await context.bot.send_message(chat_id=user_id, text=message_text, reply_markup=final_keyboard)
     context.user_data.clear()

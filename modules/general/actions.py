@@ -6,6 +6,9 @@ from telegram.ext import ContextTypes, ConversationHandler
 from telegram.constants import ParseMode
 from database import db_manager
 from config import config
+from modules.auth import is_admin, admin_only
+
+from shared.log_channel import log_new_user_joined
 
 from shared.translator import _
 from shared.keyboards import (
@@ -13,7 +16,7 @@ from shared.keyboards import (
     get_admin_main_menu_keyboard,
     get_customer_view_for_admin_keyboard
 )
-from modules.auth import admin_only
+
 from modules.marzban.actions.data_manager import link_user_to_telegram, normalize_username
 from modules.marzban.actions.api import get_user_data
 
@@ -56,13 +59,21 @@ async def send_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, mes
 #  Core Action Functions
 # =============================================================================
 
+# کد جدید و اصلاح شده
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
     try:
-        await db_manager.add_or_update_user(user)
+        # حالا مقدار بازگشتی را در یک متغیر ذخیره می‌کنیم
+        is_new_user = await db_manager.add_or_update_user(user)
+        
+        # اگر کاربر جدید بود، گزارش را ارسال می‌کنیم
+        if is_new_user:
+            await log_new_user_joined(context.bot, user)
+            
     except Exception as e:
         log_message = _("errors.db_user_save_failed", user_id=user.id, error=e)
         LOGGER.error(log_message)
+        
     await send_main_menu(update, context)
 
 
@@ -179,3 +190,4 @@ async def admin_fallback_reroute(update: Update, context: ContextTypes.DEFAULT_T
         await start(update, context)
     
     return ConversationHandler.END
+

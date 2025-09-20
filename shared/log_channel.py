@@ -50,3 +50,22 @@ async def send_log(bot: Bot, text: str, parse_mode: str = ParseMode.MARKDOWN_V2)
     except Exception as e:
         LOGGER.error(f"An unexpected error occurred in send_log: {e}", exc_info=True)
         return False
+    
+    # کد جدید برای افزودن به انتهای فایل
+from telegram import User
+
+async def log_new_user_joined(bot: Bot, user: User) -> None:
+    """Sends a notification to the log channel when a new user starts the bot."""
+    from shared.translator import _
+
+    # Sanitize user inputs for MarkdownV2
+    first_name = user.first_name.replace('_', '\\_').replace('*', '\\*').replace('[', '\\[').replace(']', '\\]')
+    username_text = f"\\(@{user.username}\\)" if user.username else _("log_channel.no_username")
+
+    log_text = _("log_channel.new_user_joined",
+                 first_name=first_name,
+                 user_id=user.id,
+                 username=username_text)
+    
+    # We call the main send_log function to handle the sending logic
+    await send_log(bot, log_text, parse_mode=ParseMode.MARKDOWN_V2)

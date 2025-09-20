@@ -10,6 +10,7 @@ from telegram.ext import (
     filters,
     ApplicationHandlerStop
 )
+
 from modules.bot_settings.data_manager import is_bot_active
 from config import config
 
@@ -39,10 +40,11 @@ async def maintenance_gatekeeper(update: Update, context: ContextTypes.DEFAULT_T
 def register(application: Application):
     # This handler runs before all others to check for maintenance mode.
     application.add_handler(TypeHandler(Update, maintenance_gatekeeper), group=-1)
-
+    
     # --- CORE COMMANDS ---
     application.add_handler(CommandHandler("start", handle_deep_link), group=1)
     application.add_handler(CommandHandler("myid", show_my_id), group=1)
+    
 
     # --- ADMIN-SPECIFIC HANDLERS ---
     # This handler is ONLY for the "Back to Admin Panel" button, which is exclusive to admins.
@@ -56,3 +58,5 @@ def register(application: Application):
     # NOTE: All customer-facing buttons ('Shop', 'My Services', etc.) are now correctly
     # registered in the customer module's handler to avoid conflicts and ensure
     # conversations work reliably. This file is now clean and focused.
+
+

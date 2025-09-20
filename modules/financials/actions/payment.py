@@ -281,11 +281,24 @@ async def approve_payment(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             bio.name = 'qrcode.png'; qr_image.save(bio, 'PNG'); bio.seek(0)
             volume_text = _("marzban_display.unlimited") if plan_type == "unlimited" else f"{data_limit_gb} گیگابایت"
             user_limit_text = _("financials_payment.user_creation_success_message_ips", ips=max_ips) if max_ips else ""
+# کد جدید و اصلاح شده
             caption = _("financials_payment.user_creation_success_message_title")
             caption += _("financials_payment.user_creation_success_message_username", username=f"`{marzban_username}`")
             caption += _("financials_payment.user_creation_success_message_volume", volume=volume_text)
             caption += _("financials_payment.user_creation_success_message_duration", duration=duration_days) + user_limit_text
-            caption += _("financials_payment.user_creation_success_message_footer", url=subscription_url)
+            
+            # --- بخش بازطراحی شده برای راهنمای اتصال ---
+            caption += _("financials_payment.user_creation_success_connection_intro")
+            
+            # 1. ابتدا لینک اشتراک قرار می‌گیرد
+            caption += f"\n`{subscription_url}`\n"
+            
+            # 2. سپس متن راهنمای کپی لینک
+            caption += _("financials_payment.user_creation_success_link_guide")
+            
+            # 3. و در آخر راهنمای QR کد
+            caption += _("financials_payment.user_creation_success_qr_guide")
+            # --- پایان بخش بازطراحی شده ---
             await context.bot.send_photo(chat_id=customer_id, photo=bio, caption=caption, parse_mode=ParseMode.MARKDOWN)
         else: await context.bot.send_message(customer_id, _("financials_payment.user_creation_fallback_message", username=f"`{marzban_username}`"), parse_mode=ParseMode.MARKDOWN)
     except Exception as e: LOGGER.error(f"Failed to send success message to customer {customer_id} for invoice #{invoice_id}: {e}", exc_info=True)
@@ -451,9 +464,12 @@ async def approve_data_top_up(update: Update, context: ContextTypes.DEFAULT_TYPE
         LOGGER.error(f"Failed to add data for '{marzban_username}' via API. Reason: {message}")
         await query.edit_message_caption(caption=f"{query.message.caption}\n\n{_('financials_payment.error_marzban_connection', error=message)}")
 
-       
 
 async def send_wallet_charge_invoice(context: ContextTypes.DEFAULT_TYPE, user_id: int, invoice_id: int, amount: int):
+    """
+    Sends an invoice specifically for charging the user's wallet.
+    (⭐ FIX ⭐) The logic for the "Pay with Wallet" button has been removed from this function.
+    """
     from shared.translator import _
     
     financials = await load_financials()
@@ -473,29 +489,17 @@ async def send_wallet_charge_invoice(context: ContextTypes.DEFAULT_TYPE, user_id
     invoice_text += _("financials_payment.invoice_payment_details", card_number=f"`{card_number}`", card_holder=f"`{card_holder}`")
     invoice_text += _("financials_payment.invoice_footer_prompt")
     
-    # === START: WALLET PAYMENT BUTTON LOGIC ===
-    # It doesn't make sense to pay for a wallet charge from the wallet itself,
-    # but we add the logic for completeness and future use cases.
-    keyboard_rows = [
-        [InlineKeyboardButton(_("financials_payment.button_send_receipt"), callback_data="customer_send_receipt")]
-    ]
+    # The keyboard is now simple and does not include the wallet payment button.
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton(_("financials_payment.button_send_receipt"), callback_data="customer_send_receipt")],
+        [InlineKeyboardButton(_("financials_payment.button_back_to_menu"), callback_data="payment_back_to_menu")]
+    ])
     
-    user_balance = await get_user_wallet_balance(user_id)
-    if user_balance is not None and user_balance >= amount: # Here the variable is `amount`
-        wallet_button_text = _("financials_payment.button_pay_with_wallet", balance=f"{int(user_balance):,}")
-        keyboard_rows.insert(0, [
-            InlineKeyboardButton(wallet_button_text, callback_data=f"wallet_pay_{invoice_id}")
-        ])
-
-    keyboard_rows.append([InlineKeyboardButton(_("financials_payment.button_back_to_menu"), callback_data="payment_back_to_menu")])
-    keyboard = InlineKeyboardMarkup(keyboard_rows)
-    # === END: WALLET PAYMENT BUTTON LOGIC ===
     try:
         await context.bot.send_message(chat_id=user_id, text=invoice_text, parse_mode=ParseMode.MARKDOWN, reply_markup=keyboard)
         LOGGER.info(f"Wallet charge invoice #{invoice_id} for {amount:,} Tomans sent to user {user_id}.")
     except Exception as e:
         LOGGER.error(f"Failed to send wallet charge invoice #{invoice_id} to user {user_id}: {e}", exc_info=True)
-
 async def pay_with_wallet(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     from shared.translator import _
     from database.db_manager import decrease_wallet_balance

@@ -300,25 +300,27 @@ async def decrease_wallet_balance(user_id: int, amount: float) -> Optional[float
 # FIX 3: Add explicit commit for direct cursor usage.
 async def add_or_update_user(user) -> bool:
     if not _pool: return False
+    is_new_user = False # Initialize as False
     try:
         async with _pool.acquire() as conn:
             async with conn.cursor() as cur:
                 await cur.execute("SELECT user_id FROM users WHERE user_id = %s", (user.id,))
                 exists = await cur.fetchone()
-                is_new_user = False
+                
                 if exists:
                     update_query = "UPDATE users SET first_name = %s, username = %s WHERE user_id = %s;"
                     await cur.execute(update_query, (user.first_name, user.username, user.id))
                 else:
                     insert_query = "INSERT INTO users (user_id, first_name, username) VALUES (%s, %s, %s);"
                     await cur.execute(insert_query, (user.id, user.first_name, user.username))
-                    is_new_user = True
+                    is_new_user = True # Set to True only if it's a new user
                 
                 await conn.commit() # Save changes
-                return is_new_user
     except Exception as e:
         LOGGER.error(f"Database operation failed for user {user.id}: {e}", exc_info=True)
-        return False
+        return False # Return False on error
+        
+    return is_new_user # Return the final status
         
 async def get_linked_marzban_usernames(telegram_user_id: int):
     query = "SELECT marzban_username FROM marzban_telegram_links WHERE telegram_user_id = %s;"
