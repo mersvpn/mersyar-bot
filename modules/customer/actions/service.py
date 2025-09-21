@@ -278,23 +278,34 @@ async def execute_reset_subscription(update: Update, context: ContextTypes.DEFAU
         
     return DISPLAY_SERVICE
 
+# در فایل: modules/customer/actions/service.py
+# فقط این تابع را با نسخه اصلاح شده جایگزین کنید:
+
 async def back_to_main_menu_customer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()
     user_id = update.effective_user.id
+    
     message_text = _("general.operation_cancelled")
     
-    # (⭐ FIX ⭐) The keyboard functions must be awaited if they are async.
     if user_id in config.AUTHORIZED_USER_IDS:
-        # Assuming get_admin_main_menu_keyboard is synchronous as per your previous code.
-        # If it's also async, it will need an await too.
         final_keyboard = get_admin_main_menu_keyboard()
     else:
-        # This is the line that was causing the crash.
-        final_keyboard = await get_customer_main_menu_keyboard()
+        # ( ✅ اصلاحیه اینجاست ✅ )
+        # ما اکنون user_id را به تابع پاس می‌دهیم.
+        final_keyboard = await get_customer_main_menu_keyboard(user_id=user_id)
         
-    await query.message.delete()
-    await context.bot.send_message(chat_id=user_id, text=message_text, reply_markup=final_keyboard)
+    try:
+        await query.message.delete()
+    except Exception:
+        pass # Ignore if message is already deleted
+        
+    await context.bot.send_message(
+        chat_id=user_id,
+        text=message_text,
+        reply_markup=final_keyboard
+    )
+    
     context.user_data.clear()
     return ConversationHandler.END
 
