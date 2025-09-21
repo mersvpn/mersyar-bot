@@ -1,18 +1,27 @@
-# FILE: database/db_manager.py (نسخه اصلاح شده با مدیریت صحیح تراکنش)
+# FILE: database/db_manager.py
 import asyncio
 import aiomysql
 import logging
 import json
 from typing import List, Dict, Any, Optional
-
+from config import config
 from .db_config import db_config
 
 LOGGER = logging.getLogger(__name__)
 
 _pool = None
 
+# --- CHANGE START: Introduce a simple in-memory cache for bot settings ---
+_bot_settings_cache: Optional[Dict[str, Any]] = None
+# --- CHANGE END ---
+
+
 async def create_pool():
     global _pool
+    # --- CHANGE START: Clear cache on pool creation ---
+    global _bot_settings_cache
+    _bot_settings_cache = None
+    # --- CHANGE END ---
     if not db_config.is_configured():
         LOGGER.warning("Database is not configured. Skipping pool creation.")
         return
@@ -20,9 +29,7 @@ async def create_pool():
         _pool = await aiomysql.create_pool(
             host=db_config.DB_HOST, user=db_config.DB_USER,
             password=db_config.DB_PASSWORD, db=db_config.DB_NAME,
-            # FIX 1: autocommit is set to False for explicit transaction control.
-            # This is the most reliable way to ensure data is saved correctly.
-            autocommit=False, 
+            autocommit=False,
             loop=None,
             cursorclass=aiomysql.DictCursor
         )
@@ -83,21 +90,40 @@ async def _run_migrations(conn):
                 LOGGER.info("Migration successful for 'wallet_balance'.")
         except Exception as e:
             LOGGER.error(f"Failed to apply migration for 'wallet_balance': {e}", exc_info=True)
-                    # Migration for auto-renewal feature
+        
         try:
             await cur.execute("SHOW COLUMNS FROM marzban_telegram_links LIKE 'auto_renew';")
             if not await cur.fetchone():
                 LOGGER.info("Applying migration: Adding 'auto_renew' to 'marzban_telegram_links' table.")
-                # BOOLEAN is stored as TINYINT(1) in MySQL. Default is FALSE (0).
                 await cur.execute("ALTER TABLE marzban_telegram_links ADD COLUMN auto_renew BOOLEAN NOT NULL DEFAULT FALSE;")
                 LOGGER.info("Migration successful for 'auto_renew'.")
         except Exception as e:
             LOGGER.error(f"Failed to apply migration for 'auto_renew': {e}", exc_info=True)
 
-        # We must commit DDL changes from migrations ONCE at the end.
+        # --- START: بازنویسی کامل بخش Migration اکانت تست ---
+        # مرحله ۱: ستون قدیمی را اگر وجود دارد، حذف کن
+        try:
+            await cur.execute("SHOW COLUMNS FROM users LIKE 'has_received_test_account';")
+            if await cur.fetchone():
+                LOGGER.info("Applying migration: Dropping obsolete 'has_received_test_account' column.")
+                await cur.execute("ALTER TABLE users DROP COLUMN has_received_test_account;")
+                LOGGER.info("Migration successful for dropping old column.")
+        except Exception as e:
+            LOGGER.error(f"Failed to apply migration for dropping 'has_received_test_account': {e}", exc_info=True)
+
+        # مرحله ۲: ستون جدید شمارنده را اگر وجود ندارد، اضافه کن
+        try:
+            await cur.execute("SHOW COLUMNS FROM users LIKE 'test_accounts_received';")
+            if not await cur.fetchone():
+                LOGGER.info("Applying migration: Adding 'test_accounts_received' counter to 'users' table.")
+                await cur.execute("ALTER TABLE users ADD COLUMN test_accounts_received INT NOT NULL DEFAULT 0;")
+                LOGGER.info("Migration successful for 'test_accounts_received'.")
+        except Exception as e:
+            LOGGER.error(f"Failed to apply migration for 'test_accounts_received': {e}", exc_info=True)
+        # --- END: بازنویسی کامل بخش Migration اکانت تست ---
+        
         await conn.commit()
         LOGGER.info("Database migrations finished.")
-
 
 async def _initialize_db():
     if not _pool: return
@@ -414,28 +440,78 @@ async def get_telegram_id_from_marzban_username(marzban_username: str):
     return result['telegram_user_id'] if result else None
 
 async def load_bot_settings() -> dict:
+    """
+    Loads bot settings from the database.
+    Uses an in-memory cache to avoid frequent database reads.
+    The cache is populated on the first call and invalidated by save_bot_settings.
+    """
+    global _bot_settings_cache
+    # If cache is already populated, return it immediately.
+    if _bot_settings_cache is not None:
+        return _bot_settings_cache.copy() # Return a copy to prevent mutation
+
+    # If cache is empty, fetch from DB
     query = "SELECT setting_key, setting_value FROM bot_settings;"
     results = await execute_query(query, fetch='all')
-    if not results: return {}
+    
     settings = {}
-    for row in results:
-        key, value = row['setting_key'], row['setting_value']
-        try: settings[key] = json.loads(value)
-        except (json.JSONDecodeError, TypeError): settings[key] = value
-    for key in ['reminder_days', 'reminder_data_gb', 'auto_delete_grace_days']:
-        if key in settings:
-            try: settings[key] = int(settings[key])
-            except (ValueError, TypeError): pass
-    return settings
+    if results:
+        for row in results:
+            key, value = row['setting_key'], row['setting_value']
+            try:
+                settings[key] = json.loads(value)
+            except (json.JSONDecodeError, TypeError):
+                settings[key] = value
+        
+        # Ensure specific keys are integers if they exist
+        for key in ['reminder_days', 'reminder_data_gb', 'auto_delete_grace_days', 
+                    'test_account_limit', 'test_account_hours']:
+            if key in settings:
+                try:
+                    settings[key] = int(settings[key])
+                except (ValueError, TypeError): pass
+        
+        # Ensure test_account_gb is a float if it exists
+        if 'test_account_gb' in settings:
+             try:
+                settings['test_account_gb'] = float(settings['test_account_gb'])
+             except (ValueError, TypeError): pass
 
-async def save_bot_settings(settings_to_update: dict):
+    # Store the freshly loaded settings in the cache
+    _bot_settings_cache = settings
+    LOGGER.info("Bot settings loaded from DB and cached.")
+    return _bot_settings_cache.copy()
+
+async def save_bot_settings(settings_to_update: dict) -> bool:
+    """
+    Saves specified settings to the database and then immediately updates the in-memory cache.
+    """
+    global _bot_settings_cache
     query = "INSERT INTO bot_settings (setting_key, setting_value) VALUES (%s, %s) ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value);"
+    
     tasks = []
     for key, value in settings_to_update.items():
         value_to_save = json.dumps(value) if isinstance(value, (dict, list)) else str(value)
         tasks.append(execute_query(query, (key, value_to_save)))
+    
     results = await asyncio.gather(*tasks)
-    return all(r is not None for r in results)
+    
+    # Check if all database operations were successful
+    if all(r is not None for r in results):
+        # If DB save was successful, update the cache
+        if _bot_settings_cache is None:
+            # If cache was never loaded, force a reload to initialize it
+            await load_bot_settings()
+        
+        # Update the cache with the new values
+        _bot_settings_cache.update(settings_to_update)
+        LOGGER.info(f"Bot settings saved to DB and cache updated for keys: {list(settings_to_update.keys())}")
+        return True
+    
+    LOGGER.error("Failed to save one or more bot settings to the database.")
+    return False
+
+# --- CHANGE END: Complete rewrite of bot settings functions with caching ---
 
 async def add_to_non_renewal_list(marzban_username: str) -> bool:
     query = "INSERT IGNORE INTO non_renewal_users (marzban_username) VALUES (%s);"
@@ -864,3 +940,31 @@ async def get_users_for_auto_renewal_warning() -> List[Dict[str, Any]]:
             AND un.subscription_duration IS NOT NULL AND un.subscription_duration > 0;
     """
     return await execute_query(query, fetch='all') or []
+
+# =============================================================================
+#  Test Account Functions (V2 - with Counter)
+# =============================================================================
+
+async def get_user_test_account_count(user_id: int) -> int:
+    """
+    Retrieves the number of test accounts a user has already received.
+    Returns 0 if the user is not found or an error occurs.
+    """
+    query = "SELECT test_accounts_received FROM users WHERE user_id = %s;"
+    result = await execute_query(query, (user_id,), fetch='one')
+    return result['test_accounts_received'] if result else 0
+
+async def increment_user_test_account_count(user_id: int) -> bool:
+    """
+    Increments the test account counter for a specific user by one.
+    This is an atomic operation.
+    """
+    query = "UPDATE users SET test_accounts_received = test_accounts_received + 1 WHERE user_id = %s;"
+    result = await execute_query(query, (user_id,))
+    return result is not None and result > 0
+
+async def is_user_admin(user_id: int) -> bool:
+    """
+    Checks if a user is an admin by checking against the AUTHORIZED_USER_IDS list in config.py.
+    """
+    return user_id in config.AUTHORIZED_USER_IDS

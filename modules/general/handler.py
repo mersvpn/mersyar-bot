@@ -20,6 +20,9 @@ from .actions import (
     switch_to_admin_view,
     handle_deep_link  
 )
+from telegram.ext import CommandHandler
+from modules.auth import admin_only
+
 
 MAINTENANCE_MESSAGE = (
     "**🛠 ربات در حال تعمیر و به‌روزرسانی است**\n\n"
@@ -44,6 +47,7 @@ def register(application: Application):
     # --- CORE COMMANDS ---
     application.add_handler(CommandHandler("start", handle_deep_link), group=1)
     application.add_handler(CommandHandler("myid", show_my_id), group=1)
+        # --- ADD THIS LINE ---
     
 
     # --- ADMIN-SPECIFIC HANDLERS ---
@@ -58,5 +62,6 @@ def register(application: Application):
     # NOTE: All customer-facing buttons ('Shop', 'My Services', etc.) are now correctly
     # registered in the customer module's handler to avoid conflicts and ensure
     # conversations work reliably. This file is now clean and focused.
+        # --- ADD THIS LINE ---
 
 

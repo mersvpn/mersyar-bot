@@ -11,7 +11,8 @@ from .actions import (
     receipt as receipt_actions,
     custom_purchase as custom_purchase_actions,
     unlimited_purchase as unlimited_purchase_actions,
-    charge as charge_actions
+    charge as charge_actions,
+    test_account as test_account_actions
 )
 from .actions import purchase, renewal, service, panel, guide, wallet
 
@@ -176,9 +177,14 @@ def register(application: Application):
     application.add_handler(MessageHandler(filters.Regex(r'^📱 راهــــــــــنمای اتصال$'), guide.show_guides_to_customer), group=1)
     application.add_handler(MessageHandler(filters.Regex(r'^🔙 بازگشت به منوی اصلی$'), start), group=1)
     application.add_handler(CallbackQueryHandler(renewal.handle_renewal_request, pattern=r'^customer_renew_request_'), group=1)
-    if config.SUPPORT_USERNAME:
-        application.add_handler(MessageHandler(filters.Regex(r'^💬 پشتیبـــانی$'), purchase.handle_support_button), group=1)
+    #if config.SUPPORT_USERNAME:
+    application.add_handler(MessageHandler(filters.Regex(r'^💬 پشتیبـــانی$'), purchase.handle_support_button), group=1)
 
+    # Handler for Test Account button
+    application.add_handler(MessageHandler(filters.Regex(r'^⏳ اکانــت تســت$'), test_account_actions.handle_test_account_request), group=1)
+
+    # Handlers for Guide navigation
     application.add_handler(CallbackQueryHandler(guide.send_guide_content_to_customer, pattern=r'^customer_show_guide_'), group=1)
     application.add_handler(CallbackQueryHandler(guide.show_guides_to_customer, pattern=r'^customer_back_to_guides$'), group=1)
     application.add_handler(CallbackQueryHandler(guide.close_guide_menu, pattern=r'^close_guide_menu$'), group=1)
+    

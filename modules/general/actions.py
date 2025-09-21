@@ -8,9 +8,11 @@ from database import db_manager
 from config import config
 from modules.auth import is_admin, admin_only
 
+
 from shared.log_channel import log_new_user_joined
 
 from shared.translator import _
+
 from shared.keyboards import (
     get_customer_main_menu_keyboard,
     get_admin_main_menu_keyboard,
@@ -42,7 +44,7 @@ async def send_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, mes
             reply_markup = await get_customer_view_for_admin_keyboard()
         else:
             # (⭐ FIX ⭐) This async function must also be awaited.
-            reply_markup = await get_customer_main_menu_keyboard()
+            reply_markup = await get_customer_main_menu_keyboard(update.effective_user.id)
         message_text += _("general.customer_dashboard_prompt")
 
     target_message = update.effective_message

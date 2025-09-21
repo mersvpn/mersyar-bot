@@ -1,17 +1,20 @@
-# FILE: shared/log_channel.py (NEW FILE)
+# FILE: shared/log_channel.py (REVISED FOR STABILITY)
 
 import logging
-from telegram import Bot
+import html  # Import the html module for easy escaping
+from telegram import Bot, User
 from telegram.constants import ParseMode
 from telegram.error import TelegramError
 
 from database.db_manager import load_bot_settings
+from shared.translator import _
 
 LOGGER = logging.getLogger(__name__)
 
-async def send_log(bot: Bot, text: str, parse_mode: str = ParseMode.MARKDOWN_V2) -> bool:
+async def send_log(bot: Bot, text: str, parse_mode: str = ParseMode.HTML) -> bool:
     """
     Sends a log message to the configured log channel if it's enabled.
+    Uses HTML as the default parse mode for better stability.
 
     Args:
         bot: The bot instance from context.bot.
@@ -50,22 +53,19 @@ async def send_log(bot: Bot, text: str, parse_mode: str = ParseMode.MARKDOWN_V2)
     except Exception as e:
         LOGGER.error(f"An unexpected error occurred in send_log: {e}", exc_info=True)
         return False
-    
-    # کد جدید برای افزودن به انتهای فایل
-from telegram import User
 
 async def log_new_user_joined(bot: Bot, user: User) -> None:
     """Sends a notification to the log channel when a new user starts the bot."""
-    from shared.translator import _
 
-    # Sanitize user inputs for MarkdownV2
-    first_name = user.first_name.replace('_', '\\_').replace('*', '\\*').replace('[', '\\[').replace(']', '\\]')
-    username_text = f"\\(@{user.username}\\)" if user.username else _("log_channel.no_username")
-
-    log_text = _("log_channel.new_user_joined",
-                 first_name=first_name,
-                 user_id=user.id,
+    # Sanitize user inputs for HTML parse mode
+    first_name = html.escape(user.first_name)
+    username_text = f"(@{user.username})" if user.username else _("log_channel.no_username")
+    
+    # Use HTML tags for formatting
+    log_text = _("log_channel.new_user_joined_html",
+                 first_name=f"<b>{first_name}</b>",
+                 user_id=f"<code>{user.id}</code>",
                  username=username_text)
     
-    # We call the main send_log function to handle the sending logic
-    await send_log(bot, log_text, parse_mode=ParseMode.MARKDOWN_V2)
+    # We call the main send_log function. It will now use HTML by default.
+    await send_log(bot, log_text)
