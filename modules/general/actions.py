@@ -7,7 +7,7 @@ from telegram.constants import ParseMode
 from database import db_manager
 from config import config
 from modules.auth import is_admin, admin_only
-
+import html
 
 from shared.log_channel import log_new_user_joined
 
@@ -153,11 +153,11 @@ async def handle_deep_link(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             await start(update, context)
             return
         success = await link_user_to_telegram(marzban_username_normalized, telegram_user_id)
+        # کد جدید
         if success:
-            # --- FIX: Added 'marzban.' namespace ---
-            await update.message.reply_text(_("marzban.linking.link_successful", username=marzban_username_raw), parse_mode=ParseMode.MARKDOWN)
+            safe_username = html.escape(marzban_username_raw)
+            await update.message.reply_text(_("marzban.linking.link_successful", username=safe_username), parse_mode=ParseMode.HTML)
         else:
-            # --- FIX: Added 'marzban.' namespace ---
             await update.message.reply_text(_("marzban.linking.link_error"))
         await start(update, context)
     else:
