@@ -1,12 +1,11 @@
-# FILE: modules/customer/actions/test_account.py
+# FILE: modules/customer/actions/test_account.py (FINAL VERSION, COMPATIBLE WITH NEW TRANSLATOR)
 
 import logging
-import random
-import string
 import qrcode
 import io
 import html
-import time
+import secrets
+import string
 from telegram import Update
 from telegram.ext import ContextTypes
 from telegram.constants import ParseMode
@@ -15,23 +14,28 @@ from database.db_manager import (
     load_bot_settings,
     get_user_test_account_count,
     increment_user_test_account_count,
+    add_user_to_managed_list,
+    save_user_note,
     link_user_to_telegram,
-    load_template_config_db,
     is_user_admin
 )
-from modules.marzban.actions.api import create_user_api
+from modules.marzban.actions.add_user import create_marzban_user_from_template
 from shared.translator import _
 from shared.log_channel import send_log
 
 LOGGER = logging.getLogger(__name__)
 
+def generate_test_username(user_id: int) -> str:
+    """Generates a unique and identifiable username for a test account."""
+    random_part = ''.join(secrets.choice(string.ascii_lowercase + string.digits) for _ in range(4))
+    return f"test_{user_id}_{random_part}"
+
 async def handle_test_account_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Handles the customer's request for a test account.
-    The limit on the number of test accounts is now bypassed for admins.
+    This version uses correct, namespaced translator keys.
     """
-    user_id = update.effective_user.id
-    user_info = update.effective_user
+    user = update.effective_user
     
     bot_settings = await load_bot_settings()
     is_enabled = bot_settings.get('is_test_account_enabled', False)
@@ -40,83 +44,76 @@ async def handle_test_account_request(update: Update, context: ContextTypes.DEFA
         await update.message.reply_text(_("customer.test_account.not_available"))
         return
 
-    user_is_admin = await is_user_admin(user_id)
+    user_is_admin = await is_user_admin(user.id)
 
     if not user_is_admin:
-        admin_limit = bot_settings.get('test_account_limit', 1)
-        user_received_count = await get_user_test_account_count(user_id)
+        limit = bot_settings.get('test_account_limit', 1)
+        if not isinstance(limit, int) or limit < 0:
+            limit = 1
+            LOGGER.warning("Invalid 'test_account_limit' in settings. Defaulting to 1.")
+            
+        received_count = await get_user_test_account_count(user.id)
         
-        if user_received_count >= admin_limit:
-            await update.message.reply_text(_("customer.test_account.limit_reached", limit=admin_limit))
+        if received_count >= limit:
+            await update.message.reply_text(_("customer.test_account.limit_reached", limit=limit))
             return
 
     processing_message = await update.message.reply_text(_("customer.test_account.processing"))
 
     hours = bot_settings.get('test_account_hours')
     gb = bot_settings.get('test_account_gb')
+    days_from_hours = (hours / 24) if hours else 0
 
-    if not hours or not gb:
-        LOGGER.error("Admin error: Test account is enabled but hours or GB are not set.")
+    if not hours or not gb or hours <= 0 or gb <= 0:
+        LOGGER.error(f"Admin config error for test account. Enabled: {is_enabled}, Hours: {hours}, GB: {gb}")
         await processing_message.edit_text(_("customer.test_account.admin_error"))
         return
 
-    template_config = await load_template_config_db()
-    if not template_config.get("proxies"):
-        LOGGER.error("Admin error: Template user is not configured.")
-        await processing_message.edit_text(_("customer.test_account.admin_error"))
-        return
-        
-    user_received_count_for_username = await get_user_test_account_count(user_id)
-    random_suffix = ''.join(random.choices(string.ascii_lowercase + string.digits, k=4))
-    username = f"test_{user_id}_{user_received_count_for_username + 1}_{random_suffix}"
+    test_username = generate_test_username(user.id)
     
-    data_limit_bytes = int(float(gb) * 1024 * 1024 * 1024)
-    expire_duration_seconds = int(hours * 3600)
-    expire_timestamp = int(time.time()) + expire_duration_seconds
-    
-    user_data = {
-        "proxies": template_config.get("proxies", {}),
-        "inbounds": template_config.get("inbounds", {}),
-        "expire": expire_timestamp,
-        "data_limit": data_limit_bytes,
-        "username": username,
-    }
+    new_user_data = await create_marzban_user_from_template(
+        data_limit_gb=gb,
+        expire_days=days_from_hours,
+        username=test_username
+    )
 
-    success, api_result = await create_user_api(user_data)
-
-    if not success:
-        error_message = api_result if isinstance(api_result, str) else "Unknown API error"
-        LOGGER.error(f"Failed to create test account for user {user_id}. API Error: {error_message}")
+    if not new_user_data:
+        LOGGER.error(f"Failed to create test account for user {user.id} via create_marzban_user_from_template.")
         await processing_message.edit_text(_("customer.test_account.api_failed"))
         await send_log(
             bot=context.bot,
-            text=_("log.test_account.api_failed_admin", user_id=user_id, error=error_message)
+            text=f"🔴 *API Error for Test Account*\n\nUser: {user.id}\nCould not create user in Marzban panel.",
+            parse_mode=ParseMode.MARKDOWN
         )
         return
 
-    sub_link = api_result.get("subscription_url", "N/A")
-    all_links = api_result.get("links", [])
-    
-    await increment_user_test_account_count(user_id)
-    await link_user_to_telegram(username, user_id)
+    marzban_username = new_user_data['username']
+    sub_link = new_user_data.get("subscription_url", "N/A")
+    all_links = new_user_data.get("links", [])
+
+    # --- Post-creation database operations ---
+    await increment_user_test_account_count(user.id)
+    await link_user_to_telegram(marzban_username, user.id)
+    await add_user_to_managed_list(marzban_username)
+    await save_user_note(marzban_username, {
+        'subscription_duration': round(days_from_hours, 2),
+        'subscription_data_limit_gb': gb,
+        'subscription_price': 0
+    })
     
     caption_text = _("customer.test_account.success_v2", hours=hours, gb=gb)
     caption_text += f"\n\n<code>{html.escape(sub_link)}</code>"
-
+    
     qr_code_image = None
-    if sub_link != "N/A":
+    if "N/A" not in sub_link:
         try:
-            qr = qrcode.QRCode(version=1, error_correction=qrcode.constants.ERROR_CORRECT_L, box_size=10, border=4)
-            qr.add_data(sub_link)
-            qr.make(fit=True)
-            img = qr.make_image(fill_color="black", back_color="white")
-            
+            img = qrcode.make(sub_link)
             buffer = io.BytesIO()
             img.save(buffer, 'PNG')
             buffer.seek(0)
             qr_code_image = buffer
         except Exception as e:
-            LOGGER.error(f"Failed to generate QR code: {e}")
+            LOGGER.error(f"Failed to generate QR code for test account: {e}")
 
     await processing_message.delete()
     
@@ -129,7 +126,8 @@ async def handle_test_account_request(update: Update, context: ContextTypes.DEFA
     else:
         await update.message.reply_text(
             text=caption_text,
-            parse_mode=ParseMode.HTML
+            parse_mode=ParseMode.HTML,
+            disable_web_page_preview=True
         )
 
     if all_links:
@@ -143,10 +141,11 @@ async def handle_test_account_request(update: Update, context: ContextTypes.DEFA
             disable_web_page_preview=True
         )
 
-    log_message = _("log.test_account.success_admin",
-                    name=user_info.full_name,
-                    username=f"@{user_info.username}" if user_info.username else "N/A",
-                    user_id=user_id,
-                    test_username=username,
-                    is_admin_flag=" (Admin)" if user_is_admin else "")
-    await send_log(bot=context.bot, text=log_message)
+    admin_flag = " (Admin)" if user_is_admin else ""
+    log_message = (
+        f"🧪 *Test Account Created*{admin_flag}\n\n"
+        f"👤 **User:** {user.mention_html()}\n"
+        f"🆔 **ID:** `{user.id}`\n"
+        f"🤖 **Marzban User:** `{marzban_username}`"
+    )
+    await send_log(bot=context.bot, text=log_message, parse_mode=ParseMode.HTML)

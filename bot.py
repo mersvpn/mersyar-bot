@@ -43,14 +43,28 @@ def setup_logging():
     LOGGER.info("Logging configured successfully.")
 
 async def debug_update_logger(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    user_info = f"User(ID:{update.effective_user.id}, Name:'{update.effective_user.full_name}')"
+    """Logs details of incoming messages and callback queries for debugging."""
+    
+    # مرحله ۱: ابتدا بررسی کن که آیا کاربری در این آپدیت وجود دارد یا نه
+    if update.effective_user:
+        user_info = f"User(ID:{update.effective_user.id}, Name:'{update.effective_user.full_name}')"
+    else:
+        # اگر کاربری وجود نداشت (مثلا آپدیت مربوط به کانال بود)، یک مقدار پیش‌فرض قرار بده
+        user_info = "User:N/A (Channel or System Update)"
+
+    # مرحله ۲: حالا با خیال راحت لاگ را ثبت کن
     if update.message and update.message.text:
         text = update.message.text
         char_codes = [ord(c) for c in text]
         LOGGER.info(f"[DEBUG_LOGGER] Message from {user_info} | Text: '{text}' | CharCodes: {char_codes}")
+    
     elif update.callback_query:
         data = update.callback_query.data
         LOGGER.info(f"[DEBUG_LOGGER] Callback from {user_info} | Data: '{data}'")
+    
+    # (اختیاری ولی پیشنهاد می‌شود) برای لاگ کردن آپدیت‌های ناشناس
+    else:
+        LOGGER.info(f"[DEBUG_LOGGER] Received an unhandled update type from {user_info}")
 
 async def heartbeat(context: ContextTypes.DEFAULT_TYPE):
     LOGGER.info("❤️ Heartbeat: Bot is alive and the JobQueue is running.")

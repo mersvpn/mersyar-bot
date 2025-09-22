@@ -1,4 +1,4 @@
-# FILE: modules/customer/actions/panel.py (REVISED FOR I18N)
+# FILE: modules/customer/actions/panel.py (NAMESPACE CORRECTED)
 
 from telegram import Update
 from telegram.ext import ContextTypes
@@ -11,9 +11,9 @@ async def show_customer_panel(update: Update, context: ContextTypes.DEFAULT_TYPE
     Displays the main customer shop menu using a ReplyKeyboardMarkup.
     """
     reply_markup = get_customer_shop_keyboard()
-    text = _("customer_panel.shop_welcome")
+    # --- FIX: Added 'customer.' namespace ---
+    text = _("customer.customer_panel.shop_welcome")
     
-    # The message can come from a button click (message) or callback (callback_query.message)
     target_message = update.effective_message
     
     await target_message.reply_text(

@@ -20,4 +20,6 @@ __pycache__/
 bot_status.json
 
 # Other runtime files
-*.session
+*.sessionvenv/ 
+__pycache__/ 
+.env 

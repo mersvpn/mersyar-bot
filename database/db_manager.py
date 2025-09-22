@@ -380,7 +380,15 @@ async def load_template_config_db():
     return {}
 
 async def save_template_config_db(config_data: dict):
-    query = "INSERT INTO template_config (id, template_username, proxies, inbounds) VALUES (1, %s, %s, %s) ON DUPLICATE KEY UPDATE template_username = VALUES(template_username), proxies = VALUES(proxies), inbounds = VALUES(inbounds);"
+    query = """
+        INSERT INTO template_config (id, template_username, proxies, inbounds) 
+        VALUES (1, %s, %s, %s) 
+        AS new_config
+        ON DUPLICATE KEY UPDATE 
+            template_username = new_config.template_username, 
+            proxies = new_config.proxies, 
+            inbounds = new_config.inbounds;
+    """
     args = (config_data.get("template_username"), json.dumps(config_data.get("proxies", {})), json.dumps(config_data.get("inbounds", {})))
     return await execute_query(query, args)
 
@@ -390,7 +398,15 @@ async def get_user_note(username: str):
     return result if result else {}
 
 async def save_user_note(username: str, note_data: dict):
-    query = "INSERT INTO user_notes (username, subscription_duration, subscription_data_limit_gb, subscription_price) VALUES (%s, %s, %s, %s) ON DUPLICATE KEY UPDATE subscription_duration = VALUES(subscription_duration), subscription_data_limit_gb = VALUES(subscription_data_limit_gb), subscription_price = VALUES(subscription_price);"
+    query = """
+        INSERT INTO user_notes (username, subscription_duration, subscription_data_limit_gb, subscription_price) 
+        VALUES (%s, %s, %s, %s) 
+        AS new_note
+        ON DUPLICATE KEY UPDATE 
+            subscription_duration = new_note.subscription_duration, 
+            subscription_data_limit_gb = new_note.subscription_data_limit_gb, 
+            subscription_price = new_note.subscription_price;
+    """
     duration = note_data.get('subscription_duration')
     data_limit = note_data.get('subscription_data_limit_gb')
     price = note_data.get('subscription_price')
@@ -405,22 +421,25 @@ async def get_all_users_with_notes():
     return await execute_query(query, fetch='all') or []
 
 async def link_user_to_telegram(marzban_username: str, telegram_user_id: int) -> bool:
-    query = "INSERT INTO marzban_telegram_links (marzban_username, telegram_user_id) VALUES (%s, %s) ON DUPLICATE KEY UPDATE telegram_user_id = VALUES(telegram_user_id);"
+    query = """
+        INSERT INTO marzban_telegram_links (marzban_username, telegram_user_id) 
+        VALUES (%s, %s) 
+        AS new_link
+        ON DUPLICATE KEY UPDATE telegram_user_id = new_link.telegram_user_id;
+    """
     result = await execute_query(query, (marzban_username, telegram_user_id))
     return result is not None
 
 # FIX 4: This function was buggy. It has been completely rewritten to work correctly.
 async def save_subscription_note(username: str, duration: int, price: int, data_limit_gb: int) -> bool:
-    """
-    Saves or updates subscription details for a user in the user_notes table.
-    """
     query = """
         INSERT INTO user_notes (username, subscription_duration, subscription_price, subscription_data_limit_gb)
         VALUES (%s, %s, %s, %s)
+        AS new_sub
         ON DUPLICATE KEY UPDATE
-            subscription_duration = VALUES(subscription_duration),
-            subscription_price = VALUES(subscription_price),
-            subscription_data_limit_gb = VALUES(subscription_data_limit_gb);
+            subscription_duration = new_sub.subscription_duration,
+            subscription_price = new_sub.subscription_price,
+            subscription_data_limit_gb = new_sub.subscription_data_limit_gb;
     """
     try:
         result = await execute_query(query, (username, duration, price, data_limit_gb))
@@ -483,11 +502,13 @@ async def load_bot_settings() -> dict:
     return _bot_settings_cache.copy()
 
 async def save_bot_settings(settings_to_update: dict) -> bool:
-    """
-    Saves specified settings to the database and then immediately updates the in-memory cache.
-    """
     global _bot_settings_cache
-    query = "INSERT INTO bot_settings (setting_key, setting_value) VALUES (%s, %s) ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value);"
+    query = """
+        INSERT INTO bot_settings (setting_key, setting_value) 
+        VALUES (%s, %s) 
+        AS new_setting
+        ON DUPLICATE KEY UPDATE setting_value = new_setting.setting_value;
+    """
     
     tasks = []
     for key, value in settings_to_update.items():
@@ -496,14 +517,10 @@ async def save_bot_settings(settings_to_update: dict) -> bool:
     
     results = await asyncio.gather(*tasks)
     
-    # Check if all database operations were successful
     if all(r is not None for r in results):
-        # If DB save was successful, update the cache
         if _bot_settings_cache is None:
-            # If cache was never loaded, force a reload to initialize it
             await load_bot_settings()
         
-        # Update the cache with the new values
         _bot_settings_cache.update(settings_to_update)
         LOGGER.info(f"Bot settings saved to DB and cache updated for keys: {list(settings_to_update.keys())}")
         return True
@@ -596,19 +613,24 @@ async def save_financials(data: dict) -> bool:
     card_number = data.get('card_number')
     card_holder = data.get('card_holder')
     query = """
-        INSERT INTO financial_settings (id, card_number, card_holder) VALUES (1, %s, %s) 
-        ON DUPLICATE KEY UPDATE card_number = VALUES(card_number), card_holder = VALUES(card_holder);"""
+        INSERT INTO financial_settings (id, card_number, card_holder) 
+        VALUES (1, %s, %s) 
+        AS new_fin
+        ON DUPLICATE KEY UPDATE 
+            card_number = new_fin.card_number, 
+            card_holder = new_fin.card_holder;
+    """
     result = await execute_query(query, (card_number, card_holder))
     return result is not None
 
 async def save_pricing_settings(price_per_gb: int, price_per_day: int) -> bool:
-    """Saves or updates the price per GB and price per day for custom plans."""
     query = """
         INSERT INTO financial_settings (id, price_per_gb, price_per_day) 
         VALUES (1, %s, %s) 
+        AS new_price
         ON DUPLICATE KEY UPDATE 
-            price_per_gb = VALUES(price_per_gb), 
-            price_per_day = VALUES(price_per_day);
+            price_per_gb = new_price.price_per_gb, 
+            price_per_day = new_price.price_per_day;
     """
     result = await execute_query(query, (price_per_gb, price_per_day))
     LOGGER.info(f"Custom pricing settings saved: price_per_gb={price_per_gb}, price_per_day={price_per_day}")
@@ -636,12 +658,17 @@ async def load_pricing_settings() -> Dict[str, Optional[int]]:
 async def add_or_update_guide(guide_key: str, title: str, content: str = None, photo_file_id: str = None, buttons: Optional[List[Dict[str, str]]] = None) -> bool:
     buttons_json = json.dumps(buttons) if buttons else None
     query = """
-        INSERT INTO guides (guide_key, title, content, photo_file_id, buttons) VALUES (%s, %s, %s, %s, %s) 
-        ON DUPLICATE KEY UPDATE title = VALUES(title), content = VALUES(content), 
-        photo_file_id = VALUES(photo_file_id), buttons = VALUES(buttons);"""
+        INSERT INTO guides (guide_key, title, content, photo_file_id, buttons) 
+        VALUES (%s, %s, %s, %s, %s) 
+        AS new_guide
+        ON DUPLICATE KEY UPDATE 
+            title = new_guide.title, 
+            content = new_guide.content, 
+            photo_file_id = new_guide.photo_file_id, 
+            buttons = new_guide.buttons;
+    """
     result = await execute_query(query, (guide_key, title, content, photo_file_id, buttons_json))
     return result is not None
-
 async def get_guide(guide_key: str) -> Optional[Dict[str, Any]]:
     query = "SELECT guide_key, title, content, photo_file_id, buttons FROM guides WHERE guide_key = %s;"
     guide = await execute_query(query, (guide_key,), fetch='one')
@@ -838,11 +865,11 @@ async def delete_pricing_tier(tier_id: int) -> bool:
     return result is not None and result > 0
 
 async def save_base_daily_price(price: int) -> bool:
-    """Saves or updates the base daily price in financial_settings."""
     query = """
         INSERT INTO financial_settings (id, base_daily_price) 
         VALUES (1, %s) 
-        ON DUPLICATE KEY UPDATE base_daily_price = VALUES(base_daily_price);
+        AS new_base_price
+        ON DUPLICATE KEY UPDATE base_daily_price = new_base_price.base_daily_price;
     """
     result = await execute_query(query, (price,))
     return result is not None

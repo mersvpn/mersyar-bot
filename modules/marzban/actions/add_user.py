@@ -1,4 +1,4 @@
-# FILE: modules/marzban/actions/add_user.py (REVISED FOR I18N and BEST PRACTICES)
+# FILE: modules/marzban/actions/add_user.py (FULLY UPDATED TO NEW TRANSLATION STANDARD)
 
 import datetime
 import qrcode
@@ -45,7 +45,8 @@ async def create_marzban_user_from_template(
     base_username = normalize_username(base_username)
 
     data_limit = data_limit_gb * GB_IN_BYTES if data_limit_gb > 0 else 0
-    expire = int((datetime.datetime.now() + datetime.timedelta(days=expire_days)).timestamp()) if expire_days > 0 else 0
+    expire_timestamp = (datetime.datetime.now() + datetime.timedelta(days=expire_days)).timestamp() if expire_days > 0 else 0
+    expire = int(expire_timestamp)
     
     proxies_from_template = copy.deepcopy(template_config.get('proxies', {}))
     for proto in ['vless', 'vmess']:
@@ -86,13 +87,15 @@ async def add_user_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     context.user_data.pop('customer_user_id', None)
     template_config = await load_template_config_db()
     if not template_config.get("template_username"):
+        # --- FIX: Added 'marzban.' namespace ---
         await update.message.reply_text(
-            _("marzban_add_user.template_not_set"),
+            _("marzban.marzban_add_user.template_not_set"),
             parse_mode=ParseMode.MARKDOWN, reply_markup=get_user_management_keyboard()
         )
         return ConversationHandler.END
+    # --- FIX: Added 'marzban.' namespace ---
     await update.message.reply_text(
-        _("marzban_add_user.step1_ask_username"),
+        _("marzban.marzban_add_user.step1_ask_username"),
         reply_markup=ReplyKeyboardRemove(), parse_mode=ParseMode.MARKDOWN
     )
     context.user_data['new_user'] = {}
@@ -106,12 +109,15 @@ async def add_user_for_customer_start(update: Update, context: ContextTypes.DEFA
     context.user_data['customer_user_id'] = customer_user_id
     template_config = await load_template_config_db()
     if not template_config.get("template_username"):
-        await query.message.reply_text(_("marzban_add_user.template_not_set"), parse_mode=ParseMode.MARKDOWN)
+        # --- FIX: Added 'marzban.' namespace ---
+        await query.message.reply_text(_("marzban.marzban_add_user.template_not_set"), parse_mode=ParseMode.MARKDOWN)
         return ConversationHandler.END
-    await query.edit_message_text(_("marzban_add_user.request_approved_creating_for", customer_id=f"`{customer_user_id}`"), parse_mode=ParseMode.MARKDOWN)
+    # --- FIX: Added 'marzban.' namespace ---
+    await query.edit_message_text(_("marzban.marzban_add_user.request_approved_creating_for", customer_id=f"`{customer_user_id}`"), parse_mode=ParseMode.MARKDOWN)
     await context.bot.send_message(
         chat_id=update.effective_chat.id,
-        text=_("marzban_add_user.step1_ask_username_for_customer"),
+        # --- FIX: Added 'marzban.' namespace ---
+        text=_("marzban.marzban_add_user.step1_ask_username_for_customer"),
         reply_markup=ReplyKeyboardRemove(), parse_mode=ParseMode.MARKDOWN
     )
     context.user_data['new_user'] = {}
@@ -121,16 +127,19 @@ async def add_user_get_username(update: Update, context: ContextTypes.DEFAULT_TY
     from shared.translator import _
     username = normalize_username(update.message.text)
     if not username or ' ' in username:
-        await update.message.reply_text(_("marzban_add_user.invalid_username"))
+        # --- FIX: Added 'marzban.' namespace ---
+        await update.message.reply_text(_("marzban.marzban_add_user.invalid_username"))
         return ADD_USER_USERNAME
 
     existing_user = await get_user_data(username)
     if existing_user and "error" not in existing_user:
-        await update.message.reply_text(_("marzban_add_user.username_exists", username=username), parse_mode=ParseMode.MARKDOWN)
+        # --- FIX: Added 'marzban.' namespace ---
+        await update.message.reply_text(_("marzban.marzban_add_user.username_exists", username=username), parse_mode=ParseMode.MARKDOWN)
         return ADD_USER_USERNAME
     
     context.user_data['new_user']['username'] = username
-    message = _("marzban_add_user.username_ok", username=f"`{username}`") + _("marzban_add_user.step2_ask_datalimit")
+    # --- FIX: Added 'marzban.' namespace ---
+    message = _("marzban.marzban_add_user.username_ok", username=f"`{username}`") + _("marzban.marzban_add_user.step2_ask_datalimit")
     await update.message.reply_text(message, parse_mode=ParseMode.MARKDOWN)
     return ADD_USER_DATALIMIT
 
@@ -140,12 +149,15 @@ async def add_user_get_datalimit(update: Update, context: ContextTypes.DEFAULT_T
         data_gb = int(update.message.text)
         if data_gb < 0: raise ValueError
         context.user_data['new_user']['data_limit_gb'] = data_gb
-        datalimit_str = _("marzban_display.unlimited") if data_gb == 0 else data_gb
-        message = _("marzban_add_user.datalimit_ok", datalimit=f"`{datalimit_str}`") + _("marzban_add_user.step3_ask_expire")
+        # --- FIX: Added 'marzban.' namespace ---
+        datalimit_str = _("marzban.marzban_display.unlimited") if data_gb == 0 else data_gb
+        # --- FIX: Added 'marzban.' namespace ---
+        message = _("marzban.marzban_add_user.datalimit_ok", datalimit=f"`{datalimit_str}`") + _("marzban.marzban_add_user.step3_ask_expire")
         await update.message.reply_text(message, parse_mode=ParseMode.MARKDOWN)
         return ADD_USER_EXPIRE
     except (ValueError, TypeError):
-        await update.message.reply_text(_("marzban_add_user.invalid_number"))
+        # --- FIX: Added 'marzban.' namespace ---
+        await update.message.reply_text(_("marzban.marzban_add_user.invalid_number"))
         return ADD_USER_DATALIMIT
 
 async def add_user_get_expire(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -156,22 +168,25 @@ async def add_user_get_expire(update: Update, context: ContextTypes.DEFAULT_TYPE
         context.user_data['new_user']['expire_days'] = expire_days
         user_info = context.user_data['new_user']
         username = user_info['username']
-        data_gb_str = _("marzban_display.unlimited") if user_info['data_limit_gb'] == 0 else user_info['data_limit_gb']
-        expire_days_str = _("marzban_display.unlimited") if expire_days == 0 else expire_days
+        # --- FIX: Added 'marzban.' namespace ---
+        data_gb_str = _("marzban.marzban_display.unlimited") if user_info['data_limit_gb'] == 0 else user_info['data_limit_gb']
+        expire_days_str = _("marzban.marzban_display.unlimited") if expire_days == 0 else expire_days
         
-        summary = _("marzban_add_user.confirm_prompt_title")
-        summary += _("marzban_add_user.confirm_username", username=f"`{username}`")
-        summary += _("marzban_add_user.confirm_datalimit", datalimit=f"`{data_gb_str}`")
-        summary += _("marzban_add_user.confirm_expire", duration=f"`{expire_days_str}`")
+        # --- FIX: All keys now use the 'marzban.' namespace ---
+        summary = _("marzban.marzban_add_user.confirm_prompt_title")
+        summary += _("marzban.marzban_add_user.confirm_username", username=f"`{username}`")
+        summary += _("marzban.marzban_add_user.confirm_datalimit", datalimit=f"`{data_gb_str}`")
+        summary += _("marzban.marzban_add_user.confirm_expire", duration=f"`{expire_days_str}`")
         
         keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton(_("marzban_add_user.button_confirm_create"), callback_data="confirm_add_user")],
-            [InlineKeyboardButton(_("marzban_add_user.button_cancel"), callback_data="cancel_add_user")]
+            [InlineKeyboardButton(_("marzban.marzban_add_user.button_confirm_create"), callback_data="confirm_add_user")],
+            [InlineKeyboardButton(_("marzban.marzban_add_user.button_cancel"), callback_data="cancel_add_user")]
         ])
         await update.message.reply_text(summary, reply_markup=keyboard, parse_mode=ParseMode.MARKDOWN)
         return ADD_USER_CONFIRM
     except (ValueError, TypeError):
-        await update.message.reply_text(_("marzban_add_user.invalid_number"))
+        # --- FIX: Added 'marzban.' namespace ---
+        await update.message.reply_text(_("marzban.marzban_add_user.invalid_number"))
         return ADD_USER_EXPIRE
 
 async def add_user_create(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -180,11 +195,13 @@ async def add_user_create(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     await query.answer()
     
     admin_user = update.effective_user
-    await query.edit_message_text(_("marzban_add_user.creating_user"), parse_mode=ParseMode.MARKDOWN)
+    # --- FIX: Added 'marzban.' namespace ---
+    await query.edit_message_text(_("marzban.marzban_add_user.creating_user"), parse_mode=ParseMode.MARKDOWN)
 
     user_info = context.user_data.get('new_user')
     if not user_info:
-        await query.edit_message_text(_("marzban_add_user.error_user_info_lost"))
+        # --- FIX: Added 'marzban.' namespace ---
+        await query.edit_message_text(_("marzban.marzban_add_user.error_user_info_lost"))
         return ConversationHandler.END
 
     new_user_data = await create_marzban_user_from_template(
@@ -204,7 +221,8 @@ async def add_user_create(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         
         admin_mention = escape_markdown(admin_user.full_name, version=2)
         safe_username = escape_markdown(marzban_username, version=2)
-        log_message = _("marzban_add_user.log_new_user_created", 
+        # --- FIX: Added 'marzban.' namespace ---
+        log_message = _("marzban.marzban_add_user.log_new_user_created", 
                         username=safe_username, datalimit=user_info['data_limit_gb'], 
                         duration=user_info['expire_days'], admin_mention=admin_mention)
         await send_log(context.bot, log_message, parse_mode=ParseMode.MARKDOWN_V2)
@@ -214,15 +232,17 @@ async def add_user_create(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             await link_user_to_telegram(normalized_username, customer_id)
             subscription_url = new_user_data.get('subscription_url', '')
             if subscription_url:
-                data_limit_str = f"{user_info['data_limit_gb']} GB" if user_info['data_limit_gb'] > 0 else _("marzban_display.unlimited")
-                expire_days_str = f"{user_info['expire_days']} روز" if user_info['expire_days'] > 0 else _("marzban_display.unlimited")
+                # --- FIX: Added 'marzban.' namespace ---
+                data_limit_str = f"{user_info['data_limit_gb']} GB" if user_info['data_limit_gb'] > 0 else _("marzban.marzban_display.unlimited")
+                expire_days_str = f"{user_info['expire_days']} روز" if user_info['expire_days'] > 0 else _("marzban.marzban_display.unlimited")
                 
-                customer_message = _("marzban_add_user.customer_message_title")
-                customer_message += _("marzban_add_user.customer_message_username", username=f"`{marzban_username}`")
-                customer_message += _("marzban_add_user.customer_message_datalimit", datalimit=data_limit_str)
-                customer_message += _("marzban_add_user.customer_message_duration", duration=expire_days_str)
-                customer_message += _("marzban_add_user.customer_message_sub_link", url=subscription_url)
-                customer_message += _("marzban_add_user.customer_message_guide")
+                # --- FIX: All keys now use the 'marzban.' namespace ---
+                customer_message = _("marzban.marzban_add_user.customer_message_title")
+                customer_message += _("marzban.marzban_add_user.customer_message_username", username=f"`{marzban_username}`")
+                customer_message += _("marzban.marzban_add_user.customer_message_datalimit", datalimit=data_limit_str)
+                customer_message += _("marzban.marzban_add_user.customer_message_duration", duration=expire_days_str)
+                customer_message += _("marzban.marzban_add_user.customer_message_sub_link", url=subscription_url)
+                customer_message += _("marzban.marzban_add_user.customer_message_guide")
                 
                 qr_image = qrcode.make(subscription_url)
                 bio = io.BytesIO()
@@ -232,19 +252,22 @@ async def add_user_create(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 try:
                     await context.bot.send_photo(chat_id=customer_id, photo=bio, caption=customer_message, parse_mode=ParseMode.MARKDOWN)
                     callback_string = f"fin_send_req:{customer_id}:{marzban_username}"
-                    admin_keyboard = InlineKeyboardMarkup([[InlineKeyboardButton(_("marzban_add_user.button_send_invoice"), callback_data=callback_string)]])
-                    await context.bot.send_message(chat_id=admin_user.id, text=_("marzban_add_user.config_sent_to_customer", customer_id=customer_id), reply_markup=admin_keyboard)
+                    # --- FIX: Added 'marzban.' namespace ---
+                    admin_keyboard = InlineKeyboardMarkup([[InlineKeyboardButton(_("marzban.marzban_add_user.button_send_invoice"), callback_data=callback_string)]])
+                    await context.bot.send_message(chat_id=admin_user.id, text=_("marzban.marzban_add_user.config_sent_to_customer", customer_id=customer_id), reply_markup=admin_keyboard)
                 except Exception as e:
                     LOGGER.warning(f"Failed to send message to customer {customer_id}: {e}")
-                    await context.bot.send_message(chat_id=admin_user.id, text=_("marzban_add_user.error_sending_to_customer", url=subscription_url))
+                    await context.bot.send_message(chat_id=admin_user.id, text=_("marzban.marzban_add_user.error_sending_to_customer", url=subscription_url))
         
+        # --- FIX: Added 'marzban.' namespace ---
         keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton(_("marzban_add_user.button_view_user_details"), callback_data=f"user_details_{marzban_username}_all_1")]
+            [InlineKeyboardButton(_("marzban.marzban_add_user.button_view_user_details"), callback_data=f"user_details_{marzban_username}_all_1")]
         ])
-        await query.edit_message_text(_("marzban_add_user.user_created_successfully", username=f"`{marzban_username}`"), reply_markup=keyboard, parse_mode=ParseMode.MARKDOWN)
+        await query.edit_message_text(_("marzban.marzban_add_user.user_created_successfully", username=f"`{marzban_username}`"), reply_markup=keyboard, parse_mode=ParseMode.MARKDOWN)
 
     else:
-        error_message = _("marzban_add_user.error_creating_user", error=f"`{new_user_data}`")
+        # --- FIX: Added 'marzban.' namespace ---
+        error_message = _("marzban.marzban_add_user.error_creating_user", error=f"`{new_user_data}`")
         await query.edit_message_text(error_message, parse_mode=ParseMode.MARKDOWN)
     
     context.user_data.clear()

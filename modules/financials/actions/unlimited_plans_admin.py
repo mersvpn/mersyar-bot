@@ -1,5 +1,5 @@
 # FILE: modules/financials/actions/unlimited_plans_admin.py (REVISED FOR I18N)
-
+import html
 import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -35,9 +35,10 @@ async def manage_unlimited_plans_menu(update: Update, context: ContextTypes.DEFA
         text += _("financials_unlimited.plans_list_title")
         for plan in all_plans:
             status_icon = "✅" if plan['is_active'] else "❌"
-            plan_text = _("financials_unlimited.plan_list_item", 
-                          status_icon=status_icon, name=plan['plan_name'], 
-                          price=f"{plan['price']:,}", ips=plan['max_ips'])
+            plan_name_escaped = html.escape(plan['plan_name'])  # <-- این خط اضافه شده
+            plan_text = _("financials.financials_unlimited.plan_list_item", 
+                        status_icon=status_icon, name=plan_name_escaped, # <-- اینجا از متغیر جدید استفاده شده
+                        price=f"{plan['price']:,}", ips=plan['max_ips'])
             
             plan_buttons = [
                 InlineKeyboardButton(_("financials_unlimited.button_delete"), callback_data=f"unlimplan_delete_{plan['id']}"),
@@ -49,7 +50,7 @@ async def manage_unlimited_plans_menu(update: Update, context: ContextTypes.DEFA
     keyboard_rows.append([InlineKeyboardButton(_("financials_unlimited.button_add_new"), callback_data="unlimplan_add_new")])
     keyboard_rows.append([InlineKeyboardButton(_("financials_settings.button_back_to_payment_methods"), callback_data="back_to_plan_management")])
     
-    await query.edit_message_text(text=text, reply_markup=InlineKeyboardMarkup(keyboard_rows), parse_mode=ParseMode.MARKDOWN)
+    await query.edit_message_text(text=text, reply_markup=InlineKeyboardMarkup(keyboard_rows), parse_mode=ParseMode.HTML)
 
 async def start_add_plan(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     from shared.translator import _
@@ -186,7 +187,14 @@ async def toggle_plan_status(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await query.answer(_("financials_unlimited.plan_not_found"), show_alert=True)
         return
         
-    await update_unlimited_plan(plan_id=plan_id, is_active=not plan['is_active'])
+    await update_unlimited_plan(
+    plan_id=plan_id,
+    plan_name=plan['plan_name'],
+    price=plan['price'],
+    max_ips=plan['max_ips'],
+    sort_order=plan['sort_order'],
+    is_active=not plan['is_active']
+)
     await manage_unlimited_plans_menu(update, context)
 
 add_unlimited_plan_conv = ConversationHandler(
