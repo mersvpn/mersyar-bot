@@ -192,3 +192,17 @@ async def get_test_account_settings_keyboard() -> InlineKeyboardMarkup:
         ]
     ]
     return InlineKeyboardMarkup(keyboard)
+
+def get_connection_guide_keyboard() -> InlineKeyboardMarkup:
+    """
+    Creates an inline keyboard with a single button to show connection guides.
+    """
+    keyboard = [
+        [
+            InlineKeyboardButton(
+                _("keyboards.inline_keyboards.general.connection_guide"), 
+                callback_data="show_connection_guides"
+            )
+        ]
+    ]
+    return InlineKeyboardMarkup(keyboard)

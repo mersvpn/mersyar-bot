@@ -2,9 +2,10 @@
 
 import httpx
 import logging
+import datetime
 import asyncio # <-- کتابخانه جدید برای ایجاد تاخیر
 from typing import Tuple, Dict, Any, Optional, Union, List
-
+from .constants import GB_IN_BYTES
 from .data_manager import normalize_username
 
 LOGGER = logging.getLogger(__name__)
@@ -283,3 +284,51 @@ async def close_client():
     if not _client.is_closed:
         await _client.aclose()
         LOGGER.info("Shared HTTPX client has been closed.")
+
+async def format_user_info_for_customer(username: str) -> str:
+    """
+    Fetches user data from Marzban and formats it into a detailed,
+    user-friendly message string for the customer.
+    """
+    from shared.translator import _
+    
+    user_data = await get_user_data(username)
+    if not user_data:
+        return _("marzban.marzban_display.user_not_found")
+
+    # --- Data Usage ---
+    used_traffic = user_data.get('used_traffic', 0)
+    data_limit = user_data.get('data_limit', 0)
+    
+    used_gb = used_traffic / GB_IN_BYTES
+    total_gb = data_limit / GB_IN_BYTES
+    
+    if data_limit == 0:
+        usage_text = f"{_('marzban.marzban_display.unlimited')}"
+    else:
+        usage_text = f"{total_gb:.2f} GB"
+
+    # --- Expiry ---
+    expire_ts = user_data.get('expire')
+    if not expire_ts or expire_ts == 0:
+        expiry_text = _("marzban.marzban_display.unlimited")
+    else:
+        expire_date = datetime.datetime.fromtimestamp(expire_ts)
+        days_left = (expire_date - datetime.datetime.now()).days
+        if days_left < 0:
+            expiry_text = _("marzban.marzban_display.expired")
+        else:
+            expiry_text = f"{days_left} روز"
+    
+    # --- Subscription Link ---
+    sub_url = user_data.get('subscription_url', _('marzban.marzban_display.sub_link_not_found'))
+    
+    # --- Build Message ---
+    message = _("marzban.marzban_add_user.customer_message_title")
+    message += _("marzban.marzban_add_user.customer_message_username", username=f"`{username}`")
+    message += _("marzban.marzban_add_user.customer_message_datalimit", datalimit=usage_text)
+    message += _("marzban.marzban_add_user.customer_message_duration", duration=expiry_text)
+    message += _("marzban.marzban_add_user.customer_message_sub_link", url=sub_url)
+    message += _("marzban.marzban_add_user.customer_message_guide")
+    
+    return message        

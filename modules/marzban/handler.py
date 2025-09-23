@@ -4,7 +4,8 @@ from telegram.ext import (
     Application, ConversationHandler, CommandHandler, CallbackQueryHandler,
     MessageHandler, filters
 )
-
+from shared.translator import _ as t
+import re
 # --- Local Imports ---
 from .actions import (
     add_user, display, modify_user, search, messaging,
@@ -81,7 +82,8 @@ def register(application: Application) -> None:
         fallbacks=[CommandHandler('cancel', cancel_to_helper_tools)],
         conversation_timeout=300, per_chat=True, per_user=True
     )
-    
+
+
 # FILE: modules/marzban/handler.py
 # REPLACE BOTH CONVERSATION HANDLERS
 

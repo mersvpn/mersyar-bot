@@ -1,4 +1,4 @@
-# FILE: modules/marzban/actions/add_user.py (FULLY UPDATED TO NEW TRANSLATION STANDARD)
+# FILE: modules/marzban/actions/add_user.py (VERSION WITH NEW TEST ACCOUNT CONVERSATION)
 
 import datetime
 import qrcode
@@ -7,6 +7,8 @@ import logging
 import copy
 import secrets
 import string
+import re
+import random
 from typing import Optional, Dict, Any
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardRemove
 from telegram.ext import ContextTypes, ConversationHandler
@@ -19,16 +21,21 @@ from .constants import (
 )
 from database.db_manager import (
     load_template_config_db, link_user_to_telegram, save_user_note,
-    add_user_to_managed_list
+    add_user_to_managed_list, get_user_test_account_count, increment_user_test_account_count,
+    load_bot_settings
 )
-from shared.keyboards import get_user_management_keyboard
+from shared.keyboards import get_user_management_keyboard, get_customer_main_menu_keyboard
 from modules.general.actions import end_conversation_and_show_menu
-from .api import create_user_api, get_user_data
+from .api import create_user_api, get_user_data, format_user_info_for_customer
 from .data_manager import normalize_username
 from shared.log_channel import send_log
 
 LOGGER = logging.getLogger(__name__)
 
+# State for the new test account conversation
+GET_TEST_USERNAME = range(10, 11)
+
+# ... (All your existing functions like generate_random_username, create_marzban_user_from_template, add_user_start, etc. remain here)
 def generate_random_username(length=8):
     alphabet = string.ascii_lowercase + string.digits
     return ''.join(secrets.choice(alphabet) for i in range(length))
@@ -44,7 +51,7 @@ async def create_marzban_user_from_template(
     base_username = username or generate_random_username()
     base_username = normalize_username(base_username)
 
-    data_limit = data_limit_gb * GB_IN_BYTES if data_limit_gb > 0 else 0
+    data_limit = int(data_limit_gb * GB_IN_BYTES) if data_limit_gb > 0 else 0
     expire_timestamp = (datetime.datetime.now() + datetime.timedelta(days=expire_days)).timestamp() if expire_days > 0 else 0
     expire = int(expire_timestamp)
     
@@ -87,13 +94,11 @@ async def add_user_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     context.user_data.pop('customer_user_id', None)
     template_config = await load_template_config_db()
     if not template_config.get("template_username"):
-        # --- FIX: Added 'marzban.' namespace ---
         await update.message.reply_text(
             _("marzban.marzban_add_user.template_not_set"),
             parse_mode=ParseMode.MARKDOWN, reply_markup=get_user_management_keyboard()
         )
         return ConversationHandler.END
-    # --- FIX: Added 'marzban.' namespace ---
     await update.message.reply_text(
         _("marzban.marzban_add_user.step1_ask_username"),
         reply_markup=ReplyKeyboardRemove(), parse_mode=ParseMode.MARKDOWN
@@ -109,14 +114,11 @@ async def add_user_for_customer_start(update: Update, context: ContextTypes.DEFA
     context.user_data['customer_user_id'] = customer_user_id
     template_config = await load_template_config_db()
     if not template_config.get("template_username"):
-        # --- FIX: Added 'marzban.' namespace ---
         await query.message.reply_text(_("marzban.marzban_add_user.template_not_set"), parse_mode=ParseMode.MARKDOWN)
         return ConversationHandler.END
-    # --- FIX: Added 'marzban.' namespace ---
     await query.edit_message_text(_("marzban.marzban_add_user.request_approved_creating_for", customer_id=f"`{customer_user_id}`"), parse_mode=ParseMode.MARKDOWN)
     await context.bot.send_message(
         chat_id=update.effective_chat.id,
-        # --- FIX: Added 'marzban.' namespace ---
         text=_("marzban.marzban_add_user.step1_ask_username_for_customer"),
         reply_markup=ReplyKeyboardRemove(), parse_mode=ParseMode.MARKDOWN
     )
@@ -127,18 +129,15 @@ async def add_user_get_username(update: Update, context: ContextTypes.DEFAULT_TY
     from shared.translator import _
     username = normalize_username(update.message.text)
     if not username or ' ' in username:
-        # --- FIX: Added 'marzban.' namespace ---
         await update.message.reply_text(_("marzban.marzban_add_user.invalid_username"))
         return ADD_USER_USERNAME
 
     existing_user = await get_user_data(username)
     if existing_user and "error" not in existing_user:
-        # --- FIX: Added 'marzban.' namespace ---
         await update.message.reply_text(_("marzban.marzban_add_user.username_exists", username=username), parse_mode=ParseMode.MARKDOWN)
         return ADD_USER_USERNAME
     
     context.user_data['new_user']['username'] = username
-    # --- FIX: Added 'marzban.' namespace ---
     message = _("marzban.marzban_add_user.username_ok", username=f"`{username}`") + _("marzban.marzban_add_user.step2_ask_datalimit")
     await update.message.reply_text(message, parse_mode=ParseMode.MARKDOWN)
     return ADD_USER_DATALIMIT
@@ -149,14 +148,11 @@ async def add_user_get_datalimit(update: Update, context: ContextTypes.DEFAULT_T
         data_gb = int(update.message.text)
         if data_gb < 0: raise ValueError
         context.user_data['new_user']['data_limit_gb'] = data_gb
-        # --- FIX: Added 'marzban.' namespace ---
         datalimit_str = _("marzban.marzban_display.unlimited") if data_gb == 0 else data_gb
-        # --- FIX: Added 'marzban.' namespace ---
         message = _("marzban.marzban_add_user.datalimit_ok", datalimit=f"`{datalimit_str}`") + _("marzban.marzban_add_user.step3_ask_expire")
         await update.message.reply_text(message, parse_mode=ParseMode.MARKDOWN)
         return ADD_USER_EXPIRE
     except (ValueError, TypeError):
-        # --- FIX: Added 'marzban.' namespace ---
         await update.message.reply_text(_("marzban.marzban_add_user.invalid_number"))
         return ADD_USER_DATALIMIT
 
@@ -168,11 +164,9 @@ async def add_user_get_expire(update: Update, context: ContextTypes.DEFAULT_TYPE
         context.user_data['new_user']['expire_days'] = expire_days
         user_info = context.user_data['new_user']
         username = user_info['username']
-        # --- FIX: Added 'marzban.' namespace ---
         data_gb_str = _("marzban.marzban_display.unlimited") if user_info['data_limit_gb'] == 0 else user_info['data_limit_gb']
         expire_days_str = _("marzban.marzban_display.unlimited") if expire_days == 0 else expire_days
         
-        # --- FIX: All keys now use the 'marzban.' namespace ---
         summary = _("marzban.marzban_add_user.confirm_prompt_title")
         summary += _("marzban.marzban_add_user.confirm_username", username=f"`{username}`")
         summary += _("marzban.marzban_add_user.confirm_datalimit", datalimit=f"`{data_gb_str}`")
@@ -185,7 +179,6 @@ async def add_user_get_expire(update: Update, context: ContextTypes.DEFAULT_TYPE
         await update.message.reply_text(summary, reply_markup=keyboard, parse_mode=ParseMode.MARKDOWN)
         return ADD_USER_CONFIRM
     except (ValueError, TypeError):
-        # --- FIX: Added 'marzban.' namespace ---
         await update.message.reply_text(_("marzban.marzban_add_user.invalid_number"))
         return ADD_USER_EXPIRE
 
@@ -195,12 +188,10 @@ async def add_user_create(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     await query.answer()
     
     admin_user = update.effective_user
-    # --- FIX: Added 'marzban.' namespace ---
     await query.edit_message_text(_("marzban.marzban_add_user.creating_user"), parse_mode=ParseMode.MARKDOWN)
 
     user_info = context.user_data.get('new_user')
     if not user_info:
-        # --- FIX: Added 'marzban.' namespace ---
         await query.edit_message_text(_("marzban.marzban_add_user.error_user_info_lost"))
         return ConversationHandler.END
 
@@ -221,7 +212,6 @@ async def add_user_create(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         
         admin_mention = escape_markdown(admin_user.full_name, version=2)
         safe_username = escape_markdown(marzban_username, version=2)
-        # --- FIX: Added 'marzban.' namespace ---
         log_message = _("marzban.marzban_add_user.log_new_user_created", 
                         username=safe_username, datalimit=user_info['data_limit_gb'], 
                         duration=user_info['expire_days'], admin_mention=admin_mention)
@@ -230,43 +220,31 @@ async def add_user_create(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         customer_id = context.user_data.get('customer_user_id')
         if customer_id:
             await link_user_to_telegram(normalized_username, customer_id)
+            
+            # Use the new formatter function
+            customer_message = await format_user_info_for_customer(marzban_username)
             subscription_url = new_user_data.get('subscription_url', '')
-            if subscription_url:
-                # --- FIX: Added 'marzban.' namespace ---
-                data_limit_str = f"{user_info['data_limit_gb']} GB" if user_info['data_limit_gb'] > 0 else _("marzban.marzban_display.unlimited")
-                expire_days_str = f"{user_info['expire_days']} روز" if user_info['expire_days'] > 0 else _("marzban.marzban_display.unlimited")
-                
-                # --- FIX: All keys now use the 'marzban.' namespace ---
-                customer_message = _("marzban.marzban_add_user.customer_message_title")
-                customer_message += _("marzban.marzban_add_user.customer_message_username", username=f"`{marzban_username}`")
-                customer_message += _("marzban.marzban_add_user.customer_message_datalimit", datalimit=data_limit_str)
-                customer_message += _("marzban.marzban_add_user.customer_message_duration", duration=expire_days_str)
-                customer_message += _("marzban.marzban_add_user.customer_message_sub_link", url=subscription_url)
-                customer_message += _("marzban.marzban_add_user.customer_message_guide")
-                
-                qr_image = qrcode.make(subscription_url)
-                bio = io.BytesIO()
-                bio.name = 'qrcode.png'
-                qr_image.save(bio, 'PNG')
-                bio.seek(0)
-                try:
-                    await context.bot.send_photo(chat_id=customer_id, photo=bio, caption=customer_message, parse_mode=ParseMode.MARKDOWN)
-                    callback_string = f"fin_send_req:{customer_id}:{marzban_username}"
-                    # --- FIX: Added 'marzban.' namespace ---
-                    admin_keyboard = InlineKeyboardMarkup([[InlineKeyboardButton(_("marzban.marzban_add_user.button_send_invoice"), callback_data=callback_string)]])
-                    await context.bot.send_message(chat_id=admin_user.id, text=_("marzban.marzban_add_user.config_sent_to_customer", customer_id=customer_id), reply_markup=admin_keyboard)
-                except Exception as e:
-                    LOGGER.warning(f"Failed to send message to customer {customer_id}: {e}")
-                    await context.bot.send_message(chat_id=admin_user.id, text=_("marzban.marzban_add_user.error_sending_to_customer", url=subscription_url))
+
+            qr_image = qrcode.make(subscription_url)
+            bio = io.BytesIO()
+            bio.name = 'qrcode.png'
+            qr_image.save(bio, 'PNG')
+            bio.seek(0)
+            try:
+                await context.bot.send_photo(chat_id=customer_id, photo=bio, caption=customer_message, parse_mode=ParseMode.MARKDOWN)
+                callback_string = f"fin_send_req:{customer_id}:{marzban_username}"
+                admin_keyboard = InlineKeyboardMarkup([[InlineKeyboardButton(_("marzban.marzban_add_user.button_send_invoice"), callback_data=callback_string)]])
+                await context.bot.send_message(chat_id=admin_user.id, text=_("marzban.marzban_add_user.config_sent_to_customer", customer_id=customer_id), reply_markup=admin_keyboard)
+            except Exception as e:
+                LOGGER.warning(f"Failed to send message to customer {customer_id}: {e}")
+                await context.bot.send_message(chat_id=admin_user.id, text=_("marzban.marzban_add_user.error_sending_to_customer", url=subscription_url))
         
-        # --- FIX: Added 'marzban.' namespace ---
         keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton(_("marzban.marzban_add_user.button_view_user_details"), callback_data=f"user_details_{marzban_username}_all_1")]
         ])
         await query.edit_message_text(_("marzban.marzban_add_user.user_created_successfully", username=f"`{marzban_username}`"), reply_markup=keyboard, parse_mode=ParseMode.MARKDOWN)
 
     else:
-        # --- FIX: Added 'marzban.' namespace ---
         error_message = _("marzban.marzban_add_user.error_creating_user", error=f"`{new_user_data}`")
         await query.edit_message_text(error_message, parse_mode=ParseMode.MARKDOWN)
     
@@ -278,3 +256,96 @@ async def cancel_add_user(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     if query:
         await query.answer()
     return await end_conversation_and_show_menu(update, context)
+
+# =============================================================================
+#  NEW TEST ACCOUNT CONVERSATION
+# =============================================================================
+
+async def start_test_account_conv(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    from shared.translator import _
+    
+    user_id = update.effective_user.id
+    
+    bot_settings = await load_bot_settings()
+    test_account_limit = bot_settings.get('test_account_limit', 1)
+    user_test_count = await get_user_test_account_count(user_id)
+
+    if user_test_count >= test_account_limit:
+        await update.message.reply_text(_('marzban.marzban_add_user.test_account_limit_reached'))
+        return ConversationHandler.END
+
+    await update.message.reply_text(
+        _('marzban.marzban_add_user.request_test_username'),
+        reply_markup=ReplyKeyboardRemove()
+    )
+    return GET_TEST_USERNAME
+
+async def get_username_for_test(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    from shared.translator import _
+    
+    user_id = update.effective_user.id
+    user_input = normalize_username(update.message.text)
+
+    if not re.match("^[a-z0-9]{3,15}$", user_input):
+        await update.message.reply_text(_('marzban.marzban_add_user.invalid_username_format'))
+        return GET_TEST_USERNAME
+
+    await update.message.reply_text(_('marzban.marzban_add_user.generating_unique_username'), parse_mode=ParseMode.HTML)
+    
+    base_username = f"test_{user_input}"
+    final_username = base_username
+    
+    for _ in range(10):
+        user_exists = await get_user_data(final_username)
+        if not user_exists:
+            break
+        
+        random_suffix = ''.join(random.choices(string.ascii_lowercase + string.digits, k=4))
+        final_username = f"{base_username}_{random_suffix}"
+    else:
+        await update.message.reply_text(_('marzban.marzban_add_user.error_generic'))
+        LOGGER.error(f"Could not generate a unique test username for base '{base_username}' after 10 tries.")
+        return ConversationHandler.END
+
+    bot_settings = await load_bot_settings()
+    test_gb = bot_settings.get('test_account_gb', 1)
+    test_hours = bot_settings.get('test_account_hours', 3)
+    
+    new_user_data = await create_marzban_user_from_template(
+        data_limit_gb=int(test_gb),
+        expire_days=test_hours / 24, # convert hours to days (float)
+        username=final_username
+    )
+
+    if not new_user_data:
+        await update.message.reply_text(_('marzban.marzban_add_user.error_creating_user_api'))
+        return ConversationHandler.END
+
+    await link_user_to_telegram(final_username, user_id)
+    await add_user_to_managed_list(final_username)
+    await increment_user_test_account_count(user_id)
+
+    info_message = await format_user_info_for_customer(final_username)
+    
+    await update.message.reply_text(info_message, parse_mode=ParseMode.HTML)
+    
+    log_message = _('marzban.marzban_add_user.log_test_account_created_by_user').format(
+        username=final_username,
+        user_id=update.effective_user.id,
+        first_name=update.effective_user.first_name
+    )
+    await send_log(context.bot, text=log_message)
+    
+    await update.message.reply_text(
+        text=_("shared.menu_returned"),
+        reply_markup=await get_customer_main_menu_keyboard(user_id)
+    )
+    return ConversationHandler.END
+
+async def cancel_test_conv(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    from shared.translator import _
+    await update.message.reply_text(
+        _('marzban.marzban_add_user.test_account_cancelled'),
+        reply_markup=await get_customer_main_menu_keyboard(update.effective_user.id)
+    )
+    return ConversationHandler.END

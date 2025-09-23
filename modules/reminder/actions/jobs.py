@@ -9,14 +9,14 @@ from telegram.helpers import escape_markdown
 from telegram import InlineKeyboardMarkup, InlineKeyboardButton
 
 from modules.marzban.actions.data_manager import load_users_map, normalize_username
-from modules.marzban.actions.api import get_all_users, delete_user_api, renew_user_subscription_api
+from modules.marzban.actions.api import get_all_users, delete_user_api, renew_user_subscription_api,get_user_data
 from modules.marzban.actions.constants import GB_IN_BYTES
 from shared.log_channel import send_log
 from database.db_manager import (
     load_bot_settings, load_non_renewal_users, expire_old_pending_invoices,
     increase_wallet_balance, decrease_wallet_balance,
-    get_users_ready_for_auto_renewal, get_users_for_auto_renewal_warning, # <-- 1. Import new optimized functions
-    get_all_managed_users, cleanup_marzban_user_data
+    get_users_ready_for_auto_renewal, get_users_for_auto_renewal_warning, 
+    get_all_managed_users, cleanup_marzban_user_data,get_all_test_accounts
 )
 
 LOGGER = logging.getLogger(__name__)
@@ -324,3 +324,60 @@ async def schedule_daily_job(application: Application, time_obj: datetime.time):
     
     job_queue.run_daily(callback=check_users_for_reminders, time=job_time, chat_id=admin_id, name=job_name)
     LOGGER.info(f"Daily job (reminders & cleanup) scheduled for {job_time.strftime('%H:%M')} Tehran time.")
+
+# =============================================================================
+#  Hourly Job for Test Account Cleanup
+# =============================================================================
+
+async def cleanup_expired_test_accounts(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    This job runs periodically (e.g., hourly) to find and delete expired test accounts.
+    """
+    from shared.translator import _
+    
+    LOGGER.info("Starting hourly job: Cleaning up expired test accounts...")
+    
+    # 1. Get the list of all usernames marked as 'test_account' from our DB
+    test_account_usernames = await get_all_test_accounts()
+    
+    if not test_account_usernames:
+        LOGGER.info("Test account cleanup job finished. No test accounts found in the database.")
+        return
+        
+    LOGGER.info(f"Found {len(test_account_usernames)} test accounts to check.")
+    
+    deleted_users_count = 0
+    
+    # 2. Iterate through each test account username
+    for username in test_account_usernames:
+        # 3. Get the user's current data from the Marzban panel
+        user_data = await get_user_data(username)
+        
+        # If user doesn't exist in Marzban, clean them up from our DB anyway
+        if not user_data:
+            LOGGER.warning(f"Test account '{username}' found in DB but not in Marzban. Cleaning up DB records.")
+            await cleanup_marzban_user_data(normalize_username(username))
+            continue
+            
+        # 4. Check if the user is expired
+        expire_ts = user_data.get('expire', 0)
+        
+        # Only proceed if the user has an expiration date and it's in the past
+        if expire_ts and expire_ts < datetime.datetime.now().timestamp():
+            LOGGER.info(f"Test account '{username}' has expired. Deleting now...")
+            
+            # 5. Delete the user from both Marzban panel and our local database
+            success, message = await delete_user_api(username)
+            if success:
+                await cleanup_marzban_user_data(normalize_username(username))
+                deleted_users_count += 1
+                LOGGER.info(f"Successfully deleted expired test account '{username}'.")
+            else:
+                LOGGER.error(f"Failed to delete expired test account '{username}' from Marzban. API Error: {message}")
+                
+    if deleted_users_count > 0:
+        log_message = _("reminder_jobs.test_account_cleanup_report", count=deleted_users_count)
+        await send_log(context.bot, log_message)
+        LOGGER.info(f"Test account cleanup job finished. Deleted {deleted_users_count} expired accounts.")
+    else:
+        LOGGER.info("Test account cleanup job finished. No accounts were expired.")    

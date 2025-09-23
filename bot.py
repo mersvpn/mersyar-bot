@@ -5,6 +5,8 @@ import logging.handlers
 import sys
 import os
 import asyncio
+
+from modules.reminder.actions.jobs import cleanup_expired_test_accounts
 # ✨ NEW: Import argparse to read command-line arguments
 
 # ... other imports ...
@@ -125,7 +127,9 @@ def main() -> None:
     
     if application.job_queue:
         application.job_queue.run_repeating(heartbeat, interval=3600, first=10, name="heartbeat")
-        LOGGER.info("❤️ Heartbeat job scheduled to run every hour.")
+        # Schedule the new cleanup job to run every hour
+        application.job_queue.run_repeating(cleanup_expired_test_accounts, interval=3600, first=60, name="cleanup_test_accounts")
+        LOGGER.info("❤️ Heartbeat and Test Account Cleanup jobs scheduled to run every hour.")
 
     BOT_DOMAIN = os.getenv("BOT_DOMAIN")
     WEBHOOK_SECRET_TOKEN = os.getenv("WEBHOOK_SECRET_TOKEN")

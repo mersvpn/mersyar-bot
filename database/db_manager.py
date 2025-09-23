@@ -100,8 +100,7 @@ async def _run_migrations(conn):
         except Exception as e:
             LOGGER.error(f"Failed to apply migration for 'auto_renew': {e}", exc_info=True)
 
-        # --- START: بازنویسی کامل بخش Migration اکانت تست ---
-        # مرحله ۱: ستون قدیمی را اگر وجود دارد، حذف کن
+
         try:
             await cur.execute("SHOW COLUMNS FROM users LIKE 'has_received_test_account';")
             if await cur.fetchone():
@@ -111,7 +110,6 @@ async def _run_migrations(conn):
         except Exception as e:
             LOGGER.error(f"Failed to apply migration for dropping 'has_received_test_account': {e}", exc_info=True)
 
-        # مرحله ۲: ستون جدید شمارنده را اگر وجود ندارد، اضافه کن
         try:
             await cur.execute("SHOW COLUMNS FROM users LIKE 'test_accounts_received';")
             if not await cur.fetchone():
@@ -120,7 +118,16 @@ async def _run_migrations(conn):
                 LOGGER.info("Migration successful for 'test_accounts_received'.")
         except Exception as e:
             LOGGER.error(f"Failed to apply migration for 'test_accounts_received': {e}", exc_info=True)
-        # --- END: بازنویسی کامل بخش Migration اکانت تست ---
+
+        try:
+            await cur.execute("SHOW COLUMNS FROM user_notes LIKE 'is_test_account';")
+            if not await cur.fetchone():
+                LOGGER.info("Applying migration: Adding 'is_test_account' to 'user_notes' table.")
+                await cur.execute("ALTER TABLE user_notes ADD COLUMN is_test_account BOOLEAN NOT NULL DEFAULT FALSE;")
+                LOGGER.info("Migration successful for 'is_test_account'.")
+        except Exception as e:
+            LOGGER.error(f"Failed to apply migration for 'is_test_account': {e}", exc_info=True)    
+  
         
         await conn.commit()
         LOGGER.info("Database migrations finished.")
@@ -130,7 +137,7 @@ async def _initialize_db():
     try:
         async with _pool.acquire() as conn:
             async with conn.cursor() as cur:
-                # ... (تمام دستورات CREATE TABLE IF NOT EXISTS قبلی) ...
+
                 await cur.execute("""
                     CREATE TABLE IF NOT EXISTS bot_settings (
                         setting_key VARCHAR(255) PRIMARY KEY, setting_value TEXT
@@ -398,19 +405,24 @@ async def get_user_note(username: str):
     return result if result else {}
 
 async def save_user_note(username: str, note_data: dict):
+    # This query now includes the is_test_account field
     query = """
-        INSERT INTO user_notes (username, subscription_duration, subscription_data_limit_gb, subscription_price) 
-        VALUES (%s, %s, %s, %s) 
+        INSERT INTO user_notes (username, subscription_duration, subscription_data_limit_gb, subscription_price, is_test_account) 
+        VALUES (%s, %s, %s, %s, %s) 
         AS new_note
         ON DUPLICATE KEY UPDATE 
             subscription_duration = new_note.subscription_duration, 
             subscription_data_limit_gb = new_note.subscription_data_limit_gb, 
-            subscription_price = new_note.subscription_price;
+            subscription_price = new_note.subscription_price,
+            is_test_account = new_note.is_test_account;
     """
     duration = note_data.get('subscription_duration')
     data_limit = note_data.get('subscription_data_limit_gb')
     price = note_data.get('subscription_price')
-    return await execute_query(query, (username, duration, data_limit, price))
+    # Get the is_test_account flag, defaulting to False if not provided
+    is_test = note_data.get('is_test_account', False)
+    
+    return await execute_query(query, (username, duration, data_limit, price, is_test))
 
 async def delete_user_note(username: str):
     query = "UPDATE user_notes SET subscription_duration = NULL, subscription_data_limit_gb = NULL, subscription_price = NULL WHERE username = %s;"
@@ -995,3 +1007,15 @@ async def is_user_admin(user_id: int) -> bool:
     Checks if a user is an admin by checking against the AUTHORIZED_USER_IDS list in config.py.
     """
     return user_id in config.AUTHORIZED_USER_IDS
+
+# =============================================================================
+#  Test Account Cleanup Functions
+# =============================================================================
+
+async def get_all_test_accounts() -> List[str]:
+    """
+    Fetches the usernames of all accounts that are marked as test accounts.
+    """
+    query = "SELECT username FROM user_notes WHERE is_test_account = TRUE;"
+    results = await execute_query(query, fetch='all')
+    return [row['username'] for row in results] if results else []
