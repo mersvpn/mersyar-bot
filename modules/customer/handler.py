@@ -207,9 +207,8 @@ def register(application: Application):
     # --- (CORRECT) Register the new conversation handler ---
     application.add_handler(test_account_conv, group=1)
 
-    # --- Other single-action handlers ---
-        # Handler for the new inline button on user creation messages
-    application.add_handler(CallbackQueryHandler(guide.show_guides_to_customer, pattern=r'^show_connection_guides$'), group=1)
+    # Handler for the new inline button on user creation messages
+    application.add_handler(CallbackQueryHandler(guide.show_guides_as_new_message, pattern=r'^show_connection_guides$'), group=1)
     application.add_handler(MessageHandler(filters.Regex(r'^🛍️فــــــــــروشـــــــــــگاه$'), panel.show_customer_panel), group=1)
     
     # --- (REMOVED) The old, conflicting simple handler is now gone ---

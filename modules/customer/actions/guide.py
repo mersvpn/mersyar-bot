@@ -104,3 +104,22 @@ async def close_guide_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         await query.message.delete()
     except Exception:
         pass
+
+async def show_guides_as_new_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    A wrapper for show_guides_to_customer that ENSURES a new message is sent.
+    This is used for the inline button on the subscription message to prevent it from being edited away.
+    """
+    query = update.callback_query
+    if query:
+        await query.answer() # Acknowledge the button press
+        
+    # Set update.callback_query to None to trick the original function into sending a new message
+    # And then call the original function, but with a dummy update object where .message is the right message
+    
+    class DummyUpdate:
+        def __init__(self, msg):
+            self.message = msg
+            self.callback_query = None
+
+    await show_guides_to_customer(DummyUpdate(update.effective_message), context)
