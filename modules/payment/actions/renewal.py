@@ -11,6 +11,7 @@ from database.db_manager import (
     create_pending_invoice, get_user_wallet_balance
 )
 from shared.translator import _
+from shared.callback_types import SendReceipt, StartManualInvoice 
 
 LOGGER = logging.getLogger(__name__)
 
@@ -25,7 +26,12 @@ async def send_renewal_invoice_to_user(context: ContextTypes.DEFAULT_TYPE, user_
             LOGGER.error(f"Cannot send renewal invoice to {username}: Financial settings not configured.")
             return
 
-        plan_details = {'username': username, 'volume': data_limit_gb, 'duration': renewal_days}
+        plan_details = {
+    'username': username, 
+    'volume': data_limit_gb, 
+    'duration': renewal_days,
+    'invoice_type': 'RENEWAL'  # <-- ADD THIS LINE
+}
         invoice_id = await create_pending_invoice(user_telegram_id, plan_details, price)
         if not invoice_id:
             LOGGER.error(f"Failed to create renewal invoice for {username}.")
@@ -40,10 +46,10 @@ async def send_renewal_invoice_to_user(context: ContextTypes.DEFAULT_TYPE, user_
         invoice_text += _("financials_payment.invoice_footer_prompt")
         
         # --- Wallet Payment Button Logic ---
+        send_receipt_callback = SendReceipt(invoice_id=invoice_id).to_string()
         keyboard_rows = [
-            [InlineKeyboardButton(_("financials_payment.button_send_receipt"), callback_data="customer_send_receipt")]
+            [InlineKeyboardButton(_("financials_payment.button_send_receipt"), callback_data=send_receipt_callback)]
         ]
-        
         user_balance = await get_user_wallet_balance(user_telegram_id)
         if user_balance is not None and user_balance >= price:
             wallet_button_text = _("financials_payment.button_pay_with_wallet", balance=f"{int(user_balance):,}")
@@ -81,13 +87,23 @@ async def send_manual_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE
             return
             
         note_data = await get_user_note(username)
-        price, duration = note_data.get('subscription_price'), note_data.get('subscription_duration')
+        price = note_data.get('subscription_price')
+        duration = note_data.get('subscription_duration')
         
-        if not price or not duration:
+        # Correctly check for None instead of just Falsy values (like 0)
+        if price is None or duration is None:
             # If no subscription info, redirect admin to the manual invoice creation conversation
-            callback_string = f"fin_send_req:{customer_id}:{username}"
-            admin_keyboard = InlineKeyboardMarkup([[InlineKeyboardButton(_("financials_payment.button_create_send_invoice"), callback_data=callback_string)]])
-            await context.bot.send_message(admin_chat_id, _("financials_payment.note_not_set_prompt_manual_invoice", username=f"`{username}`"), reply_markup=admin_keyboard, parse_mode=ParseMode.MARKDOWN)
+            callback_obj = StartManualInvoice(customer_id=customer_id, username=username)
+            admin_keyboard = InlineKeyboardMarkup([[InlineKeyboardButton(
+                _("financials_payment.button_create_send_invoice"), 
+                callback_data=callback_obj.to_string()
+            )]])
+            await context.bot.send_message(
+                admin_chat_id, 
+                _("financials_payment.note_not_set_prompt_manual_invoice", username=f"`{username}`"), 
+                reply_markup=admin_keyboard, 
+                parse_mode=ParseMode.MARKDOWN
+            )
             return
 
         # Use the central function to send the invoice
@@ -99,7 +115,7 @@ async def send_manual_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE
             price=price,
             data_limit_gb=note_data.get('subscription_data_limit_gb', 0)
         )
-        await context.bot.send_message(admin_chat_id, _("financials_payment.invoice_sent_to_user_success_no_id"), parse_mode=ParseMode.MARKDOWN)
+        await context.bot.send_message(admin_chat_id, _("financials_payment.invoice_sent_to_user_success_no_id"))
 
     except Exception as e:
         LOGGER.error(f"Failed to send manual invoice for user {username}: {e}", exc_info=True)

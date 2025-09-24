@@ -110,6 +110,7 @@ async def generate_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     await query.edit_message_text(_("customer_service.generating_invoice"))
     user_id = query.from_user.id
     plan_details = context.user_data.get('custom_plan')
+    plan_details['invoice_type'] = 'NEW_USER_CUSTOM'
     if not plan_details:
         await query.edit_message_text(_("errors.plan_info_not_found"))
         return ConversationHandler.END

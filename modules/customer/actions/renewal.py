@@ -1,72 +1,74 @@
-# FILE: modules/customer/actions/renewal.py (REVISED FOR I18N AND MARKDOWN SAFETY)
+# FILE: modules/customer/actions/renewal.py (REWRITTEN FOR CORRECT WORKFLOW)
 
 import logging
-from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
+from telegram import Update
 from telegram.ext import ContextTypes, ConversationHandler
 from telegram.constants import ParseMode
-from telegram.helpers import escape_markdown  # Ensure this import is at the top
+from telegram.helpers import escape_markdown
+
 from config import config
 from modules.marzban.actions.data_manager import normalize_username
 from shared.translator import _
+# --- NEW IMPORTS ---
+from database.db_manager import get_user_note
+from modules.payment.actions.renewal import send_renewal_invoice_to_user
 
 LOGGER = logging.getLogger(__name__)
 
+
 async def handle_renewal_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """
+    Handles a renewal request from a customer.
+    This function now automatically generates and sends a renewal invoice to the customer.
+    """
     query = update.callback_query
     await query.answer()
 
-    user = update.effective_user
+    user_id = update.effective_user.id
     marzban_username = query.data.split('_')[-1]
-    normalized_user = normalize_username(marzban_username)
+    
+    # Get subscription details from the database
+    note_data = await get_user_note(marzban_username)
+    price = note_data.get('subscription_price')
+    duration = note_data.get('subscription_duration')
+    data_limit_gb = note_data.get('subscription_data_limit_gb', 0) # Default to 0 if not set
 
-    if config.AUTHORIZED_USER_IDS:
-        # --- SAFE MARKDOWN V2 ---
-        safe_full_name = escape_markdown(user.full_name, version=2)
-        user_info = f"کاربر {safe_full_name}"
-        if user.username:
-            safe_username = escape_markdown(user.username, version=2)
-            user_info += f" \\(@{safe_username}\\)"
-        user_info += f"\nUser ID: `{user.id}`"
-
-        # ✨✨✨ KEY FIX HERE ✨✨✨
-        # The username from Marzban is now also escaped to handle characters like '_'
-        safe_normalized_user = escape_markdown(normalized_user, version=2)
-
-        message_to_admin = _("renewal.admin_notification", 
-                             user_info=user_info, 
-                             username=f"`{safe_normalized_user}`")
-
-        bot_username = context.bot.username
-        # Note: URL encoding for usernames in deep links is handled by Telegram,
-        # so no escaping is needed for `details_url`.
-        details_url = f"https://t.me/{bot_username}?start=details_{normalized_user}"
-
-        keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton(_("buttons.smart_renew_for_user", username=normalized_user), callback_data=f"renew_{normalized_user}")],
-            [InlineKeyboardButton(_("buttons.view_user_details"), url=details_url)]
-        ])
-
-        num_sent = 0
+    # Check if subscription details are valid
+    if price is None or duration is None or price <= 0 or duration <= 0:
+        LOGGER.warning(f"User {user_id} requested renewal for '{marzban_username}', but no valid subscription info was found.")
+        await query.edit_message_text(
+            text=_("renewal.error_no_subscription_info"),
+            reply_markup=None
+        )
+        # We also inform admins so they can fix the user's note data
         for admin_id in config.AUTHORIZED_USER_IDS:
             try:
                 await context.bot.send_message(
-                    chat_id=admin_id, text=message_to_admin,
-                    reply_markup=keyboard, parse_mode=ParseMode.MARKDOWN_V2
+                    chat_id=admin_id,
+                    text=_("renewal.admin_alert_missing_info", username=f"`{marzban_username}`"),
+                    parse_mode=ParseMode.MARKDOWN
                 )
-                num_sent += 1
             except Exception as e:
-                LOGGER.error(f"Failed to send renewal notification to admin {admin_id} for user {normalized_user}: {e}")
-        
-        if num_sent > 0:
-            confirmation_text = _("renewal.request_sent_success")
-        else:
-            confirmation_text = _("renewal.request_sent_fail")
-            
-        await query.edit_message_text(text=confirmation_text, reply_markup=None)
-        
+                LOGGER.error(f"Failed to send missing info alert to admin {admin_id}: {e}")
+        return ConversationHandler.END
+
+    # If details are valid, create and send the invoice using the central function
+    await query.edit_message_text(text=_("renewal.generating_invoice"), reply_markup=None)
+    
+    await send_renewal_invoice_to_user(
+        context=context,
+        user_telegram_id=user_id,
+        username=marzban_username,
+        renewal_days=duration,
+        price=price,
+        data_limit_gb=data_limit_gb
+    )
+
     return ConversationHandler.END
 
+
 async def handle_do_not_renew(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handles the user's choice to opt-out of renewal reminders."""
     from database.db_manager import add_to_non_renewal_list
 
     query = update.callback_query
@@ -83,17 +85,12 @@ async def handle_do_not_renew(update: Update, context: ContextTypes.DEFAULT_TYPE
     await query.edit_message_text(_("renewal.do_not_renew_success"))
 
     if config.AUTHORIZED_USER_IDS:
-        # --- SAFE MARKDOWN (LEGACY) ---
-        safe_full_name = escape_markdown(user.full_name, version=1)
+        safe_full_name = escape_markdown(user.full_name)
         user_info = f"کاربر {safe_full_name}"
         if user.username:
-            # Note: No need to escape '@' in legacy markdown
             user_info += f" (@{user.username})"
-
-        # ✨✨✨ SECONDARY FIX HERE ✨✨✨
-        # Also escape the Marzban username for this notification
-        safe_normalized_user = escape_markdown(normalized_user, version=1)
-
+        
+        safe_normalized_user = escape_markdown(normalized_user)
         message_to_admin = _("renewal.do_not_renew_admin_notification", 
                              user_info=user_info, 
                              username=f"`{safe_normalized_user}`")

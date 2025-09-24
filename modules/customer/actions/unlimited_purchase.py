@@ -101,7 +101,15 @@ async def generate_unlimited_invoice(update: Update, context: ContextTypes.DEFAU
         await query.edit_message_text("❌ خطایی رخ داد. اطلاعات پلن یافت نشد.")
         return ConversationHandler.END
 
-    plan_details_for_db = {"plan_type": "unlimited", "username": plan_data['username'], "plan_id": plan_data['plan_id'], "max_ips": plan_data['max_ips'], "volume": 999, "duration": 30, "price": plan_data['price']}
+    plan_details_for_db = {
+        "invoice_type": "NEW_USER_UNLIMITED", # <-- CHANGE THIS
+        "username": plan_data['username'], 
+        "plan_id": plan_data['plan_id'], 
+        "max_ips": plan_data['max_ips'], 
+        "volume": 0,  # <-- Set to 0 for unlimited
+        "duration": 30, # This can be made dynamic later if needed
+        "price": plan_data['price']
+    }
     
     invoice_id = await create_pending_invoice(user_id, plan_details_for_db, plan_data['price'])
     if not invoice_id:

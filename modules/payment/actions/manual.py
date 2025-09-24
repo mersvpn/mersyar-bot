@@ -90,12 +90,19 @@ async def process_manual_price_and_send(update: Update, context: ContextTypes.DE
     if not user_note:
         LOGGER.warning(f"No subscription note found for {marzban_username} while creating manual invoice.")
 
+    # Get current duration and volume, but overwrite price with the admin's input
+    duration = user_note.get('subscription_duration', 0) if user_note else 0
+    volume = user_note.get('subscription_data_limit_gb', 0) if user_note else 0
+    
     plan_details = {
         'username': marzban_username,
-        'volume': user_note.get('subscription_data_limit_gb', 0) if user_note else 0,
-        'duration': user_note.get('subscription_duration', 0) if user_note else 0
+        'volume': volume,
+        'duration': duration,
+        'price': price_int,  # <-- IMPORTANT: Save the manually entered price
+        'invoice_type': 'MANUAL_INVOICE' # <-- IMPORTANT: Mark this invoice type
     }
 
+    # Pass price_int to create_pending_invoice as it's the final price
     invoice_id = await create_pending_invoice(customer_id, plan_details, price_int)
     if not invoice_id:
         await update.message.reply_text(_("financials_payment.error_creating_invoice_db"))

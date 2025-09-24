@@ -29,7 +29,7 @@ async def create_pool():
         _pool = await aiomysql.create_pool(
             host=db_config.DB_HOST, user=db_config.DB_USER,
             password=db_config.DB_PASSWORD, db=db_config.DB_NAME,
-            autocommit=False,
+            autocommit=True,
             loop=None,
             cursorclass=aiomysql.DictCursor
         )

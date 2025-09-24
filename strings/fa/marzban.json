@@ -158,7 +158,9 @@
     "customer_renew_message_footer": "از همراهی شما سپاسگزاریم.",
     "invoice_sent_to_customer": "ℹ️ پیام تایید و صورتحساب برای مشتری (ID: {customer_id}) ارسال شد.",
     "invoice_not_sent_to_customer": "ℹ️ پیام تایید تمدید برای مشتری (ID: {customer_id}) ارسال شد (صورتحساب ارسال نشد چون قیمتی ثبت نشده بود).",
-    "error_notifying_customer_after_renew": "⚠️ **خطا:** کانفیگ `{username}` تمدید شد، اما ارسال پیام به مشتری (ID: {customer_id}) با خطا مواجه شد. لطفاً دستی به او اطلاع دهید."
+    "error_notifying_customer_after_renew": "⚠️ **خطا:** کانفیگ `{username}` تمدید شد، اما ارسال پیام به مشتری (ID: {customer_id}) با خطا مواجه شد. لطفاً دستی به او اطلاع دهید.",
+    "customer_renew_message_footer_payment_needed": "\n\nلطفاً هزینه فوق را پرداخت کرده و رسید را برای پشتیبانی ارسال نمایید.",
+    "payment_info_sent_to_customer": "✅ کاربر تمدید شد و پیام پرداخت برای مشتری (ID: {customer_id}) ارسال گردید."
   },
     "marzban_search": {
     "prompt": "لطفاً قسمتی از نام کاربری مورد نظر را برای جستجو وارد کنید:\n(برای لغو /cancel)",
