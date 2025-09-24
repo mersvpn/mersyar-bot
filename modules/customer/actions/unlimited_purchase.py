@@ -13,12 +13,13 @@ from telegram.ext import (
 from telegram.constants import ParseMode
 
 from database.db_manager import get_active_unlimited_plans, create_pending_invoice, get_unlimited_plan_by_id
-from modules.financials.actions.payment import send_custom_plan_invoice
+from modules.payment.actions.creation import send_custom_plan_invoice
 from shared.keyboards import get_back_to_main_menu_keyboard, get_customer_shop_keyboard
 from modules.marzban.actions.api import get_user_data
 from modules.marzban.actions.data_manager import normalize_username
 # Import the new, centralized rerouting function
-from modules.general.actions import end_conv_and_reroute, end_conversation_and_show_menu
+from modules.general.actions import end_conv_and_reroute
+from shared.callbacks import end_conversation_and_show_menu
 
 LOGGER = logging.getLogger(__name__)
 

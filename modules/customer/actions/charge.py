@@ -152,7 +152,7 @@ async def handle_custom_amount(update: Update, context: ContextTypes.DEFAULT_TYP
 
 async def generate_charge_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Creates a database record for the invoice and sends it to the user."""
-    from modules.financials.actions.payment import send_wallet_charge_invoice
+    from modules.payment.actions.wallet import send_wallet_charge_invoice
     
     query = update.callback_query
     await query.answer(_("financials_payment.generating_invoice"))
@@ -164,7 +164,7 @@ async def generate_charge_invoice(update: Update, context: ContextTypes.DEFAULT_
         await query.edit_message_text(_("errors.internal_error"))
         return ConversationHandler.END
 
-    plan_details = {"type": "wallet_charge", "amount": amount}
+    plan_details = {"invoice_type": "WALLET_CHARGE", "amount": amount}
 
     invoice_id = await db_manager.create_pending_invoice(
         user_id=user_id, plan_details=plan_details, price=amount

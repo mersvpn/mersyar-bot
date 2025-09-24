@@ -11,11 +11,11 @@ from .actions import (
     add_user, display, modify_user, search, messaging,
     note, template, linking, credentials
 )
-from modules.financials.actions import payment
-from modules.general.actions import end_conversation_and_show_menu, switch_to_customer_view
+from modules.payment.actions import renewal as payment_actions
+from modules.general.actions import switch_to_customer_view
 from shared.callbacks import cancel_to_helper_tools
 from config import config  # Import config to access admin IDs
-
+from shared.callbacks import end_conversation_and_show_menu
 # V V V V V ADD BOTH OF THESE LINES HERE V V V V V
 # A regex pattern that matches all buttons on the user management submenu
 USER_MANAGEMENT_BUTTONS_REGEX = r'^(👥 نمایش کاربران|⌛️ کاربران رو به اتمام|🔎 جستجوی کاربر|➕ افزودن کاربر|🔙 بازگشت به منوی اصلی)$'
@@ -150,7 +150,7 @@ def register(application: Application) -> None:
         CallbackQueryHandler(modify_user.do_delete_user, pattern=r'^do_delete_'),
         
         CallbackQueryHandler(note.list_users_with_subscriptions, pattern=r'^list_subs_page_'),
-        CallbackQueryHandler(payment.send_manual_invoice, pattern=r'^send_invoice_'),
+        CallbackQueryHandler(payment_actions.send_manual_invoice, pattern=r'^send_invoice_'),
         
         CommandHandler("start", display.handle_deep_link_details, filters=filters.Regex(r'details_'))
     ]

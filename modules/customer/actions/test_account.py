@@ -24,7 +24,7 @@ from modules.marzban.actions.add_user import create_marzban_user_from_template
 from modules.marzban.actions import api as marzban_api
 from shared.translator import _
 from shared.log_channel import send_log
-from modules.general.actions import end_conversation_and_show_menu
+from shared.callbacks import end_conversation_and_show_menu
 from shared.keyboards import get_connection_guide_keyboard
 LOGGER = logging.getLogger(__name__)
 

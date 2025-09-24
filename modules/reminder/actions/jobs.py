@@ -16,7 +16,7 @@ from database.db_manager import (
     load_bot_settings, load_non_renewal_users, expire_old_pending_invoices,
     increase_wallet_balance, decrease_wallet_balance,
     get_users_ready_for_auto_renewal, get_users_for_auto_renewal_warning, 
-    get_all_managed_users, cleanup_marzban_user_data,get_all_test_accounts
+    get_all_managed_users, cleanup_marzban_user_data,get_all_test_accounts,is_account_test
 )
 
 LOGGER = logging.getLogger(__name__)
@@ -114,6 +114,9 @@ async def check_users_for_reminders(context: ContextTypes.DEFAULT_TYPE) -> None:
 
             if not panel_user or panel_user.get('status') != 'active': continue
 
+            if await is_account_test(marzban_username):
+             continue
+
             if expire_ts := panel_user.get('expire'):
                 expire_date = datetime.datetime.fromtimestamp(expire_ts)
                 now = datetime.datetime.now()
@@ -136,6 +139,9 @@ async def check_users_for_reminders(context: ContextTypes.DEFAULT_TYPE) -> None:
 
             if not panel_user or panel_user.get('status') != 'active': continue
 
+            if await is_account_test(marzban_username):
+                continue
+
             if expire_ts := panel_user.get('expire'):
                 expire_date = datetime.datetime.fromtimestamp(expire_ts)
                 now = datetime.datetime.now()
@@ -155,6 +161,9 @@ async def check_users_for_reminders(context: ContextTypes.DEFAULT_TYPE) -> None:
         for panel_user in all_users_from_panel:
             username = panel_user.get('username')
             if not username or username in processed_users:
+                continue
+
+            if await is_account_test(username):
                 continue
 
             normalized_username = normalize_username(username)

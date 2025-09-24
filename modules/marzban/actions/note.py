@@ -8,7 +8,7 @@ from telegram.helpers import escape_markdown
 
 from .data_manager import normalize_username
 from shared.keyboards import get_user_management_keyboard
-from modules.general.actions import end_conversation_and_show_menu
+
 from .api import get_all_users as get_all_marzban_users
 
 LOGGER = logging.getLogger(__name__)

@@ -1,4 +1,4 @@
-# FILE: modules/auth.py (FINAL, WITH CIRCULAR IMPORT FIX)
+# FILE: modules/auth.py (REFACTORED TO BREAK CIRCULAR IMPORT)
 
 from functools import wraps
 import logging
@@ -6,12 +6,10 @@ from telegram import Update
 from telegram.ext import ContextTypes, ConversationHandler, MessageHandler, filters, CommandHandler
 
 from config import config
+from shared.translator import _ # Import translator
 
 LOGGER = logging.getLogger(__name__)
 
-# =============================================================================
-#  1. Helper function & Authorization Decorators
-# =============================================================================
 
 async def is_admin(user_id: int) -> bool:
     """A simple, reusable check if a user is an admin."""
@@ -25,9 +23,9 @@ def admin_only(func):
         if not user or not await is_admin(user.id):
             LOGGER.warning(f"Unauthorized access denied for {user.id if user else 'Unknown'} in '{func.__name__}'.")
             if update.message:
-                await update.message.reply_text("⛔️ شما اجازه دسترسی به این دستور را ندارید.")
+                await update.message.reply_text(_("errors.admin_only_command"))
             elif update.callback_query:
-                await update.callback_query.answer("⛔️ شما اجازه دسترسی ندارید.", show_alert=True)
+                await update.callback_query.answer(_("errors.admin_only_callback"), show_alert=True)
             return
         return await func(update, context, *args, **kwargs)
     return wrapped
@@ -40,25 +38,35 @@ def admin_only_conv(func):
         if not user or not await is_admin(user.id):
             LOGGER.warning(f"Unauthorized access for {user.id if user else 'Unknown'} to conv '{func.__name__}'.")
             if update.message:
-                await update.message.reply_text("⛔️ شما اجازه دسترسی به این بخش را ندارید.")
+                await update.message.reply_text(_("errors.admin_only_section"))
             return ConversationHandler.END
         return await func(update, context, *args, **kwargs)
     return wrapped
 
-# =============================================================================
-#  2. Shared Conversation Fallbacks for Admins
-# =============================================================================
 
 def get_admin_fallbacks():
     """
     Returns a list of shared fallback handlers for admin conversations.
-    We use a function to do a local import, breaking the circular dependency.
+    This structure prevents circular import errors.
     """
-    # (⭐ FIX ⭐) Import is moved inside the function.
-    from modules.general.actions import admin_fallback_reroute, end_conversation_and_show_menu
+    # (⭐ FIX ⭐) Import is now from the central, safe location.
+    from shared.callbacks import admin_fallback_reroute
+    from shared.callbacks import admin_fallback_reroute, end_conversation_and_show_menu
+
     
-    # This regex should be based on translation keys for best practice, but for now this works.
-    ADMIN_MAIN_MENU_REGEX = r'^(👤 مدیریت کاربران|⚙️ تنظیمات و ابزارها|📓 مدیریت یادداشت‌ها|📨 ارسال پیام|💻 ورود به پنل کاربری|📚 تنظیمات آموزش|🔙 بازگشت به منوی اصلی)$'
+    # Use translator for robust regex matching
+    admin_menu_buttons = [
+        _("keyboards.admin_main_menu.manage_users"),
+        _("keyboards.admin_main_menu.financial_settings"),
+        _("keyboards.admin_main_menu.note_management"),
+        _("keyboards.admin_main_menu.send_message"),
+        _("keyboards.admin_main_menu.customer_panel"),
+        _("keyboards.admin_main_menu.guides_settings"),
+        _("keyboards.admin_main_menu.back_to_main") # This key might not exist, adjust as needed
+    ]
+    # Filter out any potential empty strings if a key is missing
+    valid_buttons = [btn for btn in admin_menu_buttons if btn]
+    ADMIN_MAIN_MENU_REGEX = r'^(' + '|'.join(valid_buttons) + r')$'
     
     return [
         MessageHandler(filters.Regex(ADMIN_MAIN_MENU_REGEX), admin_fallback_reroute),

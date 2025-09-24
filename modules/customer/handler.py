@@ -18,7 +18,8 @@ from .actions import (
 )
 from .actions import purchase, renewal, service, panel, guide, wallet
 
-from modules.general.actions import end_conversation_and_show_menu, end_conv_and_reroute, start
+from modules.general.actions import end_conv_and_reroute, start
+from shared.callbacks import end_conversation_and_show_menu
 from config import config
 # We need the translator and re for the new handler
 from shared.translator import _

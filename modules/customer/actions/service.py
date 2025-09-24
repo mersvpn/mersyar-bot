@@ -1,4 +1,4 @@
-# FILE: modules/customer/actions/service.py (FULLY UPDATED TO NEW TRANSLATION STANDARD)
+# FILE: modules/customer/actions/service.py (REFACTORED FOR RESPONSIVENESS)
 
 import datetime
 import jdatetime
@@ -18,9 +18,12 @@ from database.db_manager import (
     is_auto_renew_enabled,
     set_auto_renew_status,
     load_pricing_parameters,
-    create_pending_invoice
+    create_pending_invoice,
+    is_account_test,
+    get_linked_marzban_usernames, 
+    unlink_user_from_telegram
 )
-from modules.financials.actions.payment import send_custom_plan_invoice
+from modules.payment.actions.creation import send_custom_plan_invoice
 from shared.keyboards import get_back_to_main_menu_keyboard
 
 LOGGER = logging.getLogger(__name__)
@@ -30,14 +33,82 @@ PROMPT_FOR_DATA_AMOUNT, CONFIRM_DATA_PURCHASE = range(4, 6)
 ITEMS_PER_PAGE = 8
 
 # =============================================================================
-#  PAGINATION HELPER FUNCTIONS
+#  BACKGROUND TASK (NEW LOGIC)
+#  This function contains all the slow network operations.
+# =============================================================================
+async def _fetch_and_display_services(context: ContextTypes.DEFAULT_TYPE, user_id: int, loading_message):
+    """
+    This is the background task. It fetches all data from Marzban, filters it,
+    and then edits the "Loading..." message with the final result.
+    """
+    try:
+        linked_usernames_raw = await get_linked_marzban_usernames(user_id)
+        if not linked_usernames_raw:
+            await loading_message.edit_text(_("customer.customer_service.no_service_linked"))
+            return
+
+        tasks = [get_user_data(username) for username in linked_usernames_raw]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        valid_linked_accounts = []
+        dead_links_to_cleanup = []
+
+        for i, result in enumerate(results):
+            username_raw = linked_usernames_raw[i]
+            if isinstance(result, dict) and "error" not in result and result is not None:
+                valid_linked_accounts.append(result)
+            else:
+                dead_links_to_cleanup.append(normalize_username(username_raw))
+                if not isinstance(result, Exception):
+                    LOGGER.warning(f"Failed to get data for user '{username_raw}': {result}")
+
+        if dead_links_to_cleanup:
+            LOGGER.info(f"Cleaning up {len(dead_links_to_cleanup)} dead links for user {user_id}: {dead_links_to_cleanup}")
+            cleanup_tasks = [unlink_user_from_telegram(dead_username) for dead_username in dead_links_to_cleanup]
+            await asyncio.gather(*cleanup_tasks)
+        
+        is_test_tasks = [is_account_test(acc['username']) for acc in valid_linked_accounts]
+        is_test_results = await asyncio.gather(*is_test_tasks)
+        
+        final_accounts_to_show = [acc for i, acc in enumerate(valid_linked_accounts) if not is_test_results[i]]
+        
+        if not final_accounts_to_show:
+            await loading_message.edit_text(_("customer.customer_service.no_valid_service_found"))
+            return
+        
+        if len(final_accounts_to_show) == 1:
+            original_username = final_accounts_to_show[0]['username']
+            # Directly call display_service_details to edit the message
+            await display_service_details(user_id, loading_message, context, original_username)
+        else:
+            sorted_services = sorted(final_accounts_to_show, key=lambda u: u['username'].lower())
+            context.user_data['services_list'] = sorted_services
+            reply_markup = await _build_paginated_service_keyboard(sorted_services, page=0)
+            await loading_message.edit_text(_("customer.customer_service.multiple_services_prompt"), reply_markup=reply_markup)
+
+    except asyncio.CancelledError:
+        LOGGER.info(f"Service loading for user {user_id} was cancelled by the user.")
+        # The message will be deleted by the cancellation handler, so no need to edit it.
+    except Exception as e:
+        LOGGER.error(f"An error occurred while fetching services for user {user_id}: {e}", exc_info=True)
+        try:
+            await loading_message.edit_text(_("customer.customer_service.panel_connection_error"))
+        except Exception:
+            pass # Message might have been deleted already
+    finally:
+        # Clean up the task from user_data once it's finished or cancelled
+        context.user_data.pop('service_loader_task', None)
+
+
+# =============================================================================
+#  PAGINATION HELPER FUNCTIONS (UNCHANGED)
 # =============================================================================
 async def _build_paginated_service_keyboard(services: list, page: int = 0) -> InlineKeyboardMarkup:
+    # This function is unchanged
     start_index = page * ITEMS_PER_PAGE
     end_index = start_index + ITEMS_PER_PAGE
     keyboard = []
     for user in services[start_index:end_index]:
-        # --- FIX: Added 'keyboards.' namespace ---
         if user.get('status') == 'active':
             button_text = _("keyboards.buttons.service_status_active", username=user['username'])
         else:
@@ -58,17 +129,16 @@ async def _build_paginated_service_keyboard(services: list, page: int = 0) -> In
     return InlineKeyboardMarkup(keyboard)
 
 async def handle_service_page_change(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    # This function is unchanged
     query = update.callback_query
     await query.answer()
     direction, page_str = query.data.split('_')[1:]
     page = int(page_str)
     services = context.user_data.get('services_list', [])
     if not services:
-        # --- FIX: Added 'customer.' namespace ---
         await query.edit_message_text(_("customer.customer_service.service_list_error"))
         return ConversationHandler.END
     reply_markup = await _build_paginated_service_keyboard(services, page)
-    # --- FIX: Added 'customer.' namespace ---
     await query.edit_message_text(_("customer.customer_service.multiple_services_prompt"), reply_markup=reply_markup)
     return CHOOSE_SERVICE
 
@@ -76,13 +146,36 @@ async def handle_service_page_change(update: Update, context: ContextTypes.DEFAU
 #  CORE FUNCTIONS
 # =============================================================================
 
+async def handle_my_service(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """
+    (REWRITTEN) This is now the entry point. It's very fast.
+    It sends a "Loading..." message, starts the background task, and immediately
+    enters the conversation state, making the UI responsive.
+    """
+    user_id = update.effective_user.id
+    loading_message = await update.message.reply_text(_("customer.customer_service.loading"))
+
+    # Create and start the background task
+    task = asyncio.create_task(
+        _fetch_and_display_services(context=context, user_id=user_id, loading_message=loading_message)
+    )
+    
+    # Store the task so we can cancel it if the user navigates away
+    context.user_data['service_loader_task'] = task
+    
+    # Immediately enter the next state so the "Cancel" button works instantly
+    return CHOOSE_SERVICE
+
+
+# --- THE REST OF THE FILE REMAINS LARGELY UNCHANGED ---
+# Only back_to_main_menu_customer needs a small modification to handle task cancellation.
+
 async def display_service_details(user_id: int, message_to_edit, context: ContextTypes.DEFAULT_TYPE, marzban_username: str) -> int:
     from database.db_manager import get_user_note, is_auto_renew_enabled
     
-    # --- FIX: Added 'customer.' namespace ---
     await message_to_edit.edit_text(text=_("customer.customer_service.getting_service_info", username=marzban_username))
-
     user_info = await get_user_data(marzban_username)
+    # ... (rest of this function is unchanged)
     if not user_info or "error" in user_info:
         await message_to_edit.edit_text(_("customer.customer_service.service_not_found_in_panel"))
         return ConversationHandler.END
@@ -161,106 +254,32 @@ async def display_service_details(user_id: int, message_to_edit, context: Contex
     await message_to_edit.edit_text(message, reply_markup=keyboard, parse_mode=ParseMode.MARKDOWN)
     return DISPLAY_SERVICE
 
-async def handle_my_service(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    from database.db_manager import get_linked_marzban_usernames, unlink_user_from_telegram
-
-    user_id = update.effective_user.id
-    # --- FIX: Added 'customer.' namespace ---
-    loading_message = await update.message.reply_text(_("customer.customer_service.loading"))
-
-    linked_usernames_raw = await get_linked_marzban_usernames(user_id)
-    if not linked_usernames_raw:
-        await loading_message.edit_text(_("customer.customer_service.no_service_linked"))
-        return ConversationHandler.END
-
-    tasks = [get_user_data(username) for username in linked_usernames_raw]
-    results = await asyncio.gather(*tasks, return_exceptions=True)
-
-    valid_linked_accounts = []
-    dead_links_to_cleanup = []
-
-    for i, result in enumerate(results):
-        username_raw = linked_usernames_raw[i]
-        if isinstance(result, dict) and "error" not in result and result is not None:
-            valid_linked_accounts.append(result)
-        else:
-            dead_links_to_cleanup.append(normalize_username(username_raw))
-            if not isinstance(result, Exception):
-                LOGGER.warning(f"Failed to get data for user '{username_raw}': {result}")
-
-    if dead_links_to_cleanup:
-        LOGGER.info(f"Cleaning up {len(dead_links_to_cleanup)} dead links for user {user_id}: {dead_links_to_cleanup}")
-        cleanup_tasks = [unlink_user_from_telegram(dead_username) for dead_username in dead_links_to_cleanup]
-        await asyncio.gather(*cleanup_tasks)
-
-    if not valid_linked_accounts:
-        await loading_message.edit_text(_("customer.customer_service.no_valid_service_found"))
-        return ConversationHandler.END
-    
-    if len(valid_linked_accounts) == 1:
-        original_username = valid_linked_accounts[0]['username']
-        return await display_service_details(user_id, loading_message, context, original_username)
-
-    sorted_services = sorted(valid_linked_accounts, key=lambda u: u['username'].lower())
-    context.user_data['services_list'] = sorted_services
-
-    reply_markup = await _build_paginated_service_keyboard(sorted_services, page=0)
-    await loading_message.edit_text(_("customer.customer_service.multiple_services_prompt"), reply_markup=reply_markup)
-    return CHOOSE_SERVICE
 
 async def choose_service(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    # This function is unchanged
     query = update.callback_query
     await query.answer()
     marzban_username = query.data.split('select_service_')[-1]
-    
     user_id = query.from_user.id
     message_to_edit = query.message
     return await display_service_details(user_id, message_to_edit, context, marzban_username)
 
-async def confirm_reset_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    query = update.callback_query
-    await query.answer()
-    username = query.data.split('_')[-1]
-    context.user_data['service_username'] = username
-    # --- FIX: Added 'customer.' and 'keyboards.' namespaces ---
-    text = _("customer.customer_service.reset_sub_warning")
-    keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton(_("keyboards.buttons.reset_sub_confirm"), callback_data=f"do_reset_sub_{username}")],
-        [InlineKeyboardButton(_("keyboards.buttons.reset_sub_cancel"), callback_data=f"select_service_{username}")]
-    ])
-    await query.edit_message_text(text, reply_markup=keyboard, parse_mode=ParseMode.MARKDOWN)
-    return CONFIRM_RESET_SUB
-
-async def execute_reset_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    query = update.callback_query
-    await query.answer()
-    username = query.data.split('_')[-1]
-    if not username:
-        # --- FIX: Added 'general.' namespace ---
-        await query.edit_message_text(_("general.errors.username_not_found"))
-        return ConversationHandler.END
-
-    await query.edit_message_text(_("customer.customer_service.resetting_sub_link", username=f"`{username}`"))
-    success, result = await reset_subscription_url_api(username)
-
-    if success:
-        new_sub_url = result.get('subscription_url', _("customer.customer_service.not_found"))
-        text = _("customer.customer_service.reset_sub_successful", sub_url=new_sub_url)
-        keyboard = InlineKeyboardMarkup([[InlineKeyboardButton(_("keyboards.buttons.back_to_details"), callback_data=f"select_service_{username}")]])
-        await query.edit_message_text(text, reply_markup=keyboard, parse_mode=ParseMode.MARKDOWN)
-    else:
-        text = _("customer.customer_service.reset_sub_failed", error=result)
-        keyboard = InlineKeyboardMarkup([[InlineKeyboardButton(_("keyboards.buttons.back_to_details"), callback_data=f"select_service_{username}")]])
-        await query.edit_message_text(text, reply_markup=keyboard)
-        
-    return DISPLAY_SERVICE
 
 async def back_to_main_menu_customer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """
+    (MODIFIED) This function now checks for and cancels the background task
+    if the user decides to cancel while services are still loading.
+    """
     query = update.callback_query
     await query.answer()
-    user_id = update.effective_user.id
     
-    # --- FIX: Added 'general.' namespace ---
+    # --- CHANGE START: Cancel the background task if it's running ---
+    task = context.user_data.pop('service_loader_task', None)
+    if task and not task.done():
+        task.cancel()
+    # --- CHANGE END ---
+    
+    user_id = update.effective_user.id
     message_text = _("general.operation_cancelled")
     
     if user_id in config.AUTHORIZED_USER_IDS:
@@ -281,6 +300,43 @@ async def back_to_main_menu_customer(update: Update, context: ContextTypes.DEFAU
     
     context.user_data.clear()
     return ConversationHandler.END
+
+
+# ... All other functions (confirm_reset_subscription, execute_reset_subscription, etc.) remain completely unchanged ...
+# They are copied here for completeness of the file.
+
+async def confirm_reset_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+    username = query.data.split('_')[-1]
+    context.user_data['service_username'] = username
+    text = _("customer.customer_service.reset_sub_warning")
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton(_("keyboards.buttons.reset_sub_confirm"), callback_data=f"do_reset_sub_{username}")],
+        [InlineKeyboardButton(_("keyboards.buttons.reset_sub_cancel"), callback_data=f"select_service_{username}")]
+    ])
+    await query.edit_message_text(text, reply_markup=keyboard, parse_mode=ParseMode.MARKDOWN)
+    return CONFIRM_RESET_SUB
+
+async def execute_reset_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+    username = query.data.split('_')[-1]
+    if not username:
+        await query.edit_message_text(_("general.errors.username_not_found"))
+        return ConversationHandler.END
+    await query.edit_message_text(_("customer.customer_service.resetting_sub_link", username=f"`{username}`"))
+    success, result = await reset_subscription_url_api(username)
+    if success:
+        new_sub_url = result.get('subscription_url', _("customer.customer_service.not_found"))
+        text = _("customer.customer_service.reset_sub_successful", sub_url=new_sub_url)
+        keyboard = InlineKeyboardMarkup([[InlineKeyboardButton(_("keyboards.buttons.back_to_details"), callback_data=f"select_service_{username}")]])
+        await query.edit_message_text(text, reply_markup=keyboard, parse_mode=ParseMode.MARKDOWN)
+    else:
+        text = _("customer.customer_service.reset_sub_failed", error=result)
+        keyboard = InlineKeyboardMarkup([[InlineKeyboardButton(_("keyboards.buttons.back_to_details"), callback_data=f"select_service_{username}")]])
+        await query.edit_message_text(text, reply_markup=keyboard)
+    return DISPLAY_SERVICE
 
 async def request_delete_service(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
@@ -388,6 +444,5 @@ async def toggle_auto_renew(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         return DISPLAY_SERVICE
     user_id = update.effective_user.id
     await set_auto_renew_status(user_id, marzban_username, new_status)
-    
     message_to_edit = query.message
     return await display_service_details(user_id, message_to_edit, context, marzban_username)

@@ -8,7 +8,8 @@ import asyncio
 
 from modules.reminder.actions.jobs import cleanup_expired_test_accounts
 # ✨ NEW: Import argparse to read command-line arguments
-
+from modules.financials import handler as financials_handler
+from modules.payment import handler as payment_handler
 # ... other imports ...
 from shared.translator import init_translator
 
@@ -124,6 +125,8 @@ def main() -> None:
     bot_settings_handler.register(application)
     stats_handler.register(application)
     guides_handler.register(application)
+    financials_handler.register(application)
+    payment_handler.register(application)
     
     if application.job_queue:
         application.job_queue.run_repeating(heartbeat, interval=3600, first=10, name="heartbeat")

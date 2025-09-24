@@ -9,10 +9,10 @@ from telegram.ext import (
 )
 from telegram.constants import ParseMode
 from telegram.helpers import escape_markdown
-
+from shared.callbacks import end_conversation_and_show_menu
 from database import db_manager
 # V V V V V THE FIX IS HERE (IMPORTS) V V V V V
-from modules.general.actions import end_conversation_and_show_menu
+
 # ^ ^ ^ ^ ^ THE FIX IS HERE (IMPORTS) ^ ^ ^ ^ ^
 from shared.keyboards import get_settings_and_tools_keyboard
 

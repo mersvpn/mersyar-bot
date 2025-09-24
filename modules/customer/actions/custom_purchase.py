@@ -8,7 +8,7 @@ from telegram.constants import ParseMode
 
 from . import panel, service, guide
 from database.db_manager import create_pending_invoice, load_pricing_parameters
-from modules.financials.actions.payment import send_custom_plan_invoice
+from modules.payment.actions.creation import send_custom_plan_invoice
 from shared.keyboards import get_back_to_main_menu_keyboard, get_customer_shop_keyboard
 from modules.marzban.actions.api import get_user_data
 from modules.marzban.actions.data_manager import normalize_username

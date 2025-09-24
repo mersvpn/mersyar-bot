@@ -4,11 +4,11 @@ import logging
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import ContextTypes, ConversationHandler, MessageHandler, CallbackQueryHandler, CommandHandler, filters
 from telegram.constants import ParseMode
-
+from shared.callbacks import end_conversation_and_show_menu
 from shared.translator import _
 from .data_manager import load_marzban_credentials, save_marzban_credentials
 from .api import get_marzban_token
-from modules.general.actions import end_conversation_and_show_menu
+
 
 LOGGER = logging.getLogger(__name__)
 GET_URL, GET_USERNAME, GET_PASSWORD, CONFIRM = range(4)

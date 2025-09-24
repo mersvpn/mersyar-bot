@@ -13,7 +13,7 @@ from database.db_manager import (
     get_unlimited_plan_by_id, update_unlimited_plan
 )
 from .settings import show_plan_management_menu
-from modules.general.actions import end_conversation_and_show_menu
+from shared.callbacks import end_conversation_and_show_menu
 
 LOGGER = logging.getLogger(__name__)
 

@@ -27,5 +27,6 @@
   "test_account": {
     "success_admin": "✅ اکانت تست جدید\n\n👤 کاربر: {name}\n🆔 یوزرنیم: {username}\n🔢 آیدی عددی: `{user_id}`\n\n💠 یوزرنیم مرزبان: `{test_username}`",
     "api_failed_admin": "⚠️ **خطای API در ساخت اکانت تست**\n\nبرای کاربر با آیدی `{user_id}`\n\n`{error}`"
-  }
+  },
+    "linking_admin_notification": "✅ <b>اتصال حساب موفق</b>\n\nکاربر <b>{customer_name}</b> (<code>{customer_id}</code>) با موفقیت به حساب مرزبان <code>{username}</code> متصل شد."
 }

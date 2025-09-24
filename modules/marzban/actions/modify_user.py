@@ -180,7 +180,7 @@ async def do_delete_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 async def renew_user_smart(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     from shared.translator import _
-    from modules.financials.actions.payment import send_renewal_invoice_to_user
+    from modules.payment.actions.renewal import send_renewal_invoice_to_user
     from database.db_manager import get_user_note, get_telegram_id_from_marzban_username
 
     query = update.callback_query

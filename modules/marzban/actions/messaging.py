@@ -14,7 +14,7 @@ from telegram.error import TelegramError
 
 # V V V V V THE FIX IS HERE (IMPORTS) V V V V V
 from shared.keyboards import get_admin_main_menu_keyboard
-from modules.general.actions import end_conversation_and_show_menu
+
 # ^ ^ ^ ^ ^ THE FIX IS HERE (IMPORTS) ^ ^ ^ ^ ^
 
 LOGGER = logging.getLogger(__name__)

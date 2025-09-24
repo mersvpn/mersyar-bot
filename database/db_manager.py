@@ -748,17 +748,25 @@ async def create_pending_invoice(user_id: int, plan_details: dict, price: int) -
 async def get_pending_invoice(invoice_id: int) -> Optional[dict]:
     """
     Retrieves a pending invoice by its ID.
+    It renames 'invoice_id' to 'id' in the output dictionary for consistency.
     """
-    query = "SELECT user_id, plan_details, price, status FROM pending_invoices WHERE invoice_id = %s;"
+    query = "SELECT invoice_id, user_id, plan_details, price, status FROM pending_invoices WHERE invoice_id = %s;"
     result = await execute_query(query, (invoice_id,), fetch='one')
-    if result and result.get('plan_details'):
-        try:
-            result['plan_details'] = json.loads(result['plan_details'])
-        except (json.JSONDecodeError, TypeError):
-            LOGGER.error(f"Failed to decode plan_details JSON for invoice_id {invoice_id}.")
-            result['plan_details'] = {}
+    
+    if result:
+        # --- SAFE FIX START ---
+        # Rename 'invoice_id' key to 'id' to match the old logic and avoid changing other files.
+        result['id'] = result.pop('invoice_id')
+        # --- SAFE FIX END ---
+        
+        if result.get('plan_details'):
+            try:
+                result['plan_details'] = json.loads(result['plan_details'])
+            except (json.JSONDecodeError, TypeError):
+                LOGGER.error(f"Failed to decode plan_details JSON for invoice_id {invoice_id}.")
+                result['plan_details'] = {}
+                
     return result
-
 async def update_invoice_status(invoice_id: int, status: str) -> bool:
     """
     Updates the status of an invoice (e.g., to 'approved' or 'rejected').
@@ -1019,3 +1027,12 @@ async def get_all_test_accounts() -> List[str]:
     query = "SELECT username FROM user_notes WHERE is_test_account = TRUE;"
     results = await execute_query(query, fetch='all')
     return [row['username'] for row in results] if results else []
+
+async def is_account_test(username: str) -> bool:
+    """
+    Checks if a given username is marked as a test account in the database.
+    """
+    query = "SELECT is_test_account FROM user_notes WHERE username = %s;"
+    result = await execute_query(query, (username,), fetch='one')
+    # Returns True if the flag is set to 1, otherwise False.
+    return bool(result['is_test_account']) if result else False
