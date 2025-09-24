@@ -4,7 +4,7 @@ import logging
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import ContextTypes
 from telegram.constants import ParseMode
-
+from shared.callback_types import SendReceipt 
 from database.db_manager import load_financials, get_pending_invoice, decrease_wallet_balance
 from shared.translator import _
 from .approval import approve_payment # We'll need this for auto-approval
@@ -32,8 +32,10 @@ async def send_wallet_charge_invoice(context: ContextTypes.DEFAULT_TYPE, user_id
     invoice_text += _("financials_payment.invoice_payment_details", card_number=f"`{financials['card_number']}`", card_holder=f"`{financials['card_holder']}`")
     invoice_text += _("financials_payment.invoice_footer_prompt")
     
+    send_receipt_callback = SendReceipt(invoice_id=invoice_id).to_string()
+    
     keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton(_("financials_payment.button_send_receipt"), callback_data="customer_send_receipt")],
+        [InlineKeyboardButton(_("financials_payment.button_send_receipt"), callback_data=send_receipt_callback)],
         [InlineKeyboardButton(_("financials_payment.button_back_to_menu"), callback_data="payment_back_to_menu")]
     ])
     

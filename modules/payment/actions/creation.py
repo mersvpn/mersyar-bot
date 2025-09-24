@@ -7,7 +7,7 @@ from telegram.constants import ParseMode
 
 from database.db_manager import load_financials, get_user_wallet_balance
 from shared.translator import _
-
+from shared.callback_types import SendReceipt
 LOGGER = logging.getLogger(__name__)
 
 async def send_custom_plan_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE, plan_details: dict, invoice_id: int):
@@ -36,8 +36,9 @@ async def send_custom_plan_invoice(update: Update, context: ContextTypes.DEFAULT
     invoice_text += _("financials_payment.invoice_footer_prompt")
     
     # --- Wallet Payment Button Logic ---
+    send_receipt_callback = SendReceipt(invoice_id=invoice_id).to_string()
     keyboard_rows = [
-        [InlineKeyboardButton(_("financials_payment.button_send_receipt"), callback_data="customer_send_receipt")]
+        [InlineKeyboardButton(_("financials_payment.button_send_receipt"), callback_data=send_receipt_callback)]
     ]
     
     user_balance = await get_user_wallet_balance(user_id)

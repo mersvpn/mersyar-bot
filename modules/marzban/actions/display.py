@@ -1,4 +1,4 @@
-# FILE: modules/marzban/actions/display.py (FINAL VERSION - NAME COLLISION FIXED)
+# FILE: modules/marzban/actions/display.py (FINAL VERSION - MODIFIED FOR CALLBACK_TYPES)
 
 import qrcode
 import io
@@ -14,6 +14,8 @@ from telegram.helpers import escape_markdown
 
 from config import config
 from shared.keyboards import get_user_management_keyboard
+# --- MODIFIED: Import new callback type ---
+from shared.callback_types import StartManualInvoice
 from .constants import USERS_PER_PAGE, GB_IN_BYTES
 from .api import get_all_users, get_user_data
 from modules.general.actions import start as show_main_menu_action
@@ -25,7 +27,6 @@ def _pad_string(input_str: str, max_len: int) -> str:
     return input_str + ' ' * (max_len - len(input_str))
 
 def get_user_display_info(user: dict) -> tuple[str, str, bool, str, str]:
-    # --- FIX: Import with a safe alias ---
     from shared.translator import get as get_text
     username = user.get('username', 'N/A')
     sanitized_username = username.replace('`', '')
@@ -73,7 +74,6 @@ def get_user_display_info(user: dict) -> tuple[str, str, bool, str, str]:
     return prefix, sanitized_username, is_online, days_left_str, data_left_str
 
 def build_users_keyboard(users: list, current_page: int, total_pages: int, list_type: str) -> InlineKeyboardMarkup:
-    # --- FIX: Import with a safe alias ---
     from shared.translator import get as get_text
     keyboard = []
     display_data = [get_user_display_info(u) for u in users]
@@ -107,12 +107,10 @@ def build_users_keyboard(users: list, current_page: int, total_pages: int, list_
 
 @admin_only
 async def show_user_management_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    # --- FIX: Import with a safe alias ---
     from shared.translator import get as get_text
     await update.message.reply_text(get_text("marzban.marzban_display.user_management_section"), reply_markup=get_user_management_keyboard())
 
 async def _list_users_base(update: Update, context: ContextTypes.DEFAULT_TYPE, list_type: str, page: int = 1):
-    # --- FIX: Import with a safe alias ---
     from shared.translator import get as get_text
     is_callback = update.callback_query is not None
     message = update.callback_query.message if is_callback else await update.message.reply_text(get_text("marzban.marzban_display.loading"))
@@ -181,7 +179,6 @@ async def update_user_page(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     await _list_users_base(update, context, list_type=update.callback_query.data.split('_')[-2], page=int(update.callback_query.data.split('_')[-1]))
 
 async def show_user_details_panel(context: ContextTypes.DEFAULT_TYPE, chat_id: int, username: str, list_type: str, page_number: int, success_message: str = None, message_id: int = None) -> None:
-    # --- FIX: Import with a safe alias ---
     from shared.translator import get as get_text
     user_info = await get_user_data(username)
     if not user_info:
@@ -226,8 +223,13 @@ async def show_user_details_panel(context: ContextTypes.DEFAULT_TYPE, chat_id: i
     back_button_callback = f"list_subs_page_{page_number}" if list_type == 'subs' else f"show_users_page_{list_type}_{page_number}"
     back_button_text = get_text("marzban.marzban_display.back_to_subs_list") if list_type == 'subs' else get_text("marzban.marzban_display.back_to_users_list")
     
+    # --- MODIFIED: Use StartManualInvoice for the "send invoice" button ---
+    # NOTE: customer_id is not available here, so we use 0 as a placeholder.
+    # The handler for StartManualInvoice will manage this by looking up the user in the DB.
+    send_invoice_callback = StartManualInvoice(customer_id=0, username=username).to_string()
+
     keyboard_rows = [
-        [InlineKeyboardButton(get_text("marzban.marzban_display.button_smart_renew"), callback_data=f"renew_{username}"), InlineKeyboardButton(get_text("marzban.marzban_display.button_send_invoice"), callback_data=f"send_invoice_{username}")],
+        [InlineKeyboardButton(get_text("marzban.marzban_display.button_smart_renew"), callback_data=f"renew_{username}"), InlineKeyboardButton(get_text("marzban.marzban_display.button_send_invoice"), callback_data=send_invoice_callback)],
         [InlineKeyboardButton(get_text("marzban.marzban_display.button_add_data"), callback_data=f"add_data_{username}"), InlineKeyboardButton(get_text("marzban.marzban_display.button_add_days"), callback_data=f"add_days_{username}")],
         [InlineKeyboardButton(get_text("marzban.marzban_display.button_reset_traffic"), callback_data=f"reset_traffic_{username}"), InlineKeyboardButton(get_text("marzban.marzban_display.button_subscription_info"), callback_data=f"note_{username}")],
         [InlineKeyboardButton(get_text("marzban.marzban_display.button_subscription_link"), callback_data=f"sub_link_{username}"), InlineKeyboardButton(get_text("marzban.marzban_display.button_delete_user"), callback_data=f"delete_{username}")],
@@ -244,7 +246,6 @@ async def show_user_details_panel(context: ContextTypes.DEFAULT_TYPE, chat_id: i
         await context.bot.send_message(chat_id=chat_id, text=message_text, reply_markup=reply_markup, parse_mode=ParseMode.MARKDOWN)
 
 async def show_user_details(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    # --- FIX: Import with a safe alias ---
     from shared.translator import get as get_text
     query = update.callback_query
     await query.answer()
@@ -274,7 +275,6 @@ async def show_user_details(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     )
     
 async def close_pagination_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    # --- FIX: Import with a safe alias ---
     from shared.translator import get as get_text
     query = update.callback_query
     await query.answer()
@@ -286,7 +286,6 @@ async def close_pagination_message(update: Update, context: ContextTypes.DEFAULT
     )
 
 async def handle_deep_link_details(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    # --- FIX: Import with a safe alias ---
     from shared.translator import get as get_text
     now = time.time()
     last_call = context.user_data.get('last_deeplink_call', 0)
@@ -309,7 +308,6 @@ async def handle_deep_link_details(update: Update, context: ContextTypes.DEFAULT
     )
 
 def format_subscription_links(user_data: dict) -> str:
-    # --- FIX: Import with a safe alias ---
     from shared.translator import get as get_text
     links_text = ""
     subscription_url = user_data.get('subscription_url')
@@ -327,7 +325,6 @@ def format_subscription_links(user_data: dict) -> str:
     return links_text.strip()
     
 async def send_subscription_qr_code_and_link(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    # --- FIX: Import with a safe alias ---
     from shared.translator import get as get_text
     query = update.callback_query
     await query.answer()

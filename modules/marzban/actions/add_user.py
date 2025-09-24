@@ -15,6 +15,10 @@ from telegram.ext import ContextTypes, ConversationHandler
 from telegram.constants import ParseMode
 from telegram.helpers import escape_markdown
 
+from shared.log_channel import send_log
+from shared.callback_types import StartManualInvoice # <-- ADD THIS LINE
+
+
 from .constants import (
     ADD_USER_USERNAME, ADD_USER_DATALIMIT, ADD_USER_EXPIRE, ADD_USER_CONFIRM,
     GB_IN_BYTES
@@ -232,8 +236,8 @@ async def add_user_create(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             bio.seek(0)
             try:
                 await context.bot.send_photo(chat_id=customer_id, photo=bio, caption=customer_message, parse_mode=ParseMode.MARKDOWN)
-                callback_string = f"fin_send_req:{customer_id}:{marzban_username}"
-                admin_keyboard = InlineKeyboardMarkup([[InlineKeyboardButton(_("marzban.marzban_add_user.button_send_invoice"), callback_data=callback_string)]])
+                callback_obj = StartManualInvoice(customer_id=customer_id, username=marzban_username)
+                admin_keyboard = InlineKeyboardMarkup([[InlineKeyboardButton(_("marzban.marzban_add_user.button_send_invoice"), callback_data=callback_obj.to_string())]])
                 await context.bot.send_message(chat_id=admin_user.id, text=_("marzban.marzban_add_user.config_sent_to_customer", customer_id=customer_id), reply_markup=admin_keyboard)
             except Exception as e:
                 LOGGER.warning(f"Failed to send message to customer {customer_id}: {e}")

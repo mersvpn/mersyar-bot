@@ -1,11 +1,11 @@
-# FILE: modules/customer/handler.py (FINAL CORRECTED VERSION)
+# FILE: modules/customer/handler.py (MODIFIED FOR CALLBACK_TYPES)
 
 import logging
 from telegram.ext import (
     Application, ConversationHandler, MessageHandler,
     CallbackQueryHandler, filters, CommandHandler
 )
-from modules.marzban.actions import add_user
+
 from shared.translator import _ as t
 import re
 from .actions import (
@@ -16,15 +16,13 @@ from .actions import (
     charge as charge_actions,
     test_account as test_account_actions
 )
-from .actions import purchase, renewal, service, panel, guide, wallet
 
 from modules.general.actions import end_conv_and_reroute, start
 from shared.callbacks import end_conversation_and_show_menu
 from config import config
-# We need the translator and re for the new handler
 from shared.translator import _
-import re
-
+# --- MODIFIED: Import the new callback type to use its PREFIX ---
+from shared.callback_types import SendReceipt
 
 LOGGER = logging.getLogger(__name__)
 
@@ -33,7 +31,7 @@ IGNORE_MAIN_MENU_FILTER = filters.TEXT & ~filters.COMMAND & ~filters.Regex(MAIN_
 
 # Define states for the wallet conversation
 DISPLAY_PANEL = 0
-charge_actions.DISPLAY_PANEL = DISPLAY_PANEL # Share state with charge module
+charge_actions.DISPLAY_PANEL = DISPLAY_PANEL
 
 def register(application: Application):
     LOGGER.info("Registering UNIFIED customer module handlers...")
@@ -57,7 +55,6 @@ def register(application: Application):
                 CallbackQueryHandler(service.request_delete_service, pattern=r'^request_delete_'),
                 CallbackQueryHandler(service.start_data_purchase, pattern=r'^purchase_data_'),
                 CallbackQueryHandler(service.toggle_auto_renew, pattern=r'^toggle_autorenew_')
-                
             ],
             service.CONFIRM_RESET_SUB: [
                 CallbackQueryHandler(service.execute_reset_subscription, pattern=r'^do_reset_sub_'),
@@ -99,7 +96,8 @@ def register(application: Application):
     receipt_conv = ConversationHandler(
         entry_points=[
             MessageHandler(filters.Regex('^🧾 ارسال رسید پرداخت$'), receipt_actions.start_receipt_from_menu),
-            CallbackQueryHandler(receipt_actions.start_receipt_from_invoice, pattern='^customer_send_receipt$')
+            # --- MODIFIED: Use the PREFIX from the new callback class for the pattern ---
+            CallbackQueryHandler(receipt_actions.start_receipt_from_invoice, pattern=f'^{SendReceipt.PREFIX}:')
         ],
         states={
             receipt_actions.CHOOSE_INVOICE: [CallbackQueryHandler(receipt_actions.select_invoice_for_receipt, pattern='^select_invoice_')],
@@ -173,7 +171,6 @@ def register(application: Application):
         per_message=False
     )
 
-    # --- (CORRECTED) Define the ConversationHandler for the Test Account feature ---
     test_account_conv = ConversationHandler(
         entry_points=[
             MessageHandler(
@@ -183,7 +180,6 @@ def register(application: Application):
         ],
         states={
             test_account_actions.ASK_USERNAME: [
-                # <<< CHANGE IS HERE >>> The filter is now more specific
                 MessageHandler(
                     filters.TEXT & 
                     ~filters.COMMAND & 
@@ -198,22 +194,16 @@ def register(application: Application):
         per_message=False
     )
     
-    # --- Handler Registration Section ---
     application.add_handler(my_service_conv, group=1)
     application.add_handler(manual_purchase_conv, group=1)
     application.add_handler(receipt_conv, group=1)
     application.add_handler(custom_purchase_conv, group=1)
     application.add_handler(unlimited_purchase_conv, group=1)
     application.add_handler(wallet_conv, group=1)
-    # --- (CORRECT) Register the new conversation handler ---
     application.add_handler(test_account_conv, group=1)
 
-    # Handler for the new inline button on user creation messages
     application.add_handler(CallbackQueryHandler(guide.show_guides_as_new_message, pattern=r'^show_connection_guides$'), group=1)
     application.add_handler(MessageHandler(filters.Regex(r'^🛍️فــــــــــروشـــــــــــگاه$'), panel.show_customer_panel), group=1)
-    
-    # --- (REMOVED) The old, conflicting simple handler is now gone ---
-
     application.add_handler(MessageHandler(filters.Regex(r'^📱 راهــــــــــنمای اتصال$'), guide.show_guides_to_customer), group=1)
     application.add_handler(MessageHandler(filters.Regex(r'^🔙 بازگشت به منوی اصلی$'), start), group=1)
     application.add_handler(CallbackQueryHandler(renewal.handle_renewal_request, pattern=r'^customer_renew_request_'), group=1)
@@ -221,7 +211,6 @@ def register(application: Application):
     if config.SUPPORT_USERNAME:
         application.add_handler(MessageHandler(filters.Regex(r'^💬 پشتیبـــانی$'), purchase.handle_support_button), group=1)
 
-    # --- Guide navigation handlers ---
     application.add_handler(CallbackQueryHandler(guide.send_guide_content_to_customer, pattern=r'^customer_show_guide_'), group=1)
     application.add_handler(CallbackQueryHandler(guide.show_guides_to_customer, pattern=r'^customer_back_to_guides$'), group=1)
     application.add_handler(CallbackQueryHandler(guide.close_guide_menu, pattern=r'^close_guide_menu$'), group=1)

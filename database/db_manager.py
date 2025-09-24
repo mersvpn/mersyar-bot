@@ -1036,3 +1036,24 @@ async def is_account_test(username: str) -> bool:
     result = await execute_query(query, (username,), fetch='one')
     # Returns True if the flag is set to 1, otherwise False.
     return bool(result['is_test_account']) if result else False
+
+# --- NEW FUNCTION TO FIX THE IMPORT ERROR ---
+async def get_user_by_marzban_username(marzban_username: str) -> Optional[Dict[str, Any]]:
+    """
+    Finds a user's full details from the 'users' table using their Marzban username.
+    This is a two-step process:
+    1. Find the telegram_user_id from the 'marzban_telegram_links' table.
+    2. Use the telegram_user_id to fetch details from the 'users' table.
+    """
+    telegram_id = await get_telegram_id_from_marzban_username(marzban_username)
+    if not telegram_id:
+        return None
+    
+    # We can reuse the get_user_by_id function.
+    user_info = await get_user_by_id(telegram_id)
+    if user_info:
+        # Add the telegram_id to the result for convenience.
+        user_info['telegram_id'] = telegram_id
+        return user_info
+
+    return None
