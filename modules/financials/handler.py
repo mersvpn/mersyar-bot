@@ -87,6 +87,7 @@ def register(application: Application):
         CallbackQueryHandler(wallet_admin.show_wallet_settings_menu, pattern=r'^admin_wallet_settings$'),
         CallbackQueryHandler(show_financial_menu, pattern=r'^back_to_financial_settings$'),
         CallbackQueryHandler(back_to_main_settings_menu, pattern=r'^back_to_main_settings$'),
+        CallbackQueryHandler(show_plan_management_menu, pattern=r'^back_to_plan_management$'),
 
         # Unlimited Plan Management Callbacks
         CallbackQueryHandler(unlimited_plans_admin.manage_unlimited_plans_menu, pattern=r'^admin_manage_unlimited$'),

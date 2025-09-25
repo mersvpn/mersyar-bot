@@ -97,3 +97,4 @@ def register(application: Application) -> None:
     application.add_handler(channel_id_conv, group=0)
     application.add_handler(test_account_conv, group=0) # This line registers the new conversation
     application.add_handler(MessageHandler(filters.Regex('^🛠️ ابزارهای کمکی$'), admin_only(show_helper_tools_menu)), group=0)
+    application.add_handler(MessageHandler(filters.Regex('^🔙 بازگشت به تنظیمات$'), admin_only(back_to_settings_menu)), group=0)

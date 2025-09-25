@@ -26,7 +26,7 @@ ADD_USER_CONFIRM = 7
 SET_TEMPLATE_USER_PROMPT = 8
 
 # ===== PAGINATION =====
-USERS_PER_PAGE = 10 # Number of users to show on each page of the user list
+USERS_PER_PAGE = 12 # Number of users to show on each page of the user list
 
 # ===== DATA CONVERSION =====
 GB_IN_BYTES = 1024 * 1024 * 1024 # 1 Gigabyte in bytes
