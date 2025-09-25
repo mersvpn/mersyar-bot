@@ -78,110 +78,92 @@ def get_user_display_info(user: dict) -> tuple[str, str, bool, str, str]:
 # ----------------- START OF FINAL CODE -----------------
 def _get_status_emoji(user: dict) -> str:
     """Determines the correct status emoji for a user based on their state."""
-    from shared.translator import get as get_text
-    
-    # 1. Check for recent online activity first (highest priority)
+    # This check for 'unused' status has the highest priority after online status
+    used_traffic = user.get('used_traffic') or 0
+    if used_traffic == 0:
+        return "🟣" # Unused user
+        
     online_at = user.get('online_at')
     if online_at:
         try:
-            # FIX: Use strptime for the specific format without timezone info
-            # Assuming the panel time is in UTC
-            online_at_dt = datetime.datetime.strptime(online_at, "%Y-%m-%dT%H:%M:%S")
-            online_at_dt = online_at_dt.replace(tzinfo=datetime.timezone.utc)
-
-            # If online in the last 3 minutes
+            online_at_dt = datetime.datetime.strptime(online_at, "%Y-%m-%dT%H:%M:%S").replace(tzinfo=datetime.timezone.utc)
             if (datetime.datetime.now(datetime.timezone.utc) - online_at_dt).total_seconds() < 180:
-                return "🟢"
+                return "🟢" # Online user
         except (ValueError, TypeError):
-            pass # Ignore malformed dates
+            pass
 
-    # 2. If not recently online, determine status based on usage and expiry
     status = user.get('status', 'disabled')
     expire_timestamp = user.get('expire')
 
-    # Inactive/Expired status
     if status != 'active' or (expire_timestamp and datetime.datetime.fromtimestamp(expire_timestamp) < datetime.datetime.now()):
-        return "🔴"
+        return "🔴" # Expired/Disabled user
 
-    # Warning status
     is_warning = False
     if expire_timestamp:
-        time_left = datetime.datetime.fromtimestamp(expire_timestamp) - datetime.datetime.now()
-        days_left_val = time_left.days
-        if 0 <= days_left_val <= 3: # Check for 0 to 3 days left
+        days_left_val = (datetime.datetime.fromtimestamp(expire_timestamp) - datetime.datetime.now()).days
+        if 0 <= days_left_val <= 3:
             is_warning = True
     
-    data_limit = user.get('data_limit') or 0
+        data_limit = user.get('data_limit') or 0
     if data_limit > 0:
-        used_traffic = user.get('used_traffic') or 0
         data_left_gb = (data_limit - used_traffic) / GB_IN_BYTES
         if data_left_gb < 1:
             is_warning = True
             
     if is_warning:
-        return "🟡"
+        return "🟡" # Warning user
         
-    # 3. If active, not in warning, and not recently online
-    return "⚪️"
-# -----------------  END OF FINAL CODE  -----------------
+    return "⚪️" # Offline but active user
 
 
 def build_users_keyboard(users: list, current_page: int, total_pages: int, list_type: str) -> InlineKeyboardMarkup:
-    """Builds a modern, three-column keyboard for displaying users."""
-    from shared.translator import get as get_text
-    
+    """Builds a modern, three-column keyboard with a legend button."""
     keyboard_rows = []
     
-    # --- Create 3-column user buttons ---
-    # This loop processes users in chunks of 3
     for i in range(0, len(users), 3):
-        row = []
-        # Get a slice of up to 3 users for the current row
-        for user in users[i : i + 3]:
-            username = user.get('username', 'N/A')
-            status_emoji = _get_status_emoji(user)
-            
-            # Button text is now clean: just emoji + username
-            button_text = f"{status_emoji} {username}"
-            
-            # Callback data remains the same for functionality
-            callback_data = f"user_details_{username}_{list_type}_{current_page}"
-            
-            row.append(InlineKeyboardButton(button_text, callback_data=callback_data))
+        row = [
+            InlineKeyboardButton(
+                f"{_get_status_emoji(user)} {user.get('username', 'N/A')}",
+                callback_data=f"user_details_{user.get('username')}_{list_type}_{current_page}"
+            ) for user in users[i : i + 3]
+        ]
         keyboard_rows.append(row)
 
-    # --- Create navigation row ---
     nav_row = []
     if current_page > 1:
-        nav_row.append(InlineKeyboardButton(
-            get_text("marzban.marzban_display.pagination_prev"), 
-            callback_data=f"show_users_page_{list_type}_{current_page - 1}"
-        ))
+        nav_row.append(InlineKeyboardButton("⬅️ قبلی", callback_data=f"show_users_page_{list_type}_{current_page - 1}"))
+    
+    # Add the new Legend button to the navigation row
+    nav_row.append(InlineKeyboardButton("💡 راهنما", callback_data="show_status_legend"))
         
-    # Page info button (always shown if there are multiple pages)
     if total_pages > 1:
-        nav_row.append(InlineKeyboardButton(
-            get_text("marzban.marzban_display.pagination_page_info", current=current_page, total=total_pages), 
-            callback_data="noop" # no-operation, just a label
-        ))
+        nav_row.append(InlineKeyboardButton(f"صفحه {current_page}/{total_pages}", callback_data="noop"))
         
     if current_page < total_pages:
-        nav_row.append(InlineKeyboardButton(
-            get_text("marzban.marzban_display.pagination_next"), 
-            callback_data=f"show_users_page_{list_type}_{current_page + 1}"
-        ))
+        nav_row.append(InlineKeyboardButton("➡️ بعدی", callback_data=f"show_users_page_{list_type}_{current_page + 1}"))
 
     if nav_row:
         keyboard_rows.append(nav_row)
         
-    # --- Create close button row ---
-    keyboard_rows.append([
-        InlineKeyboardButton(get_text("marzban.marzban_display.pagination_close"), callback_data="close_pagination")
-    ])
+    keyboard_rows.append([InlineKeyboardButton("✖️ بستن", callback_data="close_pagination")])
     
     return InlineKeyboardMarkup(keyboard_rows)
 
-# -----------------  END OF MODIFIED CODE  -----------------
+async def show_status_legend(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Shows a popup alert with the meaning of status emojis."""
+    query = update.callback_query
+    
+    legend_text = (
+        "راهنمای وضعیت کاربران:\n\n"
+        "🟢 آنلاین (در ۳ دقیقه اخیر)\n"
+        "🟣 استفاده نشده (حجم مصرفی: صفر)\n"
+        "⚪️ آفلاین (فعال)\n"
+        "🟡 هشدار (نزدیک به انقضا)\n"
+        "🔴 منقضی / غیرفعال"
+    )
+    
+    await query.answer(text=legend_text, show_alert=True)
+
 @admin_only
 async def show_user_management_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     from shared.translator import get as get_text

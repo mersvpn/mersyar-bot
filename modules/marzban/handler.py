@@ -138,6 +138,7 @@ def register(application: Application) -> None:
         MessageHandler(filters.Regex('^👥 نمایش کاربران$') & admin_filter, display.list_all_users_paginated),
         MessageHandler(filters.Regex('^⌛️ کاربران رو به اتمام$') & admin_filter, display.list_warning_users_paginated),
         
+        CallbackQueryHandler(display.show_status_legend, pattern=r'^show_status_legend$'),
         CallbackQueryHandler(display.update_user_page, pattern=r'^show_users_page_'),
         CallbackQueryHandler(display.show_user_details, pattern=r'^user_details_'),
         CallbackQueryHandler(display.close_pagination_message, pattern=r'^close_pagination$'),
