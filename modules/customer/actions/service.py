@@ -404,7 +404,13 @@ async def calculate_price_and_confirm(update: Update, context: ContextTypes.DEFA
         return ConversationHandler.END
     total_price = volume_gb * price_per_gb
     username = context.user_data.get('purchase_data_username')
-    context.user_data['purchase_data_details'] = {"volume": volume_gb, "price": total_price, "plan_type": "data_top_up", "username": username}
+    context.user_data['purchase_data_details'] = {
+    "volume": volume_gb, 
+    "price": total_price, 
+    "plan_type": "data_top_up", 
+    "username": username,
+    "invoice_type": "DATA_TOP_UP"  # <-- ADD THIS KEY
+}
     text = _("customer.customer_service.data_purchase_invoice_preview", username=f"`{username}`", volume=volume_gb, price=total_price)
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton(_("keyboards.buttons.confirm_and_get_invoice"), callback_data="confirm_data_purchase_final")],
@@ -419,6 +425,7 @@ async def generate_data_purchase_invoice(update: Update, context: ContextTypes.D
     user_id = query.from_user.id
     purchase_details = context.user_data.get('purchase_data_details')
     if not purchase_details:
+        purchase_details['invoice_type'] = 'DATA_TOP_UP'
         await query.edit_message_text(_("customer.customer_service.purchase_info_not_found"))
         return ConversationHandler.END
     price = purchase_details.get('price')
@@ -434,15 +441,25 @@ async def generate_data_purchase_invoice(update: Update, context: ContextTypes.D
 
 async def toggle_auto_renew(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
-    await query.answer()
+    
     try:
         prefix, marzban_username = query.data.split(':', 1)
         action = prefix.split('_')[-1]
         new_status = (action == "on")
     except (ValueError, IndexError):
         LOGGER.error(f"Invalid callback data for toggle_auto_renew: {query.data}")
+        await query.answer(_("general.errors.internal_error"), show_alert=True)
         return DISPLAY_SERVICE
+
+    # Show the modern, fading pop-up message to the user
+    if new_status:
+        await query.answer(_("customer.customer_service.auto_renew_activated_alert"), show_alert=False)
+    else:
+        await query.answer(_("customer.customer_service.auto_renew_deactivated_alert"), show_alert=False)
+
     user_id = update.effective_user.id
     await set_auto_renew_status(user_id, marzban_username, new_status)
+    
+    # Refresh the service details panel to show the updated button
     message_to_edit = query.message
     return await display_service_details(user_id, message_to_edit, context, marzban_username)

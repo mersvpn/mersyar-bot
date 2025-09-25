@@ -127,6 +127,12 @@ def get_financial_settings_keyboard() -> ReplyKeyboardMarkup:
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
+def get_cancel_keyboard() -> ReplyKeyboardMarkup:
+    keyboard = [
+        [KeyboardButton(_("keyboards.helper_tools.back_to_settings"))]
+    ]
+    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+
 # =============================================================================
 #  InlineKeyboardMarkup Section
 # =============================================================================

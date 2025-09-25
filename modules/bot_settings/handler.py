@@ -28,6 +28,7 @@ async def show_settings_and_tools_menu(update, context):
     )
 
 def register(application: Application) -> None:
+# ----------------- START OF MODIFIED CODE -----------------
     # This conversation handler is for the main bot settings (maintenance, wallet, etc.)
     bot_settings_conv = ConversationHandler(
         entry_points=[MessageHandler(filters.Regex('^🔧 تنظیمات ربات$'), admin_only_conv(start_bot_settings))],
@@ -36,22 +37,37 @@ def register(application: Application) -> None:
                 CallbackQueryHandler(toggle_maintenance_mode, pattern=r'^toggle_maintenance_'),
                 CallbackQueryHandler(toggle_log_channel, pattern=r'^toggle_log_channel_'),
                 CallbackQueryHandler(toggle_wallet_status, pattern=r'^toggle_wallet_'),
-                CallbackQueryHandler(back_to_settings_menu, pattern=r'^bot_status_back$'),
+                # The back button handler is moved to fallbacks
             ]
         },
-        fallbacks=[CommandHandler('cancel', back_to_settings_menu)],
+        fallbacks=[
+            # This ensures that the back button works correctly from any state within this conversation
+            CallbackQueryHandler(back_to_settings_menu, pattern=r'^bot_status_back$'),
+            CommandHandler('cancel', back_to_settings_menu)
+        ],
         conversation_timeout=300
     )
-    
+# -----------------  END OF MODIFIED CODE  -----------------
+# ----------------- START OF MODIFIED CODE -----------------
     # This conversation is just for setting the log channel ID
     channel_id_conv = ConversationHandler(
         entry_points=[MessageHandler(filters.Regex('^📣 تنظیم کانال گزارش$'), admin_only_conv(prompt_for_channel_id))],
         states={
-            SET_CHANNEL_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_channel_id)]
+            SET_CHANNEL_ID: [
+                # This filter now explicitly IGNORES the back button text
+                MessageHandler(
+                    filters.TEXT & ~filters.COMMAND & ~filters.Regex('^🔙 بازگشت به تنظیمات$'), 
+                    process_channel_id
+                )
+            ]
         },
-        fallbacks=[CommandHandler('cancel', back_to_settings_menu)],
+        fallbacks=[
+            # This handler will now correctly catch the back button press
+            MessageHandler(filters.Regex('^🔙 بازگشت به تنظیمات$'), back_to_settings_menu)
+        ],
         conversation_timeout=300
     )
+# -----------------  END OF MODIFIED CODE  -----------------
 
     # NEW: This is the main conversation handler for the Test Account inline menu
     test_account_conv = ConversationHandler(
@@ -81,4 +97,3 @@ def register(application: Application) -> None:
     application.add_handler(channel_id_conv, group=0)
     application.add_handler(test_account_conv, group=0) # This line registers the new conversation
     application.add_handler(MessageHandler(filters.Regex('^🛠️ ابزارهای کمکی$'), admin_only(show_helper_tools_menu)), group=0)
-    application.add_handler(MessageHandler(filters.Regex('^🔙 بازگشت به تنظیمات$'), admin_only(back_to_settings_menu)), group=0)

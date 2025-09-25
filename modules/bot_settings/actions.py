@@ -29,22 +29,46 @@ GET_LIMIT = 13
 # Standard Helper Functions
 # =============================================================================
 
+# =============================================================================
+# Standard Helper Functions
+# =============================================================================
+
 async def show_helper_tools_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     target = update.effective_message
     if not target:
         return
     await target.reply_text(_("bot_settings.helper_tools_menu_title"), reply_markup=get_helper_tools_keyboard())
 
-async def back_to_settings_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    target = update.effective_message
-    if not target:
-        return
-    await target.reply_text(_("bot_settings.back_to_settings_menu"), reply_markup=get_settings_and_tools_keyboard())
+async def back_to_settings_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """
+    Handles back action from both inline and reply keyboards.
+    - If from inline, edits the message.
+    - If from reply, sends a new message.
+    Properly ends the conversation.
+    """
+    chat_id = update.effective_chat.id
+    query = update.callback_query
 
-# =============================================================================
-# Main Bot Settings (Inline Menu) - Unchanged
-# =============================================================================
+    # Case 1: Triggered by an inline keyboard button
+    if query:
+        await query.answer()
+        try:
+            await query.edit_message_text(
+                text=_("bot_settings.back_to_settings_menu"),
+                reply_markup=None
+            )
+        except error.BadRequest as e:
+            if "Message is not modified" not in str(e):
+                LOGGER.error(f"Error editing message on back action: {e}")
+    # Case 2: Triggered by a reply keyboard button or command
+    else:
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=_("bot_settings.back_to_settings_menu"),
+            reply_markup=get_settings_and_tools_keyboard()
+        )
 
+    return ConversationHandler.END
 async def _build_and_send_main_settings_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     bot_settings = await load_bot_settings()
@@ -114,21 +138,39 @@ async def toggle_wallet_status(update: Update, context: ContextTypes.DEFAULT_TYP
     return MENU_STATE
 
 async def prompt_for_channel_id(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    # This import is added for the new keyboard
+    from shared.keyboards import get_cancel_keyboard
+
     bot_settings = await load_bot_settings()
     current_channel_id = bot_settings.get('log_channel_id', _("marzban_credentials.not_set"))
     text = _("bot_settings.current_log_channel_id", id=f"`{current_channel_id}`") + _("bot_settings.prompt_for_channel_id")
-    await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN)
+    
+    # The reply_markup is added here
+    await update.message.reply_text(
+        text, 
+        parse_mode=ParseMode.MARKDOWN,
+        reply_markup=get_cancel_keyboard()
+    )
     return SET_CHANNEL_ID
 
 async def process_channel_id(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     channel_id = update.message.text.strip()
     if not (channel_id.startswith('@') or channel_id.startswith('-100')):
-        await update.message.reply_text(_("bot_settings.invalid_channel_id"))
+        # Keep the cancel keyboard on error
+        from shared.keyboards import get_cancel_keyboard
+        await update.message.reply_text(
+            _("bot_settings.invalid_channel_id"), 
+            reply_markup=get_cancel_keyboard()
+        )
         return SET_CHANNEL_ID
-    await save_bot_settings({'log_channel_id': channel_id})
-    await update.message.reply_text(_("bot_settings.channel_id_updated", id=f"`{channel_id}`"), parse_mode=ParseMode.MARKDOWN, reply_markup=get_settings_and_tools_keyboard())
-    return ConversationHandler.END
 
+    await save_bot_settings({'log_channel_id': channel_id})
+    await update.message.reply_text(
+        _("bot_settings.channel_id_updated", id=f"`{channel_id}`"), 
+        parse_mode=ParseMode.MARKDOWN, 
+        reply_markup=get_settings_and_tools_keyboard() # On success, show the main tools keyboard
+    )
+    return ConversationHandler.END
 # =============================================================================
 # REWRITTEN Test Account Settings Conversation
 # =============================================================================

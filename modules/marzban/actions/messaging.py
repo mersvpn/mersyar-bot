@@ -9,6 +9,7 @@ from telegram.ext import (
     ContextTypes, ConversationHandler, MessageHandler,
     CallbackQueryHandler, CommandHandler, filters
 )
+from shared.callbacks import end_conversation_and_show_menu
 from telegram.constants import ParseMode
 from telegram.error import TelegramError
 
@@ -87,23 +88,28 @@ async def send_broadcast_message_job(context: ContextTypes.DEFAULT_TYPE) -> None
     await context.bot.send_message(admin_id, report, parse_mode=ParseMode.MARKDOWN)
     LOGGER.info(f"Job {job_id} finished. Success: {success}, Failure: {failure}")
 
-
 async def start_messaging(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    from shared.keyboards import get_back_to_main_menu_keyboard
+    
     context.user_data['messaging_info'] = {}
     
-    keyboard = [
+    inline_keyboard = [
         [
             InlineKeyboardButton("👥 ارسال همگانی", callback_data="msg_broadcast_all"),
             InlineKeyboardButton("👤 ارسال به یک کاربر", callback_data="msg_broadcast_single")
-        ],
-        [
-            InlineKeyboardButton("❌ لغو", callback_data="msg_cancel")
         ]
     ]
 
-    await update.message.reply_text("لطفاً نوع ارسال را انتخاب کنید:", reply_markup=InlineKeyboardMarkup(keyboard))
+    await update.message.reply_text(
+        "لطفاً نوع ارسال را انتخاب کنید:", 
+        reply_markup=InlineKeyboardMarkup(inline_keyboard)
+    )
+    # Send a dummy message just to show the new keyboard
+    await update.message.reply_text(
+        "گزینه مورد نظر را انتخاب کنید:", 
+        reply_markup=get_back_to_main_menu_keyboard()
+    )
     return CHOOSING_TYPE
-
 async def prompt_for_user_id(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()
@@ -266,21 +272,26 @@ messaging_conv = ConversationHandler(
         CHOOSING_TYPE: [
             CallbackQueryHandler(prompt_for_user_id, pattern='^msg_broadcast_single$'),
             CallbackQueryHandler(get_broadcast_message, pattern='^msg_broadcast_all$'),
-            CallbackQueryHandler(end_messaging_conversation, pattern='^msg_cancel$'),
         ],
-        GETTING_USER_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, validate_user_id_and_get_message)],
-        GETTING_MESSAGE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_button_decision)],
+        GETTING_USER_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND & ~filters.Regex('^🔙 بازگشت به منوی اصلی$'), validate_user_id_and_get_message)],
+        GETTING_MESSAGE: [MessageHandler(filters.TEXT & ~filters.COMMAND & ~filters.Regex('^🔙 بازگشت به منوی اصلی$'), get_button_decision)],
         GETTING_BUTTON_DECISION: [
             CallbackQueryHandler(prompt_for_button_text, pattern='^msg_add_button_yes$'),
             CallbackQueryHandler(show_preview_and_confirm, pattern='^msg_add_button_no$'),
         ],
-        GETTING_BUTTON_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_button_url)],
-        GETTING_BUTTON_URL: [MessageHandler(filters.TEXT & ~filters.COMMAND, show_preview_and_confirm)],
+        GETTING_BUTTON_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND & ~filters.Regex('^🔙 بازگشت به منوی اصلی$'), get_button_url)],
+        GETTING_BUTTON_URL: [MessageHandler(filters.TEXT & ~filters.COMMAND & ~filters.Regex('^🔙 بازگشت به منوی اصلی$'), show_preview_and_confirm)],
         CONFIRMING_SEND: [
             CallbackQueryHandler(schedule_job_and_end, pattern='^msg_confirm_send$'),
-            CallbackQueryHandler(end_messaging_conversation, pattern='^msg_cancel$'),
+            CallbackQueryHandler(end_messaging_conversation, pattern='^msg_cancel$'), # Kept for inline cancel button
         ]
     },
-    fallbacks=[CommandHandler('cancel', end_messaging_conversation)],
-    conversation_timeout=600
+    fallbacks=[
+        MessageHandler(filters.Regex('^🔙 بازگشت به منوی اصلی$'), end_messaging_conversation),
+        CallbackQueryHandler(end_messaging_conversation, pattern='^msg_cancel$') # General cancel
+    ],
+    conversation_timeout=600,
+    # Allow other admin buttons to end this conversation
+    per_user=True, 
+    per_chat=True,
 )

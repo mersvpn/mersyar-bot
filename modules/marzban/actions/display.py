@@ -73,38 +73,115 @@ def get_user_display_info(user: dict) -> tuple[str, str, bool, str, str]:
             
     return prefix, sanitized_username, is_online, days_left_str, data_left_str
 
-def build_users_keyboard(users: list, current_page: int, total_pages: int, list_type: str) -> InlineKeyboardMarkup:
-    from shared.translator import get as get_text
-    keyboard = []
-    display_data = [get_user_display_info(u) for u in users]
-    
-    max_len = 0
-    if display_data:
-        max_len = max(len(prefix + " " + username) for prefix, username, _, _, _ in display_data)
+# ----------------- START OF MODIFIED CODE -----------------
 
-    for i, user_data in enumerate(display_data):
-        prefix, username, is_online, days_left, data_left = user_data
-        part1 = _pad_string(f"{prefix} {username}", max_len)
-        if is_online:
-            details_part = f"{get_text('marzban.marzban_display.online_label')}  | 📶 {data_left}"
-        else:
-            details_part = f"⏳ {days_left} | 📶 {data_left}"
-        full_button_text = f"`{part1}  {details_part}`"
-        keyboard.append([InlineKeyboardButton(full_button_text, callback_data=f"user_details_{users[i].get('username')}_{list_type}_{current_page}")])
+# ----------------- START OF FINAL CODE -----------------
+def _get_status_emoji(user: dict) -> str:
+    """Determines the correct status emoji for a user based on their state."""
+    from shared.translator import get as get_text
     
+    # 1. Check for recent online activity first (highest priority)
+    online_at = user.get('online_at')
+    if online_at:
+        try:
+            # FIX: Use strptime for the specific format without timezone info
+            # Assuming the panel time is in UTC
+            online_at_dt = datetime.datetime.strptime(online_at, "%Y-%m-%dT%H:%M:%S")
+            online_at_dt = online_at_dt.replace(tzinfo=datetime.timezone.utc)
+
+            # If online in the last 3 minutes
+            if (datetime.datetime.now(datetime.timezone.utc) - online_at_dt).total_seconds() < 180:
+                return "🟢"
+        except (ValueError, TypeError):
+            pass # Ignore malformed dates
+
+    # 2. If not recently online, determine status based on usage and expiry
+    status = user.get('status', 'disabled')
+    expire_timestamp = user.get('expire')
+
+    # Inactive/Expired status
+    if status != 'active' or (expire_timestamp and datetime.datetime.fromtimestamp(expire_timestamp) < datetime.datetime.now()):
+        return "🔴"
+
+    # Warning status
+    is_warning = False
+    if expire_timestamp:
+        time_left = datetime.datetime.fromtimestamp(expire_timestamp) - datetime.datetime.now()
+        days_left_val = time_left.days
+        if 0 <= days_left_val <= 3: # Check for 0 to 3 days left
+            is_warning = True
+    
+    data_limit = user.get('data_limit') or 0
+    if data_limit > 0:
+        used_traffic = user.get('used_traffic') or 0
+        data_left_gb = (data_limit - used_traffic) / GB_IN_BYTES
+        if data_left_gb < 1:
+            is_warning = True
+            
+    if is_warning:
+        return "🟡"
+        
+    # 3. If active, not in warning, and not recently online
+    return "⚪️"
+# -----------------  END OF FINAL CODE  -----------------
+
+
+def build_users_keyboard(users: list, current_page: int, total_pages: int, list_type: str) -> InlineKeyboardMarkup:
+    """Builds a modern, three-column keyboard for displaying users."""
+    from shared.translator import get as get_text
+    
+    keyboard_rows = []
+    
+    # --- Create 3-column user buttons ---
+    # This loop processes users in chunks of 3
+    for i in range(0, len(users), 3):
+        row = []
+        # Get a slice of up to 3 users for the current row
+        for user in users[i : i + 3]:
+            username = user.get('username', 'N/A')
+            status_emoji = _get_status_emoji(user)
+            
+            # Button text is now clean: just emoji + username
+            button_text = f"{status_emoji} {username}"
+            
+            # Callback data remains the same for functionality
+            callback_data = f"user_details_{username}_{list_type}_{current_page}"
+            
+            row.append(InlineKeyboardButton(button_text, callback_data=callback_data))
+        keyboard_rows.append(row)
+
+    # --- Create navigation row ---
     nav_row = []
     if current_page > 1:
-        nav_row.append(InlineKeyboardButton(get_text("marzban.marzban_display.pagination_prev"), callback_data=f"show_users_page_{list_type}_{current_page - 1}"))
-    if total_pages > 1:
-        nav_row.append(InlineKeyboardButton(get_text("marzban.marzban_display.pagination_page_info", current=current_page, total=total_pages), callback_data="noop"))
-    if current_page < total_pages:
-        nav_row.append(InlineKeyboardButton(get_text("marzban.marzban_display.pagination_next"), callback_data=f"show_users_page_{list_type}_{current_page + 1}"))
-    if nav_row:
-        keyboard.append(nav_row)
+        nav_row.append(InlineKeyboardButton(
+            get_text("marzban.marzban_display.pagination_prev"), 
+            callback_data=f"show_users_page_{list_type}_{current_page - 1}"
+        ))
         
-    keyboard.append([InlineKeyboardButton(get_text("marzban.marzban_display.pagination_close"), callback_data="close_pagination")])
-    return InlineKeyboardMarkup(keyboard)
+    # Page info button (always shown if there are multiple pages)
+    if total_pages > 1:
+        nav_row.append(InlineKeyboardButton(
+            get_text("marzban.marzban_display.pagination_page_info", current=current_page, total=total_pages), 
+            callback_data="noop" # no-operation, just a label
+        ))
+        
+    if current_page < total_pages:
+        nav_row.append(InlineKeyboardButton(
+            get_text("marzban.marzban_display.pagination_next"), 
+            callback_data=f"show_users_page_{list_type}_{current_page + 1}"
+        ))
 
+    if nav_row:
+        keyboard_rows.append(nav_row)
+        
+    # --- Create close button row ---
+    keyboard_rows.append([
+        InlineKeyboardButton(get_text("marzban.marzban_display.pagination_close"), callback_data="close_pagination")
+    ])
+    
+    return InlineKeyboardMarkup(keyboard_rows)
+
+# -----------------  END OF MODIFIED CODE  -----------------
 @admin_only
 async def show_user_management_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     from shared.translator import get as get_text
@@ -192,10 +269,13 @@ async def show_user_details_panel(context: ContextTypes.DEFAULT_TYPE, chat_id: i
     online_status = get_text("marzban.marzban_display.offline")
     if user_info.get('online_at'):
         try:
-            online_at_dt = datetime.datetime.fromisoformat(user_info['online_at'].replace("Z", "+00:00"))
+            # FIX: Use strptime to match the new date format
+            online_at_dt = datetime.datetime.strptime(user_info['online_at'], "%Y-%m-%dT%H:%M:%S")
+            online_at_dt = online_at_dt.replace(tzinfo=datetime.timezone.utc)
             if (datetime.datetime.now(datetime.timezone.utc) - online_at_dt).total_seconds() < 180:
                 online_status = get_text("marzban.marzban_display.online")
-        except (ValueError, TypeError): pass
+        except (ValueError, TypeError):
+            pass
         
     used_gb = (user_info.get('used_traffic') or 0) / GB_IN_BYTES
     limit_gb = (user_info.get('data_limit') or 0) / GB_IN_BYTES
