@@ -218,6 +218,7 @@
     "button_decrease": "➖ کاهش موجودی",
     "button_back": "🔙 بازگشت",
     "button_back_to_wallet_menu": "🔙 بازگشت به منوی کیف پول",
-    "button_cancel_amount_entry": "🔙 بازگشت به منوی کاربر"
+    "button_cancel_amount_entry": "🔙 بازگشت به منوی کاربر",
+    "wallet_auto_payment_name_system": "سیستم (کیف پول)"
   }
 }

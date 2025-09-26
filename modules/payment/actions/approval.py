@@ -1,4 +1,4 @@
-# FILE: modules/payment/actions/approval.py (FINAL, REORDERED, AND CORRECTED)
+# FILE: modules/payment/actions/approval.py
 
 import qrcode
 import io
@@ -17,13 +17,13 @@ from database.db_manager import (
 from shared.keyboards import get_admin_main_menu_keyboard
 from modules.marzban.actions.add_user import create_marzban_user_from_template
 from shared.translator import _
+from shared.log_channel import send_log
 
 LOGGER = logging.getLogger(__name__)
 
 
 # =============================================================================
 # --- Private Helper Functions for Approval ---
-# (Defined BEFORE they are used in the main approve_payment function)
 # =============================================================================
 
 async def _approve_manual_invoice(context, invoice, query, admin_user):
@@ -44,7 +44,6 @@ async def _approve_manual_invoice(context, invoice, query, admin_user):
         await query.edit_message_caption(caption=f"{query.message.caption}\n\n{_('financials_payment.error_incomplete_plan_details')}")
         return
 
-    # Save the subscription details from the invoice to the user's note
     note_data = {
         'subscription_duration': duration,
         'subscription_data_limit_gb': volume,
@@ -53,7 +52,6 @@ async def _approve_manual_invoice(context, invoice, query, admin_user):
     await save_user_note(username, note_data)
     LOGGER.info(f"Subscription details for '{username}' saved/updated from manual invoice #{invoice_id}.")
 
-    # Finalize the approval
     await update_invoice_status(invoice_id, 'approved')
     
     try:
@@ -66,6 +64,15 @@ async def _approve_manual_invoice(context, invoice, query, admin_user):
 
     final_caption = f"{query.message.caption}{_('financials_payment.admin_log_payment_approved_existing', username=username, admin_name=admin_user.full_name)}"
     await query.edit_message_caption(caption=final_caption, parse_mode=ParseMode.MARKDOWN)
+    
+    # --- LOG TO CHANNEL ---
+    log_message = _("log.manual_invoice_approved", 
+                    invoice_id=invoice_id, 
+                    username=f"`{username}`", 
+                    price=f"{int(price):,}",
+                    customer_id=customer_id,
+                    admin_name=admin_user.full_name)
+    await send_log(context.bot, log_message, parse_mode=ParseMode.MARKDOWN)
 
 
 async def _approve_new_user_creation(context, invoice, query, admin_user):
@@ -94,7 +101,6 @@ async def _approve_new_user_creation(context, invoice, query, admin_user):
         await query.edit_message_caption(caption=f"{query.message.caption}\n\n{_('financials_payment.error_creating_user_in_marzban')}")
         return
     
-    # Save subscription note for the new user
     await save_user_note(username=marzban_username, note_data={
         'subscription_duration': duration_days,
         'subscription_price': price,
@@ -131,6 +137,18 @@ async def _approve_new_user_creation(context, invoice, query, admin_user):
     
     final_caption = f"{query.message.caption}{_('financials_payment.admin_log_user_created', username=f'`{marzban_username}`', admin_name=admin_user.full_name)}"
     await query.edit_message_caption(caption=final_caption, parse_mode=ParseMode.MARKDOWN)
+    
+    # --- LOG TO CHANNEL ---
+    volume_text_log = _("marzban_display.unlimited") if data_limit_gb == 0 else f"{data_limit_gb} GB"
+    log_message = _("log.new_user_approved",
+                    invoice_id=invoice_id,
+                    username=f"`{marzban_username}`",
+                    volume=volume_text_log,
+                    duration=duration_days,
+                    price=f"{int(price):,}",
+                    customer_id=customer_id,
+                    admin_name=admin_user.full_name)
+    await send_log(context.bot, log_message, parse_mode=ParseMode.MARKDOWN)
 
 
 async def _approve_renewal(context, invoice, query, admin_user):
@@ -144,6 +162,7 @@ async def _approve_renewal(context, invoice, query, admin_user):
     username = plan_details.get('username')
     renewal_days = plan_details.get('duration')
     data_limit_gb = plan_details.get('volume', 0)
+    price = plan_details.get('price', invoice.get('price', 0))
 
     if not all([username, renewal_days is not None, data_limit_gb is not None]):
         await query.edit_message_caption(caption=f"{query.message.caption}\n\n{_('financials_payment.error_incomplete_plan_details')}")
@@ -181,17 +200,30 @@ async def _approve_renewal(context, invoice, query, admin_user):
 
     final_caption = f"{query.message.caption}{_('financials_payment.admin_log_renewal_success', username=f'`{username}`', admin_name=admin_user.full_name)}"
     await query.edit_message_caption(caption=final_caption, parse_mode=ParseMode.MARKDOWN)
+    
+    # --- LOG TO CHANNEL ---
+    volume_text_log = _("marzban_display.unlimited") if data_limit_gb == 0 else f"{data_limit_gb} GB"
+    log_message = _("log.renewal_approved",
+                    invoice_id=invoice_id,
+                    username=f"`{username}`",
+                    volume=volume_text_log,
+                    duration=renewal_days,
+                    price=f"{int(price):,}",
+                    customer_id=customer_id,
+                    admin_name=admin_user.full_name)
+    await send_log(context.bot, log_message, parse_mode=ParseMode.MARKDOWN)
 
 
 async def _approve_wallet_charge(context, invoice, query, admin_user):
     """Logic to increase a user's wallet balance after payment."""
     customer_id = invoice['user_id']
     amount_to_add = float(invoice.get('plan_details', {}).get("amount", invoice.get('price', 0)))
+    invoice_id = invoice['id']
 
     new_balance = await increase_wallet_balance(user_id=customer_id, amount=amount_to_add)
 
     if new_balance is not None:
-        await update_invoice_status(invoice['id'], 'approved')
+        await update_invoice_status(invoice_id, 'approved')
         try:
             await context.bot.send_message(
                 customer_id,
@@ -203,6 +235,15 @@ async def _approve_wallet_charge(context, invoice, query, admin_user):
         
         final_caption = f"{query.message.caption}{_('financials_payment.admin_log_wallet_charge_success', amount=f'{int(amount_to_add):,}', admin_name=admin_user.full_name)}"
         await query.edit_message_caption(caption=final_caption, parse_mode=ParseMode.MARKDOWN)
+        
+        # --- LOG TO CHANNEL ---
+        log_message = _("log.wallet_charge_approved",
+                        invoice_id=invoice_id,
+                        amount=f"{int(amount_to_add):,}",
+                        customer_id=customer_id,
+                        admin_name=admin_user.full_name)
+        await send_log(context.bot, log_message, parse_mode=ParseMode.MARKDOWN)
+
     else:
         await query.edit_message_caption(caption=f"{query.message.caption}\n\n{_('financials_payment.error_updating_wallet_db')}")
 
@@ -211,6 +252,7 @@ async def _approve_data_top_up(context, invoice, query, admin_user):
     """Logic to add data to an existing user's plan."""
     plan_details, customer_id = invoice.get('plan_details', {}), invoice.get('user_id')
     marzban_username, data_gb_to_add = plan_details.get('username'), plan_details.get('volume')
+    price = plan_details.get('price', invoice.get('price', 0))
     invoice_id = invoice['id']
 
     if not all([marzban_username, data_gb_to_add, customer_id]):
@@ -228,7 +270,19 @@ async def _approve_data_top_up(context, invoice, query, admin_user):
         except Exception as e:
             LOGGER.error(f"Failed to send data top-up confirmation to customer {customer_id}: {e}")
 
-        await query.edit_message_caption(caption=f"{query.message.caption}{_('financials_payment.admin_log_data_top_up_success', username=f'`{marzban_username}`', admin_name=admin_user.full_name)}", parse_mode=ParseMode.MARKDOWN)
+        final_caption = f"{query.message.caption}{_('financials_payment.admin_log_data_top_up_success', username=f'`{marzban_username}`', admin_name=admin_user.full_name)}"
+        await query.edit_message_caption(caption=final_caption, parse_mode=ParseMode.MARKDOWN)
+        
+        # --- LOG TO CHANNEL ---
+        log_message = _("log.data_topup_approved",
+                        invoice_id=invoice_id,
+                        username=f"`{marzban_username}`",
+                        volume=data_gb_to_add,
+                        price=f"{int(price):,}",
+                        customer_id=customer_id,
+                        admin_name=admin_user.full_name)
+        await send_log(context.bot, log_message, parse_mode=ParseMode.MARKDOWN)
+
     else:
         LOGGER.error(f"Failed to add data for '{marzban_username}' via API. Reason: {message}")
         await query.edit_message_caption(caption=f"{query.message.caption}\n\n{_('financials_payment.error_marzban_connection', error=message)}")
@@ -315,7 +369,15 @@ async def reject_payment(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     except Exception as e:
         LOGGER.error(f"Failed to send rejection notification to customer {invoice['user_id']}: {e}")
 
-    await query.edit_message_caption(caption=f"{query.message.caption}{_('financials_payment.admin_log_payment_rejected', admin_name=admin_user.full_name)}", parse_mode=ParseMode.MARKDOWN)
+    final_caption = f"{query.message.caption}{_('financials_payment.admin_log_payment_rejected', admin_name=admin_user.full_name)}"
+    await query.edit_message_caption(caption=final_caption, parse_mode=ParseMode.MARKDOWN)
+
+    # --- LOG TO CHANNEL ---
+    log_message = _("log.payment_rejected",
+                    invoice_id=invoice_id,
+                    customer_id=invoice['user_id'],
+                    admin_name=admin_user.full_name)
+    await send_log(context.bot, log_message, parse_mode=ParseMode.MARKDOWN)
 
 
 async def confirm_manual_payment(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

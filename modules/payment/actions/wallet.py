@@ -5,9 +5,10 @@ from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import ContextTypes
 from telegram.constants import ParseMode
 from shared.callback_types import SendReceipt 
-from database.db_manager import load_financials, get_pending_invoice, decrease_wallet_balance
+from database.db_manager import load_financials, get_pending_invoice, decrease_wallet_balance, get_user_by_id
 from shared.translator import _
-from .approval import approve_payment # We'll need this for auto-approval
+from .approval import approve_payment
+from shared.log_channel import send_log
 
 LOGGER = logging.getLogger(__name__)
 
@@ -77,15 +78,75 @@ async def pay_with_wallet(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
               new_balance=f"{int(new_balance):,}")
         )
         
+        # --- START: INTELLIGENT LOGGING TO CHANNEL ---
+        db_user = await get_user_by_id(user_id)
+        customer_name = db_user.get('username', f"ID: {user_id}") if db_user else f"ID: {user_id}"
+        
+        plan_details = invoice.get('plan_details', {})
+        invoice_type = plan_details.get("invoice_type")
+        log_message = ""
+
+        if invoice_type == "RENEWAL":
+            username = plan_details.get('username', 'N/A')
+            duration = plan_details.get('duration', 0)
+            volume = plan_details.get('volume', 0)
+            volume_text = _("marzban_display.unlimited") if volume == 0 else f"{volume} گیگابایت"
+            log_message = _("log.wallet_renewal_success",
+                            invoice_id=invoice_id,
+                            username=f"`{username}`",
+                            volume=volume_text,
+                            duration=duration,
+                            price=f"{int(price):,}",
+                            customer_name=customer_name,
+                            customer_id=user_id,
+                            new_balance=f"{int(new_balance):,}")
+
+        elif invoice_type in ["NEW_USER_CUSTOM", "NEW_USER_UNLIMITED"]:
+            username = plan_details.get('username', 'N/A')
+            duration = plan_details.get('duration', 0)
+            volume = plan_details.get('volume', 0)
+            volume_text = _("marzban_display.unlimited") if volume == 0 else f"{volume} گیگابایت"
+            log_message = _("log.wallet_new_user_success",
+                            invoice_id=invoice_id,
+                            username=f"`{username}`",
+                            volume=volume_text,
+                            duration=duration,
+                            price=f"{int(price):,}",
+                            customer_name=customer_name,
+                            customer_id=user_id,
+                            new_balance=f"{int(new_balance):,}")
+                            
+        elif invoice_type == "DATA_TOP_UP":
+            username = plan_details.get('username', 'N/A')
+            volume = plan_details.get('volume', 0)
+            log_message = _("log.wallet_data_topup_success",
+                            invoice_id=invoice_id,
+                            username=f"`{username}`",
+                            volume=volume,
+                            price=f"{int(price):,}",
+                            customer_name=customer_name,
+                            customer_id=user_id,
+                            new_balance=f"{int(new_balance):,}")
+        else:
+            # Fallback for manual invoices or other types
+            log_message = _("log.wallet_generic_payment_success",
+                            invoice_id=invoice_id,
+                            price=f"{int(price):,}",
+                            customer_name=customer_name,
+                            customer_id=user_id,
+                            new_balance=f"{int(new_balance):,}")
+
+        await send_log(context.bot, log_message, parse_mode=ParseMode.MARKDOWN)
+        # --- END: INTELLIGENT LOGGING ---
+
         # Now, trigger the approval logic automatically.
-        # We create a "mock" update object to pass to the approve_payment function.
         class MockUser:
             id = 0
-            full_name = _("financials_payment.wallet_auto_payment_name")
+            full_name = _("financials_payment.wallet_auto_payment_name_system")
 
         class MockQuery:
             data = f"approve_receipt_{invoice_id}"
-            message = type('obj', (object,), {'caption' : f"Auto-approved invoice #{invoice_id}"})() # A mock message
+            message = type('obj', (object,), {'caption' : f"Auto-approved invoice #{invoice_id} via wallet"})()
             async def answer(self, *args, **kwargs): pass
             async def edit_message_caption(self, *args, **kwargs): pass
         

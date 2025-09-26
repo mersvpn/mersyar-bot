@@ -439,6 +439,7 @@ async def generate_data_purchase_invoice(update: Update, context: ContextTypes.D
     context.user_data.clear()
     return ConversationHandler.END
 
+# ----------------- START OF FINAL CORRECTED CODE -----------------
 async def toggle_auto_renew(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     
@@ -451,15 +452,21 @@ async def toggle_auto_renew(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         await query.answer(_("general.errors.internal_error"), show_alert=True)
         return DISPLAY_SERVICE
 
-    # Show the modern, fading pop-up message to the user
-    if new_status:
-        await query.answer(_("customer.customer_service.auto_renew_activated_alert"), show_alert=False)
-    else:
-        await query.answer(_("customer.customer_service.auto_renew_deactivated_alert"), show_alert=False)
-
     user_id = update.effective_user.id
-    await set_auto_renew_status(user_id, marzban_username, new_status)
     
-    # Refresh the service details panel to show the updated button
+    # 1. Update the status in the database first
+    await set_auto_renew_status(user_id, marzban_username, new_status)
+
+    # 2. Prepare the correct alert text
+    if new_status:
+        alert_text = _("customer.customer_service.auto_renew_activated_alert")
+    else:
+        alert_text = _("customer.customer_service.auto_renew_deactivated_alert")
+    
+    # 3. Show the confirmation alert to the user
+    await query.answer(alert_text, show_alert=True)
+    
+    # 4. Refresh the service details panel to show the updated button state
     message_to_edit = query.message
     return await display_service_details(user_id, message_to_edit, context, marzban_username)
+# -----------------  END OF FINAL CORRECTED CODE  -----------------

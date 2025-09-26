@@ -28,5 +28,19 @@
     "success_admin": "✅ اکانت تست جدید\n\n👤 کاربر: {name}\n🆔 یوزرنیم: {username}\n🔢 آیدی عددی: `{user_id}`\n\n💠 یوزرنیم مرزبان: `{test_username}`",
     "api_failed_admin": "⚠️ **خطای API در ساخت اکانت تست**\n\nبرای کاربر با آیدی `{user_id}`\n\n`{error}`"
   },
-    "linking_admin_notification": "✅ <b>اتصال حساب موفق</b>\n\nکاربر <b>{customer_name}</b> (<code>{customer_id}</code>) با موفقیت به حساب مرزبان <code>{username}</code> متصل شد."
+    "linking_admin_notification": "✅ <b>اتصال حساب موفق</b>\n\nکاربر <b>{customer_name}</b> (<code>{customer_id}</code>) با موفقیت به حساب مرزبان <code>{username}</code> متصل شد.",
+
+      "log": {
+    "manual_invoice_approved": "✅ **تایید فاکتور دستی**\n\n- فاکتور: #`{invoice_id}`\n- کاربر مرزبان: `{username}`\n- مبلغ: `{price}` تومان\n\n- مشتری: `{customer_id}`\n- تایید توسط: **{admin_name}**",
+    "new_user_approved": "🚀 **فروش سرویس جدید**\n\n- فاکتور: #`{invoice_id}`\n- یوزرنیم جدید: `{username}`\n- حجم: **{volume}**\n- مدت: **{duration} روز**\n- مبلغ: `{price}` تومان\n\n- مشتری: `{customer_id}`\n- تایید توسط: **{admin_name}**",
+    "renewal_approved": "🔄 **تمدید سرویس**\n\n- فاکتور: #`{invoice_id}`\n- کاربر مرزبان: `{username}`\n- حجم: **{volume}**\n- مدت: **{duration} روز**\n- مبلغ: `{price}` تومان\n\n- مشتری: `{customer_id}`\n- تایید توسط: **{admin_name}**",
+    "wallet_charge_approved": "💰 **شارژ کیف پول**\n\n- فاکتور: #`{invoice_id}`\n- مبلغ شارژ: `{amount}` تومان\n\n- مشتری: `{customer_id}`\n- تایید توسط: **{admin_name}**",
+    "data_topup_approved": "➕ **افزایش حجم**\n\n- فاکتور: #`{invoice_id}`\n- کاربر مرزبان: `{username}`\n- حجم اضافه شده: **{volume} گیگابایت**\n- مبلغ: `{price}` تومان\n\n- مشتری: `{customer_id}`\n- تایید توسط: **{admin_name}**",
+    "payment_rejected": "❌ **رد پرداخت**\n\n- فاکتور: #`{invoice_id}`\n\n- مشتری: `{customer_id}`\n- رد توسط: **{admin_name}**",
+    "payment_with_wallet_success": "💳 **پرداخت با کیف پول**\n\n- فاکتور: #`{invoice_id}`\n- مبلغ: `{price}` تومان\n\n- مشتری: @{customer_name} (`{customer_id}`)\n- وضعیت: **موفق و در انتظار تایید نهایی**",
+        "wallet_renewal_success": "💳 **تمدید با کیف پول**\n\n- فاکتور: #`{invoice_id}`\n- کاربر: `{username}`\n- حجم: **{volume}**\n- مدت: **{duration} روز**\n- مبلغ کسر شده: `{price}` تومان\n\n- مشتری: @{customer_name} (`{customer_id}`)\n- موجودی جدید: **{new_balance} تومان**",
+    "wallet_new_user_success": "🚀 **خرید سرویس با کیف پول**\n\n- فاکتور: #`{invoice_id}`\n- یوزرنیم جدید: `{username}`\n- حجم: **{volume}**\n- مدت: **{duration} روز**\n- مبلغ کسر شده: `{price}` تومان\n\n- مشتری: @{customer_name} (`{customer_id}`)\n- موجودی جدید: **{new_balance} تومان**",
+    "wallet_data_topup_success": "➕ **افزایش حجم با کیف پول**\n\n- فاکتور: #`{invoice_id}`\n- کاربر: `{username}`\n- حجم اضافه شده: **{volume} گیگابایت**\n- مبلغ کسر شده: `{price}` تومان\n\n- مشتری: @{customer_name} (`{customer_id}`)\n- موجودی جدید: **{new_balance} تومان**",
+    "wallet_generic_payment_success": "💳 **پرداخت با کیف پول (عمومی)**\n\n- فاکتور: #`{invoice_id}`\n- مبلغ کسر شده: `{price}` تومان\n\n- مشتری: @{customer_name} (`{customer_id}`)\n- موجودی جدید: **{new_balance} تومان**"
+  }
 }
