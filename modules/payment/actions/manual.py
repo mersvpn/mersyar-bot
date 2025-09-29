@@ -60,7 +60,7 @@ async def start_manual_invoice_conv(update: Update, context: ContextTypes.DEFAUL
     
     await query.edit_message_text(
         text=_("financials_payment.manual_invoice_prompt", username=f"`{marzban_username}`"),
-        parse_mode=ParseMode.MARKDOWN
+        
     )
     return GET_MANUAL_PRICE
 
