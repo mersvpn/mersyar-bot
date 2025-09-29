@@ -145,7 +145,7 @@ def register(application: Application) -> None:
 
         CallbackQueryHandler(display.send_subscription_qr_code_and_link, pattern=r'^sub_link_'),
         
-        CallbackQueryHandler(payment_actions.send_manual_invoice, pattern=r'^renew_'),
+        CallbackQueryHandler(modify_user.renew_user_smart, pattern=r'^renew_'),
         CallbackQueryHandler(modify_user.reset_user_traffic, pattern=r'^reset_traffic_'),
         CallbackQueryHandler(modify_user.confirm_delete_user, pattern=r'^delete_'),
         CallbackQueryHandler(modify_user.do_delete_user, pattern=r'^do_delete_'),

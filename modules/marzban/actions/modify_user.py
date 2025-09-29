@@ -180,39 +180,54 @@ async def do_delete_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 async def renew_user_smart(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     from shared.translator import _
-    from database.db_manager import get_user_note, get_telegram_id_from_marzban_username, load_financials
+    from database.db_manager import get_user_note
+    from database.db_manager import get_user_note, get_telegram_id_from_marzban_username
 
     query = update.callback_query
     username = query.data.removeprefix('renew_')
     admin_user = update.effective_user
+    
+    # Provide immediate feedback to the admin
     await query.answer(_("marzban_modify_user.renewing_user", username=username))
+    await query.edit_message_text(
+        _("marzban_modify_user.renew_in_progress", username=f"`{username}`"), 
+        parse_mode=ParseMode.MARKDOWN
+    )
 
+    # --- Step 1: Get User and Subscription Data ---
     user_data = await get_user_data(username)
     if not user_data:
-        await query.edit_message_text(_("marzban_display.user_not_found"), parse_mode=ParseMode.MARKDOWN); return
+        await query.edit_message_text(_("marzban_display.user_not_found"))
+        return
 
     note_data = await get_user_note(normalize_username(username))
+    
+    # Use subscription data if available, otherwise use defaults
     renewal_duration_days = (note_data or {}).get('subscription_duration') or DEFAULT_RENEW_DAYS
     data_limit_gb = (note_data or {}).get('subscription_data_limit_gb', (user_data.get('data_limit') or 0) / GB_IN_BYTES)
-    subscription_price = (note_data or {}).get('subscription_price') # Keep as None if not set
-
-    # Step 1: Reset Traffic
-    await query.edit_message_text(_("marzban_modify_user.renew_step1", username=f"`{username}`"), parse_mode=ParseMode.MARKDOWN)
+    
+    # --- Step 2: Perform Renewal in Marzban Panel ---
+    # 2a. Reset Traffic
     success_reset, message_reset = await reset_user_traffic_api(username)
     if not success_reset:
-        await query.edit_message_text(_("marzban_modify_user.renew_error_reset_traffic", error=f"`{message_reset}`"), parse_mode=ParseMode.MARKDOWN); return
+        await query.edit_message_text(_("marzban_modify_user.renew_error_reset_traffic", error=f"`{message_reset}`"), parse_mode=ParseMode.MARKDOWN)
+        return
         
-    # Step 2: Modify User (Extend expiry, set data limit)
-    await query.edit_message_text(_("marzban_modify_user.renew_step2", username=f"`{username}`"), parse_mode=ParseMode.MARKDOWN)
+    # 2b. Modify User (Extend expiry, set data limit)
     start_date = datetime.datetime.fromtimestamp(max(user_data.get('expire') or 0, datetime.datetime.now().timestamp()))
     new_expire_date = start_date + datetime.timedelta(days=renewal_duration_days)
-    payload_to_modify = {"expire": int(new_expire_date.timestamp()), "data_limit": int(data_limit_gb * GB_IN_BYTES), "status": "active"}
+    payload_to_modify = {
+        "expire": int(new_expire_date.timestamp()), 
+        "data_limit": int(data_limit_gb * GB_IN_BYTES), 
+        "status": "active"
+    }
     
     success_modify, message_modify = await modify_user_api(username, payload_to_modify)
     if not success_modify:
-        await query.edit_message_text(_("marzban_modify_user.renew_error_modify", error=f"`{message_modify}`"), parse_mode=ParseMode.MARKDOWN); return
+        await query.edit_message_text(_("marzban_modify_user.renew_error_modify", error=f"`{message_modify}`"), parse_mode=ParseMode.MARKDOWN)
+        return
         
-    # Step 3: Log the successful renewal
+    # --- Step 3: Log the successful renewal ---
     admin_mention = escape_markdown(admin_user.full_name, version=2)
     safe_username = escape_markdown(username, version=2)
     log_message = _("marzban_modify_user.log_renew_title")
@@ -222,53 +237,37 @@ async def renew_user_smart(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     log_message += _("marzban_modify_user.log_deleted_by", admin_mention=admin_mention)
     await send_log(context.bot, log_message, parse_mode=ParseMode.MARKDOWN_V2)
 
-    # Step 4: Show success message to admin (before notifying customer)
-    response_message = _("marzban_modify_user.renew_successful_title")
-    response_message += _("marzban_modify_user.renew_successful_config", username=f"`{username}`")
-    response_message += _("marzban_modify_user.renew_successful_duration", days=renewal_duration_days)
-    response_message += _("marzban_modify_user.renew_successful_data", gb=int(data_limit_gb))
-    response_message += _("marzban_modify_user.renew_successful_traffic")
-    
-    list_type = context.user_data.get('current_list_type', 'all')
-    page_number = context.user_data.get('current_page', 1)
-    back_button = InlineKeyboardButton(_("marzban_modify_user.button_back_to_list"), callback_data=f"show_users_page_{list_type}_{page_number}")
-    await query.edit_message_text(response_message, reply_markup=InlineKeyboardMarkup([[back_button]]), parse_mode=ParseMode.MARKDOWN)
-    
-    # Step 5: Notify customer (if linked)
+    # --- Step 4: Show Final Success Message to Admin ---
+    # This will refresh the user details panel with the new info
+    # --- Step 4: Notify the customer (if linked) ---
     customer_id = await get_telegram_id_from_marzban_username(normalize_username(username))
-    if not customer_id:
-        await context.bot.send_message(chat_id=update.effective_chat.id, text=_("marzban_modify_user.customer_not_linked", username=f"`{username}`"), parse_mode=ParseMode.MARKDOWN)
-        return
+    customer_notified = False
+    if customer_id:
+        try:
+            customer_message = _(
+                "marzban_modify_user.customer_renew_notification",
+                username=f"`{username}`",
+                days=renewal_duration_days,
+                gb=int(data_limit_gb)
+            )
+            await context.bot.send_message(customer_id, customer_message, parse_mode=ParseMode.MARKDOWN)
+            customer_notified = True
+        except Exception as e:
+            LOGGER.error(f"User {username} renewed, but failed to notify customer {customer_id}: {e}")
 
-    try:
-        # Build the base message for the customer
-        customer_message = _("marzban_modify_user.customer_renew_message_title")
-        customer_message += _("marzban_modify_user.customer_renew_message_data", gb=int(data_limit_gb))
-        customer_message += _("marzban_modify_user.customer_renew_message_duration", days=renewal_duration_days)
-        
-        admin_feedback_message = ""
-
-        # If a price is set, append payment details to the customer message
-        if subscription_price is not None and subscription_price > 0:
-            financials = await load_financials()
-            if financials.get("card_holder") and financials.get("card_number"):
-                customer_message += _("financials_payment.invoice_price", price=f"`{subscription_price:,}`")
-                customer_message += _("financials_payment.invoice_payment_details", card_number=f"`{financials['card_number']}`", card_holder=f"`{financials['card_holder']}`")
-                customer_message += _("marzban_modify_user.customer_renew_message_footer_payment_needed")
-                admin_feedback_message = _("marzban_modify_user.payment_info_sent_to_customer", customer_id=customer_id)
-            else:
-                customer_message += _("marzban_modify_user.customer_renew_message_footer_contact_support")
-                admin_feedback_message = _("marzban_modify_user.payment_info_not_sent_no_financials")
-        else:
-            customer_message += _("marzban_modify_user.customer_renew_message_footer_free")
-            admin_feedback_message = _("marzban_modify_user.invoice_not_sent_to_customer", customer_id=customer_id)
-
-        # Send the final composed message to the customer
-        await context.bot.send_message(chat_id=customer_id, text=customer_message, parse_mode=ParseMode.HTML)
-        
-        # Send final feedback to the admin
-        await context.bot.send_message(chat_id=update.effective_chat.id, text=admin_feedback_message)
-
-    except Exception as e:
-        LOGGER.error(f"User {username} renewed, but failed to notify customer {customer_id}: {e}")
-        await context.bot.send_message(chat_id=update.effective_chat.id, text=_("marzban_modify_user.error_notifying_customer_after_renew", username=f"`{username}`", customer_id=customer_id), parse_mode=ParseMode.MARKDOWN)
+    # --- Step 5: Show Final Success Message to Admin ---
+    if customer_notified:
+        success_message = _("marzban_modify_user.renew_successful_admin_and_customer", username=f"`{username}`")
+    else:
+        # This will be shown if customer is not linked or if sending message to them failed
+        success_message = _("marzban_modify_user.renew_successful_admin_only", username=f"`{username}`")
+    
+    await show_user_details_panel(
+        context=context, 
+        chat_id=query.message.chat_id, 
+        message_id=query.message.message_id,
+        username=username, 
+        list_type=context.user_data.get('current_list_type', 'all'),
+        page_number=context.user_data.get('current_page', 1), 
+        success_message=success_message
+    )
