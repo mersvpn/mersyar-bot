@@ -3,9 +3,10 @@
 import logging
 from telegram import Update
 from telegram.ext import ContextTypes, ConversationHandler
-
+from .keyboards import get_admin_main_menu_keyboard
 from .keyboards import get_helper_tools_keyboard
 from shared.translator import _ # Import translator
+from .translator import _
 
 LOGGER = logging.getLogger(__name__)
 
@@ -85,3 +86,17 @@ async def show_coming_soon(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     if query:
         # Using translator for the message
         await query.answer(text=_("general.coming_soon"), show_alert=True)
+
+async def main_menu_fallback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """
+    A generic fallback handler that ends any conversation
+    and displays the main menu when a main menu button is pressed.
+    """
+    user_id = update.effective_user.id
+    context.user_data.clear()
+    
+    await update.message.reply_text(
+        _("general.operation_cancelled"),
+        reply_markup=get_admin_main_menu_keyboard()
+    )
+    return ConversationHandler.END

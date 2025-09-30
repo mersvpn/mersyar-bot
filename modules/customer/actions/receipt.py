@@ -5,7 +5,7 @@ from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKe
 from telegram.ext import ContextTypes, ConversationHandler, CallbackQueryHandler, MessageHandler, filters
 from telegram.constants import ParseMode
 from telegram.error import BadRequest
-
+from shared.financial_utils import calculate_payment_details
 from config import config
 from database.db_manager import get_pending_invoices_for_user, get_pending_invoice
 from shared.keyboards import get_customer_shop_keyboard
@@ -147,7 +147,10 @@ async def select_invoice_for_receipt(update: Update, context: ContextTypes.DEFAU
     return GET_RECEIPT_PHOTO
 
 async def handle_receipt_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Receives the photo, and forwards it to admins for approval."""
+    """
+    Receives the photo, and forwards it to admins for approval.
+    Intelligently formats the admin caption based on the invoice type.
+    """
     user = update.effective_user
     photo_file_id = update.message.photo[-1].file_id
     invoice_id = context.user_data.get('invoice_id')
@@ -162,29 +165,55 @@ async def handle_receipt_photo(update: Update, context: ContextTypes.DEFAULT_TYP
         return ConversationHandler.END
 
     plan = invoice_details.get('plan_details', {})
-    price = invoice_details.get('price', 0)
-    volume = plan.get('volume', 'N/A')
-    duration = plan.get('duration', 'N/A')
+    total_price = invoice_details.get('price', 0)
     
-    volume_str = _("customer.receipt.unlimited_volume_label") if plan.get("plan_type") == "unlimited" else volume
-    
-    caption = _("customer.receipt.admin_caption", 
-                invoice_id=invoice_id, 
-                full_name=user.full_name, 
-                user_id=f"`{user.id}`", 
-                volume=volume_str, 
-                duration=duration, 
-                price=price)
-
+    # --- ✨ Intelligent Caption Generation ✨ ---
     plan_type = plan.get("plan_type")
+    invoice_type = invoice_details.get('plan_details', {}).get('invoice_type')
 
-    if plan_type == "data_top_up":
+    if invoice_type == "WALLET_CHARGE":
+        # This is a wallet charge invoice, use a simpler caption
+        amount = plan.get('amount', total_price)
+        caption = _("customer.receipt.admin_caption_wallet_charge",
+                    invoice_id=invoice_id,
+                    full_name=user.full_name,
+                    user_id=f"`{user.id}`",
+                    amount=f"{int(amount):,.0f}")
+    else:
+        # For all other types (new user, renewal, etc.), use the detailed caption
+        volume = plan.get('volume', 'N/A')
+        duration = plan.get('duration', 'N/A')
+        
+        # Calculate payment details only for non-wallet-charge invoices
+        payment_info = await calculate_payment_details(user.id, total_price)
+        paid_from_wallet = payment_info["paid_from_wallet"]
+        payable_amount = payment_info["payable_amount"]
+        
+        volume_str = _("customer.receipt.unlimited_volume_label") if plan.get("plan_type") == "unlimited" else volume
+        caption = _("customer.receipt.admin_caption_detailed", 
+                    invoice_id=invoice_id, 
+                    full_name=user.full_name, 
+                    user_id=f"`{user.id}`", 
+                    volume=volume_str, 
+                    duration=duration, 
+                    total_price=f"{total_price:,.0f}",
+                    paid_from_wallet=f"{paid_from_wallet:,.0f}",
+                    payable_amount=f"{payable_amount:,.0f}")
+    # --- End of Intelligent Caption Generation ---
+
+    # --- Button Logic (Remains mostly the same, but we need to identify wallet charge approval) ---
+    if invoice_type == "WALLET_CHARGE":
+        # Explicitly set the callback for wallet charge approval
+        approve_button_text = _("keyboards.buttons.approve_payment") # A generic "Approve" button is fine
+        approve_callback = f"approve_receipt_{invoice_id}" # This will be routed correctly in approval.py
+    elif plan_type == "data_top_up":
         approve_button_text = _("keyboards.buttons.approve_data_top_up")
         approve_callback = f"approve_data_top_up_{invoice_id}"
-    elif plan_type in ["custom", "unlimited"] or (isinstance(volume, int) and volume > 0 and isinstance(duration, int) and duration > 0):
+    elif plan_type in ["custom", "unlimited"] or (isinstance(plan.get('volume', 'N/A'), int) and plan.get('volume', 'N/A') > 0):
         approve_button_text = _("keyboards.buttons.approve_and_create_service")
         approve_callback = f"approve_receipt_{invoice_id}"
     else:
+        # Fallback for manual invoices or other types
         approve_button_text = _("keyboards.buttons.approve_payment")
         approve_callback = f"confirm_manual_receipt_{invoice_id}"
 

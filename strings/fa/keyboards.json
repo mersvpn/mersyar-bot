@@ -96,6 +96,9 @@
     "wallet_balance_management": "👤 مدیریت موجودی کاربران",
     "back_to_settings": "🔙 بازگشت به تنظیمات"
   },
+    "financials": {
+    "balance_management_back_button": "🔙 بازگشت به تنظیمات مالی"
+  },
   "inline_keyboards": {
     "payment_methods": {
       "set_card_info": "💳 تنظیم کارت به کارت",

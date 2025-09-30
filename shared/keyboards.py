@@ -212,3 +212,22 @@ def get_connection_guide_keyboard() -> InlineKeyboardMarkup:
         ]
     ]
     return InlineKeyboardMarkup(keyboard)
+
+
+def get_cancel_keyboard() -> ReplyKeyboardMarkup:
+    keyboard = [
+        [KeyboardButton(_("keyboards.helper_tools.back_to_settings"))]
+    ]
+    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+
+# --- ✨ NEW FUNCTION ADDED HERE ✨ ---
+def get_balance_management_keyboard() -> ReplyKeyboardMarkup:
+    """
+    Creates a dedicated ReplyKeyboard for the balance management conversation.
+    This allows for a quick exit from the conversation.
+    """
+    keyboard = [
+        [KeyboardButton(_("keyboards.financials.balance_management_back_button"))]
+    ]
+    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+# --- ✨ END OF NEW FUNCTION ✨ ---
