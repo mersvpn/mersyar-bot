@@ -68,20 +68,22 @@ async def pay_with_wallet(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     user_id = update.effective_user.id
     price = float(invoice.get('price', 0))
 
+    LOGGER.info(f"Start pay_with_wallet called: user_id={user_id}, invoice_id={invoice_id}, amount={price}")
+
     new_balance = await decrease_wallet_balance(user_id=user_id, amount=price)
 
     if new_balance is not None:
-        # Payment successful
+        LOGGER.info(f"Wallet balance decreased successfully for user_id={user_id}, amount={price}")
+
         await query.edit_message_text(
-            _("financials_payment.wallet_payment_successful", 
-              price=f"{int(price):,}", 
+            _("financials_payment.wallet_payment_successful",
+              price=f"{int(price):,}",
               new_balance=f"{int(new_balance):,}")
         )
-        
+
         # --- START: INTELLIGENT LOGGING TO CHANNEL ---
         db_user = await get_user_by_id(user_id)
         customer_name = db_user.get('username', f"ID: {user_id}") if db_user else f"ID: {user_id}"
-        
         plan_details = invoice.get('plan_details', {})
         invoice_type = plan_details.get("invoice_type")
         log_message = ""
@@ -100,7 +102,6 @@ async def pay_with_wallet(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                             customer_name=customer_name,
                             customer_id=user_id,
                             new_balance=f"{int(new_balance):,}")
-
         elif invoice_type in ["NEW_USER_CUSTOM", "NEW_USER_UNLIMITED"]:
             username = plan_details.get('username', 'N/A')
             duration = plan_details.get('duration', 0)
@@ -115,7 +116,6 @@ async def pay_with_wallet(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                             customer_name=customer_name,
                             customer_id=user_id,
                             new_balance=f"{int(new_balance):,}")
-                            
         elif invoice_type == "DATA_TOP_UP":
             username = plan_details.get('username', 'N/A')
             volume = plan_details.get('volume', 0)
@@ -139,23 +139,24 @@ async def pay_with_wallet(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await send_log(context.bot, log_message, parse_mode=ParseMode.MARKDOWN)
         # --- END: INTELLIGENT LOGGING ---
 
-        # Now, trigger the approval logic automatically.
+        # Trigger the approval logic automatically.
         class MockUser:
             id = 0
             full_name = _("financials_payment.wallet_auto_payment_name_system")
 
         class MockQuery:
             data = f"approve_receipt_{invoice_id}"
-            message = type('obj', (object,), {'caption' : f"Auto-approved invoice #{invoice_id} via wallet"})()
+            message = type('obj', (object,), {'caption': f"Auto-approved invoice #{invoice_id} via wallet"})()
+
             async def answer(self, *args, **kwargs): pass
             async def edit_message_caption(self, *args, **kwargs): pass
-        
+
         class MockUpdate:
             effective_user = MockUser()
             callback_query = MockQuery()
-            
+
         await approve_payment(MockUpdate(), context)
 
     else:
-        # Payment failed (insufficient funds)
         await query.answer(_("financials_payment.wallet_payment_failed_insufficient_funds"), show_alert=True)
+        LOGGER.warning(f"Failed to decrease wallet balance for user_id={user_id}, amount={price}")

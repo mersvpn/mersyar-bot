@@ -22,44 +22,13 @@ from shared.log_channel import send_log
 LOGGER = logging.getLogger(__name__)
 
 
-# =============================================================================
-# --- Private Helper Functions for Approval ---
-# =============================================================================
 
-async def _handle_wallet_deduction(invoice: dict) -> bool:
-    """
-    Central helper to deduct the used wallet amount for an approved invoice.
-    Returns True on success or if no deduction was needed, False on failure.
-    """
-    customer_id = invoice['user_id']
-    total_price = invoice.get('price', 0)
-
-    # Use the central payment engine to find out how much was paid from the wallet
-    payment_info = await calculate_payment_details(customer_id, total_price)
-    paid_from_wallet = payment_info.get("paid_from_wallet", 0)
-
-    if paid_from_wallet > 0:
-        LOGGER.info(f"Deducting {paid_from_wallet} from wallet for user {customer_id} (Invoice #{invoice['id']})")
-        new_balance = await decrease_wallet_balance(user_id=customer_id, amount=paid_from_wallet)
-        
-        if new_balance is None:
-            # This indicates a failure, e.g., insufficient funds due to a race condition.
-            LOGGER.error(f"Failed to deduct {paid_from_wallet} from wallet for user {customer_id}. Aborting approval.")
-            return False
-        
-        LOGGER.info(f"Successfully deducted from wallet for user {customer_id}. New balance: {new_balance}")
-    
-    return True
 
 async def _approve_manual_invoice(context, invoice, query, admin_user):
     """
     Handles approval for manually created invoices.
     Its main job is to save the subscription details to the database.
     """
-
-    if not await _handle_wallet_deduction(invoice):
-        await query.edit_message_caption(caption=f"{query.message.caption}\n\n{_('wallet_payment_failed_insufficient_funds')}")
-        return
 
 
     customer_id = invoice['user_id']
@@ -109,9 +78,7 @@ async def _approve_manual_invoice(context, invoice, query, admin_user):
 async def _approve_new_user_creation(context, invoice, query, admin_user):
     """Logic to create a new user in Marzban after payment approval."""
 
-    if not await _handle_wallet_deduction(invoice):
-        await query.edit_message_caption(caption=f"{query.message.caption}\n\n{_('wallet_payment_failed_insufficient_funds')}")
-        return
+
     customer_id = invoice['user_id']
     plan_details = invoice.get('plan_details', {})
     invoice_id = invoice['id']
@@ -190,9 +157,7 @@ async def _approve_renewal(context, invoice, query, admin_user):
     """
     Logic to renew an existing user's subscription AFTER payment approval.
     """
-    if not await _handle_wallet_deduction(invoice):
-        await query.edit_message_caption(caption=f"{query.message.caption}\n\n{_('wallet_payment_failed_insufficient_funds')}")
-        return
+
     customer_id = invoice['user_id']
     plan_details = invoice.get('plan_details', {})
     invoice_id = invoice['id']
@@ -289,9 +254,7 @@ async def _approve_wallet_charge(context, invoice, query, admin_user):
 async def _approve_data_top_up(context, invoice, query, admin_user):
     """Logic to add data to an existing user's plan."""
 
-    if not await _handle_wallet_deduction(invoice):
-        await query.edit_message_caption(caption=f"{query.message.caption}\n\n{_('wallet_payment_failed_insufficient_funds')}")
-        return
+
     plan_details, customer_id = invoice.get('plan_details', {}), invoice.get('user_id')
     marzban_username, data_gb_to_add = plan_details.get('username'), plan_details.get('volume')
     price = plan_details.get('price', invoice.get('price', 0))
