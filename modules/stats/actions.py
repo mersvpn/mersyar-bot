@@ -8,7 +8,7 @@ from telegram.ext import ContextTypes
 from telegram.constants import ParseMode
 
 from database.db_manager import get_total_users_count
-from modules.auth import admin_only
+from shared.auth import admin_only
 
 LOGGER = logging.getLogger(__name__)
 

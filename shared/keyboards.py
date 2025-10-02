@@ -43,7 +43,10 @@ def get_helper_tools_keyboard() -> ReplyKeyboardMarkup:
     keyboard = [
         # --- FIX: All keys now use the 'keyboards.' namespace ---
         [KeyboardButton(_("keyboards.helper_tools.daily_automation")), KeyboardButton(_("keyboards.helper_tools.set_template_user"))],
+        # (✨ NEW) Add the new button for setting the forced join channel
+        [KeyboardButton(_("keyboards.helper_tools.set_forced_join_channel"))],
         [KeyboardButton(_("keyboards.helper_tools.create_connect_link")), KeyboardButton(_("keyboards.helper_tools.test_account_settings"))],
+        # (✨ MODIFIED) Use a more specific back button key
         [KeyboardButton(_("keyboards.helper_tools.back_to_settings"))]
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
@@ -129,7 +132,8 @@ def get_financial_settings_keyboard() -> ReplyKeyboardMarkup:
 
 def get_cancel_keyboard() -> ReplyKeyboardMarkup:
     keyboard = [
-        [KeyboardButton(_("keyboards.helper_tools.back_to_settings"))]
+        # (✨ MODIFIED) This key is now more specific for clarity in conversations
+        [KeyboardButton(_("keyboards.helper_tools.back_to_helper_tools"))]
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 

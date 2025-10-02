@@ -19,7 +19,7 @@ from shared.callback_types import StartManualInvoice
 from .constants import USERS_PER_PAGE, GB_IN_BYTES
 from .api import get_all_users, get_user_data
 from modules.general.actions import start as show_main_menu_action
-from modules.auth import admin_only
+from shared.auth import admin_only
 
 LOGGER = logging.getLogger(__name__)
 

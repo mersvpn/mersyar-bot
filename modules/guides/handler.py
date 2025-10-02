@@ -4,7 +4,7 @@ from telegram.ext import (
     Application, ConversationHandler, CallbackQueryHandler,
     MessageHandler, filters, CommandHandler
 )
-from modules.auth import admin_only_conv
+from shared.auth import admin_only_conv
 from .actions import (
     LIST_GUIDES, GUIDE_MENU, CONFIRM_DELETE, BUTTON_MENU, 
     EDIT_KEY, EDIT_TITLE, EDIT_CONTENT, EDIT_PHOTO, 

@@ -1037,6 +1037,27 @@ async def is_account_test(username: str) -> bool:
     # Returns True if the flag is set to 1, otherwise False.
     return bool(result['is_test_account']) if result else False
 
+# =============================================================================
+#  Forced Join Channel Functions (NEW SECTION)
+# =============================================================================
+
+async def save_forced_join_channel(channel_username: Optional[str]) -> bool:
+    """
+    Saves the username of the channel for forced join.
+    If channel_username is None, it effectively deletes the setting.
+    """
+    settings_to_save = {"forced_join_channel": channel_username}
+    return await save_bot_settings(settings_to_save)
+
+async def load_forced_join_channel() -> Optional[str]:
+    """
+    Loads the username of the channel for forced join from bot settings.
+    Returns the username as a string, or None if not set.
+    """
+    settings = await load_bot_settings()
+    # .get() is used to safely return None if the key doesn't exist
+    return settings.get("forced_join_channel")
+
 # --- NEW FUNCTION TO FIX THE IMPORT ERROR ---
 async def get_user_by_marzban_username(marzban_username: str) -> Optional[Dict[str, Any]]:
     """
@@ -1057,3 +1078,4 @@ async def get_user_by_marzban_username(marzban_username: str) -> Optional[Dict[s
         return user_info
 
     return None
+

@@ -12,7 +12,8 @@ from database.db_manager import load_financials, save_financials, load_bot_setti
 from shared.keyboards import get_financial_settings_keyboard, get_payment_methods_keyboard, get_plan_management_keyboard
 from shared.callbacks import end_conversation_and_show_menu
 
-from modules.auth import admin_only
+from shared.auth import admin_only
+
 
 LOGGER = logging.getLogger(__name__)
 

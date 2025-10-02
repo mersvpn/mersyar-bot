@@ -22,7 +22,7 @@ from .actions import (
     balance_management
 )
 from shared.callbacks import show_coming_soon, main_menu_fallback
-from modules.auth import ADMIN_CONV_FALLBACKS
+from shared.auth import ADMIN_CONV_FALLBACKS
 
 LOGGER = logging.getLogger(__name__)
 

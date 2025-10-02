@@ -1,4 +1,4 @@
-# FILE: modules/bot_settings/actions.py (FINAL STABLE & SAFE VERSION)
+# FILE: modules/bot_settings/actions.py (MODIFIED FOR FORCED JOIN)
 
 import logging
 from telegram import Update, error
@@ -7,10 +7,11 @@ from telegram.constants import ParseMode
 
 from shared.keyboards import (
     get_settings_and_tools_keyboard, get_helper_tools_keyboard,
-    get_test_account_settings_keyboard
+    get_test_account_settings_keyboard, get_cancel_keyboard
 )
 from .data_manager import is_bot_active, set_bot_status
-from database.db_manager import load_bot_settings, save_bot_settings
+# (✨ NEW) Import new DB functions
+from database.db_manager import load_bot_settings, save_bot_settings, save_forced_join_channel, load_forced_join_channel
 from shared.translator import _
 
 LOGGER = logging.getLogger(__name__)
@@ -18,16 +19,13 @@ LOGGER = logging.getLogger(__name__)
 # --- States for Main Settings Conversation ---
 MENU_STATE = 0
 SET_CHANNEL_ID = 1
+GET_FORCED_JOIN_CHANNEL = 2 # (✨ NEW) State for the new conversation
 
 # --- States for NEW Test Account Conversation ---
 ADMIN_TEST_ACCOUNT_MENU = 10
 GET_HOURS = 11
 GET_GB = 12
 GET_LIMIT = 13
-
-# =============================================================================
-# Standard Helper Functions
-# =============================================================================
 
 # =============================================================================
 # Standard Helper Functions
@@ -40,16 +38,9 @@ async def show_helper_tools_menu(update: Update, context: ContextTypes.DEFAULT_T
     await target.reply_text(_("bot_settings.helper_tools_menu_title"), reply_markup=get_helper_tools_keyboard())
 
 async def back_to_settings_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """
-    Handles back action from both inline and reply keyboards.
-    - If from inline, edits the message.
-    - If from reply, sends a new message.
-    Properly ends the conversation.
-    """
     chat_id = update.effective_chat.id
     query = update.callback_query
 
-    # Case 1: Triggered by an inline keyboard button
     if query:
         await query.answer()
         try:
@@ -60,7 +51,6 @@ async def back_to_settings_menu(update: Update, context: ContextTypes.DEFAULT_TY
         except error.BadRequest as e:
             if "Message is not modified" not in str(e):
                 LOGGER.error(f"Error editing message on back action: {e}")
-    # Case 2: Triggered by a reply keyboard button or command
     else:
         await context.bot.send_message(
             chat_id=chat_id,
@@ -69,6 +59,7 @@ async def back_to_settings_menu(update: Update, context: ContextTypes.DEFAULT_TY
         )
 
     return ConversationHandler.END
+
 async def _build_and_send_main_settings_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     bot_settings = await load_bot_settings()
@@ -85,11 +76,18 @@ async def _build_and_send_main_settings_menu(update: Update, context: ContextTyp
     wallet_btn_text = _("bot_settings.status_active") if is_wallet_enabled else _("bot_settings.status_inactive")
     wallet_callback = "toggle_wallet_disable" if is_wallet_enabled else "toggle_wallet_enable"
 
+    # (✨ NEW) Logic for Forced Join button
+    is_forced_join_enabled = bot_settings.get('is_forced_join_active', False)
+    forced_join_btn_text = _("bot_settings.status_active") if is_forced_join_enabled else _("bot_settings.status_inactive")
+    forced_join_callback = "toggle_forced_join_disable" if is_forced_join_enabled else "toggle_forced_join_enable"
+
     from telegram import InlineKeyboardButton, InlineKeyboardMarkup
     keyboard = [
         [InlineKeyboardButton(maintenance_btn_text, callback_data=maintenance_callback), InlineKeyboardButton(_("bot_settings.label_bot_status"), callback_data="noop")],
         [InlineKeyboardButton(log_channel_btn_text, callback_data=log_channel_callback), InlineKeyboardButton(_("bot_settings.label_log_channel"), callback_data="noop")],
         [InlineKeyboardButton(wallet_btn_text, callback_data=wallet_callback), InlineKeyboardButton(_("bot_settings.label_wallet_status"), callback_data="noop")],
+        # (✨ NEW) Add new button to the keyboard
+        [InlineKeyboardButton(forced_join_btn_text, callback_data=forced_join_callback), InlineKeyboardButton(_("bot_settings.label_forced_join"), callback_data="noop")],
         [InlineKeyboardButton(_("bot_settings.button_back_to_tools"), callback_data="bot_status_back")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -137,15 +135,21 @@ async def toggle_wallet_status(update: Update, context: ContextTypes.DEFAULT_TYP
     await _build_and_send_main_settings_menu(update, context)
     return MENU_STATE
 
-async def prompt_for_channel_id(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    # This import is added for the new keyboard
-    from shared.keyboards import get_cancel_keyboard
+# (✨ NEW) New function to toggle forced join status
+async def toggle_forced_join_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    new_status = (query.data == "toggle_forced_join_enable")
+    await save_bot_settings({"is_forced_join_active": new_status})
+    feedback = _("bot_settings.feedback_forced_join_enabled") if new_status else _("bot_settings.feedback_forced_join_disabled")
+    await query.answer(feedback, show_alert=True)
+    await _build_and_send_main_settings_menu(update, context)
+    return MENU_STATE
 
+async def prompt_for_channel_id(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     bot_settings = await load_bot_settings()
     current_channel_id = bot_settings.get('log_channel_id', _("marzban_credentials.not_set"))
     text = _("bot_settings.current_log_channel_id", id=f"`{current_channel_id}`") + _("bot_settings.prompt_for_channel_id")
     
-    # The reply_markup is added here
     await update.message.reply_text(
         text, 
         parse_mode=ParseMode.MARKDOWN,
@@ -156,8 +160,6 @@ async def prompt_for_channel_id(update: Update, context: ContextTypes.DEFAULT_TY
 async def process_channel_id(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     channel_id = update.message.text.strip()
     if not (channel_id.startswith('@') or channel_id.startswith('-100')):
-        # Keep the cancel keyboard on error
-        from shared.keyboards import get_cancel_keyboard
         await update.message.reply_text(
             _("bot_settings.invalid_channel_id"), 
             reply_markup=get_cancel_keyboard()
@@ -168,7 +170,51 @@ async def process_channel_id(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await update.message.reply_text(
         _("bot_settings.channel_id_updated", id=f"`{channel_id}`"), 
         parse_mode=ParseMode.MARKDOWN, 
-        reply_markup=get_settings_and_tools_keyboard() # On success, show the main tools keyboard
+        reply_markup=get_settings_and_tools_keyboard()
+    )
+    return ConversationHandler.END
+
+# (✨ NEW SECTION) Conversation handlers for setting the forced join channel
+# =============================================================================
+
+async def prompt_for_forced_join_channel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Entry point for the conversation to set the forced join channel."""
+    current_channel = await load_forced_join_channel()
+    
+    if current_channel:
+        message_text = _("bot_settings.forced_join.prompt_with_current", channel=f"@{current_channel}")
+    else:
+        message_text = _("bot_settings.forced_join.prompt_no_current")
+        
+    await update.message.reply_text(
+        message_text,
+        reply_markup=get_cancel_keyboard(),
+        parse_mode=ParseMode.HTML
+    )
+    return GET_FORCED_JOIN_CHANNEL
+
+async def process_forced_join_channel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Saves the provided channel username."""
+    channel_username = update.message.text.strip()
+    
+    # Remove '@' if the admin accidentally included it
+    if channel_username.startswith('@'):
+        channel_username = channel_username[1:]
+
+    # A simple validation for a valid username format
+    if not channel_username or not channel_username.replace("_", "").isalnum():
+        await update.message.reply_text(
+            _("bot_settings.forced_join.invalid_username"),
+            reply_markup=get_cancel_keyboard()
+        )
+        return GET_FORCED_JOIN_CHANNEL
+        
+    await save_forced_join_channel(channel_username)
+    
+    await update.message.reply_text(
+        _("bot_settings.forced_join.success", channel=f"@{channel_username}"),
+        reply_markup=get_helper_tools_keyboard(), # Return to the helper tools menu
+        parse_mode=ParseMode.HTML
     )
     return ConversationHandler.END
 # =============================================================================

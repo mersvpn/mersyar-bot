@@ -1,4 +1,4 @@
-# FILE: modules/general/handler.py (AttributeError BUG FIXED)
+# FILE: modules/general/handler.py (MODIFIED FOR FORCED JOIN)
 
 from telegram import Update
 from telegram.ext import (
@@ -8,7 +8,8 @@ from telegram.ext import (
     MessageHandler,
     TypeHandler,
     filters,
-    ApplicationHandlerStop
+    ApplicationHandlerStop,
+    CallbackQueryHandler  # (✨ NEW) Import CallbackQueryHandler
 )
 
 from modules.bot_settings.data_manager import is_bot_active
@@ -20,8 +21,8 @@ from .actions import (
     switch_to_admin_view,
     handle_deep_link  
 )
-from telegram.ext import CommandHandler
-from modules.auth import admin_only
+# (✨ MODIFIED) Corrected the import path for auth
+from shared.auth import admin_only
 
 
 MAINTENANCE_MESSAGE = (
@@ -47,21 +48,18 @@ def register(application: Application):
     # --- CORE COMMANDS ---
     application.add_handler(CommandHandler("start", handle_deep_link), group=1)
     application.add_handler(CommandHandler("myid", show_my_id), group=1)
-        # --- ADD THIS LINE ---
     
+    # (✨ NEW) This handler listens for the "I have joined" button click
+    # It simply re-runs the start command, which will trigger the decorator again.
+    application.add_handler(CallbackQueryHandler(start, pattern=r'^check_join_status$'), group=1)
 
     # --- ADMIN-SPECIFIC HANDLERS ---
     # This handler is ONLY for the "Back to Admin Panel" button, which is exclusive to admins.
-    # V V V THIS LINE IS NOW CORRECTED V V V
     application.add_handler(MessageHandler(
         filters.Regex('^↩️ بازگشت به پنل ادمین$') & filters.User(user_id=config.AUTHORIZED_USER_IDS), 
         switch_to_admin_view
     ), group=1)
-    # ^ ^ ^ THIS LINE IS NOW CORRECTED ^ ^ ^
     
     # NOTE: All customer-facing buttons ('Shop', 'My Services', etc.) are now correctly
     # registered in the customer module's handler to avoid conflicts and ensure
     # conversations work reliably. This file is now clean and focused.
-        # --- ADD THIS LINE ---
-
-
