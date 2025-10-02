@@ -58,14 +58,15 @@
     "bot_stats": "📊 آمار ربات",
     "back_to_main_menu": "🔙 بازگشت به منوی اصلی"
   },
-  "helper_tools": {
+"helper_tools": {
     "daily_automation": "⚙️ اتوماسیون روزانه",
     "set_template_user": "⚙️ تنظیم کاربر الگو",
     "create_connect_link": "🔗 ایجاد لینک اتصال",
     "test_account_settings": "⚙️ تنظیم اکانت تست",
     "back_to_settings": "🔙 بازگشت به ابزارها",
     "back_to_management_menu": "🏠 بازگشت به منوی مدیریت",
-    "set_forced_join_channel": "📢 تنظیم کانال عضویت"
+    "set_forced_join_channel": "📢 تنظیم کانال عضویت",
+    "back_to_helper_tools": "🔙 بازگشت به ابزارها"  
   },
   "forced_join": {
     "join_channel_button": " عضویت در کانال ",

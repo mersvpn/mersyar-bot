@@ -130,12 +130,7 @@ def get_financial_settings_keyboard() -> ReplyKeyboardMarkup:
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
-def get_cancel_keyboard() -> ReplyKeyboardMarkup:
-    keyboard = [
-        # (✨ MODIFIED) This key is now more specific for clarity in conversations
-        [KeyboardButton(_("keyboards.helper_tools.back_to_helper_tools"))]
-    ]
-    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+
 
 # =============================================================================
 #  InlineKeyboardMarkup Section
@@ -219,8 +214,10 @@ def get_connection_guide_keyboard() -> InlineKeyboardMarkup:
 
 
 def get_cancel_keyboard() -> ReplyKeyboardMarkup:
+    """Creates a standard cancel/back keyboard for conversations."""
     keyboard = [
-        [KeyboardButton(_("keyboards.helper_tools.back_to_settings"))]
+        # (✨ FIX) This key now correctly matches the handler's expectation.
+        [KeyboardButton(_("keyboards.helper_tools.back_to_helper_tools"))]
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
