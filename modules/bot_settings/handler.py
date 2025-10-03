@@ -28,7 +28,7 @@ from shared.translator import _
 
 async def show_settings_and_tools_menu(update, context):
     await update.message.reply_text(
-        _("settings_and_tools.welcome_message", default="به بخش «تنظیمات و ابزارها» خوش آمدید."),
+        _("bot_settings.welcome_to_settings_and_tools"),
         reply_markup=get_settings_and_tools_keyboard()
     )
 

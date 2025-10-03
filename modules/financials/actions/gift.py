@@ -49,7 +49,7 @@ async def prompt_for_welcome_gift(update: Update, context: ContextTypes.DEFAULT_
     """Asks the admin for the new welcome gift amount."""
     query = update.callback_query
     await query.answer()
-    await query.edit_message_text(_("financials_gift.prompt_welcome_gift"))
+    await query.edit_message_text(_("financials_gift.prompt_welcome_gift"), parse_mode=ParseMode.HTML)
     return GET_WELCOME_AMOUNT
 
 async def save_welcome_gift(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -86,7 +86,7 @@ async def prompt_for_universal_gift(update: Update, context: ContextTypes.DEFAUL
     """Asks the admin for the universal gift amount."""
     query = update.callback_query
     await query.answer()
-    await query.edit_message_text(_("financials_gift.prompt_universal_gift"))
+    await query.edit_message_text(_("financials_gift.prompt_universal_gift"), parse_mode=ParseMode.HTML)
     return GET_UNIVERSAL_AMOUNT
 
 async def prompt_for_gift_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -101,8 +101,8 @@ async def prompt_for_gift_confirmation(update: Update, context: ContextTypes.DEF
 
     context.user_data['universal_gift_amount'] = amount
     
-    text = _("financials_gift.universal_gift_confirm_prompt", amount=f"{amount:,}", keyword=f"`{_('financials_gift.confirm_keyword')}`")
-    await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN)
+    text = _("financials_gift.universal_gift_confirm_prompt", amount=f"{amount:,}", keyword=f"<code>{_('financials_gift.confirm_keyword')}</code>")
+    await update.message.reply_text(text, parse_mode=ParseMode.HTML)
     
     return CONFIRM_UNIVERSAL_GIFT
 

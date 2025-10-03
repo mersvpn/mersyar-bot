@@ -102,7 +102,7 @@ def register(application: Application):
         }
     )
 
-        # (✨ NEW) Main conversation handler for the gift management menu
+    # (✨ NEW) Main conversation handler for the gift management menu
     gift_management_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(gift.show_gift_management_menu, pattern='^admin_gift_management$')],
         states={
@@ -114,6 +114,7 @@ def register(application: Application):
         },
         fallbacks=[CommandHandler('cancel', end_conversation_and_show_menu)],
         conversation_timeout=600,
+        allow_reentry=True  # (✨ FIX) Add this line
     )
 
     # --- Register ALL Conversation Handlers ---
