@@ -3,7 +3,7 @@
 import logging
 from telegram.ext import (
     Application, CallbackQueryHandler, MessageHandler, 
-    filters, ConversationHandler
+    filters, ConversationHandler,CommandHandler
 )
 from shared.translator import _ # <-- Import _ for regex matching
 # ... (بقیه import های شما) ...
@@ -19,9 +19,10 @@ from .actions import (
     unlimited_plans_admin, 
     volumetric_plans_admin, 
     wallet_admin, 
-    balance_management
+    balance_management,gift
 )
-from shared.callbacks import show_coming_soon, main_menu_fallback
+from shared.callbacks import show_coming_soon, main_menu_fallback, end_conversation_and_show_menu
+
 from shared.auth import ADMIN_CONV_FALLBACKS
 
 LOGGER = logging.getLogger(__name__)
@@ -74,6 +75,47 @@ def register(application: Application):
      
     )
 
+        # (✨ NEW) Conversation for setting the welcome gift
+    welcome_gift_conv = ConversationHandler(
+        entry_points=[CallbackQueryHandler(gift.prompt_for_welcome_gift, pattern='^admin_gift_set_welcome$')],
+        states={
+            gift.GET_WELCOME_AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, gift.save_welcome_gift)]
+        },
+        fallbacks=[CommandHandler('cancel', end_conversation_and_show_menu)],
+        conversation_timeout=300,
+        map_to_parent={
+            ConversationHandler.END: gift.MENU
+        }
+    )
+
+    # (✨ NEW) Conversation for sending the universal gift
+    universal_gift_conv = ConversationHandler(
+        entry_points=[CallbackQueryHandler(gift.prompt_for_universal_gift, pattern='^admin_gift_send_universal$')],
+        states={
+            gift.GET_UNIVERSAL_AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, gift.prompt_for_gift_confirmation)],
+            gift.CONFIRM_UNIVERSAL_GIFT: [MessageHandler(filters.TEXT & ~filters.COMMAND, gift.process_universal_gift)]
+        },
+        fallbacks=[CommandHandler('cancel', end_conversation_and_show_menu)],
+        conversation_timeout=300,
+        map_to_parent={
+            ConversationHandler.END: gift.MENU
+        }
+    )
+
+        # (✨ NEW) Main conversation handler for the gift management menu
+    gift_management_conv = ConversationHandler(
+        entry_points=[CallbackQueryHandler(gift.show_gift_management_menu, pattern='^admin_gift_management$')],
+        states={
+            gift.MENU: [
+                welcome_gift_conv,
+                universal_gift_conv,
+                CallbackQueryHandler(show_financial_menu, pattern='^back_to_financial_settings$')
+            ]
+        },
+        fallbacks=[CommandHandler('cancel', end_conversation_and_show_menu)],
+        conversation_timeout=600,
+    )
+
     # --- Register ALL Conversation Handlers ---
     application.add_handler(card_settings_conv)
     application.add_handler(plan_name_settings_conv)
@@ -83,6 +125,7 @@ def register(application: Application):
     application.add_handler(volumetric_plans_admin.edit_tier_conv)
     application.add_handler(wallet_admin.edit_amounts_conv)
     application.add_handler(balance_management_conv)
+    application.add_handler(gift_management_conv)
 
     standalone_handlers = [
         MessageHandler(filters.Regex('^💰 تنظیمات مالی$'), show_financial_menu),

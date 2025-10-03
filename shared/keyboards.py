@@ -232,3 +232,30 @@ def get_balance_management_keyboard() -> ReplyKeyboardMarkup:
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 # --- ✨ END OF NEW FUNCTION ✨ ---
+
+# (✨ NEW FUNCTION FOR GIFT MANAGEMENT)
+def get_gift_management_keyboard() -> InlineKeyboardMarkup:
+    """
+    Creates the inline keyboard for the gift management menu.
+    """
+    keyboard = [
+        [
+            InlineKeyboardButton(
+                _("keyboards.inline_keyboards.gift_management.set_welcome_gift"), 
+                callback_data="admin_gift_set_welcome"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                _("keyboards.inline_keyboards.gift_management.send_universal_gift"), 
+                callback_data="admin_gift_send_universal"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                _("keyboards.inline_keyboards.gift_management.back_to_financial_settings"), 
+                callback_data="back_to_financial_settings"
+            )
+        ]
+    ]
+    return InlineKeyboardMarkup(keyboard)

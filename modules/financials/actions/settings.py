@@ -25,12 +25,19 @@ LOGGER = logging.getLogger(__name__)
 # =============================================================================
 
 
-
 @admin_only
-async def show_financial_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def show_financial_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, query_to_use=None) -> None:
+
     from shared.translator import _
     text = _("financials_settings.main_menu_title_inline")
     
+    # Use the provided query_to_use, or get it from the update object
+    query = query_to_use or update.callback_query
+
+    # Store the query object to reuse it when returning from sub-conversations
+    if query:
+        context.user_data['financial_menu_query'] = query
+
     bot_settings = await load_bot_settings()
     is_wallet_enabled = bot_settings.get('is_wallet_enabled', False)
     
@@ -38,13 +45,19 @@ async def show_financial_menu(update: Update, context: ContextTypes.DEFAULT_TYPE
         [
             InlineKeyboardButton(_("financials_settings.button_payment_settings"), callback_data="show_payment_methods"),
             InlineKeyboardButton(_("financials_settings.button_plan_management"), callback_data="show_plan_management")
+        ],
+        [
+            InlineKeyboardButton(_("financials_settings.button_balance_management"), callback_data="admin_manage_balance")
         ]
     ]
 
     if is_wallet_enabled:
-        keyboard_rows.append([
-            InlineKeyboardButton(_("financials_settings.button_wallet_settings"), callback_data="admin_wallet_settings")
-        ])
+        wallet_row = [
+            InlineKeyboardButton(_("financials_settings.button_wallet_settings"), callback_data="admin_wallet_settings"),
+            # (✨ NEW) Add the gift management button here
+            InlineKeyboardButton(_("financials_settings.button_gift_management"), callback_data="admin_gift_management")
+        ]
+        keyboard_rows.insert(1, wallet_row) # Insert as the second row
 
     keyboard_rows.append(
         [InlineKeyboardButton(_("financials_settings.button_back_to_settings"), callback_data="back_to_main_settings")]
@@ -52,12 +65,14 @@ async def show_financial_menu(update: Update, context: ContextTypes.DEFAULT_TYPE
     
     keyboard = InlineKeyboardMarkup(keyboard_rows)
 
-    if update.callback_query:
-        await update.callback_query.answer()
-        await update.callback_query.edit_message_text(text=text, reply_markup=keyboard)
+    if query:
+        await query.answer()
+        await query.edit_message_text(text=text, reply_markup=keyboard)
     else:
-        await update.message.delete()
+        # This part handles entry via ReplyKeyboard
+        if update.message: await update.message.delete()
         await context.bot.send_message(chat_id=update.effective_chat.id, text=text, reply_markup=keyboard)
+
 @admin_only
 async def show_payment_methods_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     from shared.translator import _

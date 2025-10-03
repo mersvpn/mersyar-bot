@@ -1058,6 +1058,59 @@ async def load_forced_join_channel() -> Optional[str]:
     # .get() is used to safely return None if the key doesn't exist
     return settings.get("forced_join_channel")
 
+# =============================================================================
+#  Gift and Bonus Functions (NEW SECTION)
+# =============================================================================
+
+async def save_welcome_gift_amount(amount: int) -> bool:
+    """Saves the welcome gift amount to bot_settings."""
+    return await save_bot_settings({'welcome_gift_amount': amount})
+
+async def load_welcome_gift_amount() -> int:
+    """Loads the welcome gift amount from bot_settings. Returns 0 if not set."""
+    settings = await load_bot_settings()
+    return int(settings.get('welcome_gift_amount', 0))
+
+async def increase_balance_for_all_users(amount: float) -> Optional[int]:
+    """
+    Increases the wallet balance for ALL users except admins.
+    This is an efficient, single-query operation.
+    Returns the number of users affected, or None on failure.
+    """
+    if amount <= 0:
+        LOGGER.warning(f"Attempted to apply a universal gift with a non-positive amount: {amount}")
+        return 0
+
+    admin_ids_tuple = tuple(config.AUTHORIZED_USER_IDS)
+    
+    # This placeholder formatting is necessary for the IN clause with aiomysql
+    placeholders = ', '.join(['%s'] * len(admin_ids_tuple))
+    
+    query = f"""
+        UPDATE users
+        SET wallet_balance = wallet_balance + %s
+        WHERE user_id NOT IN ({placeholders});
+    """
+    
+    # The arguments must be a single tuple: (amount, admin_id_1, admin_id_2, ...)
+    args = (amount,) + admin_ids_tuple
+    
+    affected_rows = await execute_query(query, args)
+    return affected_rows
+
+async def get_all_user_ids() -> List[int]:
+    """
+    Fetches a list of all user_ids from the database, excluding admins.
+    Used for scheduling broadcast messages.
+    """
+    admin_ids_tuple = tuple(config.AUTHORIZED_USER_IDS)
+    placeholders = ', '.join(['%s'] * len(admin_ids_tuple))
+
+    query = f"SELECT user_id FROM users WHERE user_id NOT IN ({placeholders});"
+    
+    results = await execute_query(query, admin_ids_tuple, fetch='all')
+    return [row['user_id'] for row in results] if results else []
+
 # --- NEW FUNCTION TO FIX THE IMPORT ERROR ---
 async def get_user_by_marzban_username(marzban_username: str) -> Optional[Dict[str, Any]]:
     """

@@ -55,14 +55,37 @@ async def send_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, mes
         await target_message.reply_text(message_text, reply_markup=reply_markup)
 
 
-# (✨ MODIFIED) The decorator is applied to the start function
+# در فایل modules/general/actions.py
+
+# ... (import های دیگر)
+
 @ensure_channel_membership
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
     try:
         is_new_user = await db_manager.add_or_update_user(user)
+        LOGGER.info(f"[DEBUG GIFT] User {user.id} started. Is new user? -> {is_new_user}")
+        
         if is_new_user:
             await log_new_user_joined(context.bot, user)
+            
+            # Welcome Gift Logic
+            welcome_gift = await db_manager.load_welcome_gift_amount()
+            LOGGER.info(f"[DEBUG GIFT] Welcome gift amount from DB: {welcome_gift}")
+
+            if welcome_gift > 0:
+                new_balance = await db_manager.increase_wallet_balance(user.id, welcome_gift)
+                LOGGER.info(f"[DEBUG GIFT] Balance increased for user {user.id}. New balance: {new_balance}")
+                
+                if new_balance is not None:
+                    gift_message = _("general.welcome_gift_received", amount=f"{welcome_gift:,}")
+                    await context.bot.send_message(chat_id=user.id, text=gift_message)
+                    LOGGER.info(f"[DEBUG GIFT] Sent welcome gift message to user {user.id}.")
+                else:
+                    LOGGER.error(f"[DEBUG GIFT] Failed to increase balance for new user {user.id}.")
+            else:
+                LOGGER.info("[DEBUG GIFT] Welcome gift is 0 or not set. Skipping.")
+
     except Exception as e:
         log_message = _("errors.db_user_save_failed", user_id=user.id, error=e)
         LOGGER.error(log_message)
