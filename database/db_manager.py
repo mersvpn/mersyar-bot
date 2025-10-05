@@ -182,9 +182,10 @@ async def _initialize_db():
                 await cur.execute("""
                     CREATE TABLE IF NOT EXISTS non_renewal_users (marzban_username VARCHAR(255) PRIMARY KEY)
                     ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;""")
-                await cur.execute("""
-                    CREATE TABLE IF NOT EXISTS broadcasts (job_id VARCHAR(36) PRIMARY KEY, data JSON NOT NULL)
-                    ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;""")
+                
+                await cur.execute(""" CREATE TABLE IF NOT EXISTS broadcasts ( job_id VARCHAR(36) PRIMARY KEY, 
+                    text TEXT, photo_id VARCHAR(255), buttons JSON, target_user_ids JSON,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;""")
                 await cur.execute("""
                     CREATE TABLE IF NOT EXISTS bot_managed_users (marzban_username VARCHAR(255) PRIMARY KEY)
                     ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;""")
@@ -557,19 +558,6 @@ async def get_all_linked_users() -> dict:
     results = await execute_query(query, fetch='all')
     return {row['marzban_username']: row['telegram_user_id'] for row in results} if results else {}
 
-async def add_broadcast_job(job_data: dict):
-    query = "INSERT INTO broadcasts (job_id, data) VALUES (%s, %s);"
-    data_str = json.dumps(job_data)
-    return await execute_query(query, (job_data['job_id'], data_str))
-
-async def get_broadcast_job(job_id: str):
-    query = "SELECT data FROM broadcasts WHERE job_id = %s;"
-    result = await execute_query(query, (job_id,), fetch='one')
-    return json.loads(result['data']) if result and result.get('data') else None
-
-async def delete_broadcast_job(job_id: str):
-    query = "DELETE FROM broadcasts WHERE job_id = %s;"
-    return await execute_query(query, (job_id,))
 
 async def load_non_renewal_users() -> list:
     query = "SELECT marzban_username FROM non_renewal_users;"
@@ -1071,6 +1059,8 @@ async def load_welcome_gift_amount() -> int:
     settings = await load_bot_settings()
     return int(settings.get('welcome_gift_amount', 0))
 
+# FILE: database/db_manager.py
+
 async def increase_balance_for_all_users(amount: float) -> Optional[int]:
     """
     Increases the wallet balance for ALL users except admins.
@@ -1081,19 +1071,24 @@ async def increase_balance_for_all_users(amount: float) -> Optional[int]:
         LOGGER.warning(f"Attempted to apply a universal gift with a non-positive amount: {amount}")
         return 0
 
+    # Ensure there are admin IDs to exclude. If not, the query would fail.
     admin_ids_tuple = tuple(config.AUTHORIZED_USER_IDS)
-    
-    # This placeholder formatting is necessary for the IN clause with aiomysql
-    placeholders = ', '.join(['%s'] * len(admin_ids_tuple))
-    
-    query = f"""
-        UPDATE users
-        SET wallet_balance = wallet_balance + %s
-        WHERE user_id NOT IN ({placeholders});
-    """
-    
-    # The arguments must be a single tuple: (amount, admin_id_1, admin_id_2, ...)
-    args = (amount,) + admin_ids_tuple
+    if not admin_ids_tuple:
+        LOGGER.warning("No admin IDs configured, applying gift to all users.")
+        query = "UPDATE users SET wallet_balance = wallet_balance + %s;"
+        args = (amount,)
+    else:
+        # This placeholder formatting is necessary for the IN clause with aiomysql
+        placeholders = ', '.join(['%s'] * len(admin_ids_tuple))
+        
+        query = f"""
+            UPDATE users
+            SET wallet_balance = wallet_balance + %s
+            WHERE user_id NOT IN ({placeholders});
+        """
+        
+        # The arguments must be a single tuple: (amount, admin_id_1, admin_id_2, ...)
+        args = (amount,) + admin_ids_tuple
     
     affected_rows = await execute_query(query, args)
     return affected_rows
@@ -1110,6 +1105,43 @@ async def get_all_user_ids() -> List[int]:
     
     results = await execute_query(query, admin_ids_tuple, fetch='all')
     return [row['user_id'] for row in results] if results else []
+
+
+# =============================================================================
+#  Broadcast Job Functions (NEW SECTION)
+# =============================================================================
+import json
+
+async def save_broadcast_job(job_id: str, text: str | None, photo_id: str | None, buttons: list, target_user_ids: list | None) -> bool:
+    """Saves a new broadcast job to the database."""
+    query = """
+        INSERT INTO broadcasts (job_id, text, photo_id, buttons, target_user_ids, created_at)
+        VALUES (%s, %s, %s, %s, %s, NOW());
+    """
+    # Convert lists/dicts to JSON strings for storage
+    buttons_json = json.dumps(buttons)
+    targets_json = json.dumps(target_user_ids) if target_user_ids else None
+    
+    result = await execute_query(query, (job_id, text, photo_id, buttons_json, targets_json))
+    return result is not None
+
+async def get_broadcast_job(job_id: str) -> dict | None:
+    """Retrieves a broadcast job's data from the database."""
+    query = "SELECT * FROM broadcasts WHERE job_id = %s;"
+    result = await execute_query(query, (job_id,), fetch='one')
+    if result:
+        # Convert JSON strings back to Python objects
+        result['buttons'] = json.loads(result['buttons']) if result.get('buttons') else []
+        result['target_user_ids'] = json.loads(result['target_user_ids']) if result.get('target_user_ids') else []
+    return result
+
+async def delete_broadcast_job(job_id: str) -> bool:
+    """Deletes a broadcast job from the database after completion."""
+    query = "DELETE FROM broadcasts WHERE job_id = %s;"
+    result = await execute_query(query, (job_id,))
+    return result is not None
+
+
 
 # --- NEW FUNCTION TO FIX THE IMPORT ERROR ---
 async def get_user_by_marzban_username(marzban_username: str) -> Optional[Dict[str, Any]]:

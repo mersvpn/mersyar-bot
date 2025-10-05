@@ -23,14 +23,32 @@ USERNAME_PATTERN = r"^[a-zA-Z0-9_]{5,20}$"
 CANCEL_CALLBACK_DATA = "cancel_custom_plan"
 CANCEL_BUTTON = InlineKeyboardButton(_("buttons.cancel_custom_plan"), callback_data=CANCEL_CALLBACK_DATA)
 
+
 async def start_custom_purchase(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     pricing_params = await load_pricing_parameters()
+    
+    # (✨ FIX) Determine the target message/chat
+    chat_id = update.effective_chat.id
+    target_message = update.callback_query.message if update.callback_query else update.message
+
     if not pricing_params.get("base_daily_price") or not pricing_params.get("tiers"):
-        await update.message.reply_text(_("custom_purchase.not_configured"), reply_markup=get_customer_shop_keyboard())
+        error_text = _("custom_purchase.not_configured")
+        if update.callback_query:
+            await update.callback_query.answer(error_text, show_alert=True)
+        else:
+            await target_message.reply_text(error_text, reply_markup=get_customer_shop_keyboard())
         return ConversationHandler.END
+        
     context.user_data.clear()
     text = _("custom_purchase.step1_ask_username")
-    await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=get_back_to_main_menu_keyboard())
+    
+    # (✨ FIX) Respond based on the type of update
+    if update.callback_query:
+        await update.callback_query.answer()
+        await context.bot.send_message(chat_id=chat_id, text=text, parse_mode=ParseMode.MARKDOWN, reply_markup=get_back_to_main_menu_keyboard())
+    else:
+        await target_message.reply_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=get_back_to_main_menu_keyboard())
+
     return ASK_USERNAME
 
 async def get_username_and_ask_volume(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -125,15 +143,21 @@ async def generate_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     context.user_data.clear()
     return ConversationHandler.END
 
+
 async def cancel_custom_purchase(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()
     await query.edit_message_text(_("custom_purchase.plan_cancelled"), reply_markup=None)
     context.user_data.clear()
-    # To show the shop panel, we need an `update` object that has a `message` attribute
+
+    # (✨ BUG FIX) Create a more complete DummyUpdate object with 'effective_chat'.
     class DummyUpdate:
-        def __init__(self, message): self.message = message
-    await panel.show_customer_panel(DummyUpdate(query.message), context)
+        def __init__(self, original_update):
+            self.message = original_update.effective_message
+            self.effective_chat = original_update.effective_chat
+            self.callback_query = None
+            
+    await panel.show_customer_panel(DummyUpdate(update), context)
     return ConversationHandler.END
 
 # The rerouting logic and handlers remain the same, as they rely on button texts

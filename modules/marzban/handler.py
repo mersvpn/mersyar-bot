@@ -8,7 +8,7 @@ from shared.translator import _ as t
 import re
 # --- Local Imports ---
 from .actions import (
-    add_user, display, modify_user, search, messaging,
+    add_user, display, modify_user, search,
     note, template, linking, credentials
 )
 from modules.payment.actions import renewal as payment_actions
@@ -120,7 +120,7 @@ def register(application: Application) -> None:
     application.add_handler(credentials.credential_conv, group=0)
     application.add_handler(add_user_conv, group=0)
     application.add_handler(search_conv, group=0)
-    application.add_handler(messaging.messaging_conv, group=0)
+    
     application.add_handler(note_conv, group=0)
     application.add_handler(template_conv, group=0)
     application.add_handler(linking_conv, group=0)

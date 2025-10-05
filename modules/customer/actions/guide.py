@@ -10,8 +10,6 @@ from database import db_manager
 LOGGER = logging.getLogger(__name__)
 
 async def show_guides_to_customer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    query = update.callback_query
-    
     guides = await db_manager.get_all_guides()
 
     message_text = "📚 لطفاً راهنمای مورد نظر خود را انتخاب کنید:"
@@ -31,25 +29,23 @@ async def show_guides_to_customer(update: Update, context: ContextTypes.DEFAULT_
                 pass
             keyboard.append(row)
     
-    # --- FIX: Changed the back button to a close button ---
     keyboard.append([InlineKeyboardButton("✖️ بستن", callback_data="close_guide_menu")])
-
     reply_markup = InlineKeyboardMarkup(keyboard)
     
+    # (✨ FIX) Handle both Message and CallbackQuery entry points
+    chat_id = update.effective_chat.id
+    query = update.callback_query
+
     if query:
         await query.answer()
-        if query.message.photo:
+        # Delete the broadcast message and send the guide menu as a new message
+        if query.message:
             await query.message.delete()
-            await context.bot.send_message(
-                chat_id=query.message.chat_id,
-                text=message_text,
-                reply_markup=reply_markup
-            )
-        else:
-            await query.edit_message_text(
-                text=message_text,
-                reply_markup=reply_markup
-            )
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=message_text,
+            reply_markup=reply_markup
+        )
     else:
         await update.message.reply_text(
             text=message_text,
@@ -105,6 +101,8 @@ async def close_guide_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     except Exception:
         pass
 
+# FILE: modules/customer/actions/guide.py
+
 async def show_guides_as_new_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
     A wrapper for show_guides_to_customer that ENSURES a new message is sent.
@@ -114,12 +112,15 @@ async def show_guides_as_new_message(update: Update, context: ContextTypes.DEFAU
     if query:
         await query.answer() # Acknowledge the button press
         
-    # Set update.callback_query to None to trick the original function into sending a new message
-    # And then call the original function, but with a dummy update object where .message is the right message
-    
+    # (✨ BUG FIX) Create a more complete DummyUpdate object that includes 'effective_chat'.
+    # This prevents crashes when the wrapped function tries to access it.
     class DummyUpdate:
-        def __init__(self, msg):
-            self.message = msg
+        def __init__(self, original_update):
+            self.message = original_update.effective_message
+            self.effective_chat = original_update.effective_chat
+            # By setting callback_query to None, we force show_guides_to_customer
+            # to send a new message instead of trying to edit one.
             self.callback_query = None
 
-    await show_guides_to_customer(DummyUpdate(update.effective_message), context)
+    # Pass the original update object to the constructor to get all necessary attributes.
+    await show_guides_to_customer(DummyUpdate(update), context)

@@ -131,6 +131,25 @@ def get_financial_settings_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
 
+# FILE: shared/keyboards.py
+
+def get_broadcaster_menu_keyboard() -> ReplyKeyboardMarkup:
+    """Creates the ReplyKeyboardMarkup for the new broadcaster module."""
+    keyboard = [
+        # Row 1: Forward All
+        [KeyboardButton(_("keyboards.broadcaster_menu.send_forward_all"))],
+        
+        # Row 2: Custom Single | Custom All
+        [
+            KeyboardButton(_("keyboards.broadcaster_menu.send_custom_single")),
+            KeyboardButton(_("keyboards.broadcaster_menu.send_custom_all"))
+        ],
+        
+        # Row 3: Back to Main Menu
+        [KeyboardButton(_("keyboards.general.back_to_main_menu"))]
+    ]
+    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+
 
 # =============================================================================
 #  InlineKeyboardMarkup Section
@@ -256,6 +275,40 @@ def get_gift_management_keyboard() -> InlineKeyboardMarkup:
                 _("keyboards.inline_keyboards.gift_management.back_to_financial_settings"), 
                 callback_data="back_to_financial_settings"
             )
+        ]
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
+
+
+def get_message_builder_cancel_keyboard() -> ReplyKeyboardMarkup:
+    """Creates a ReplyKeyboard with a single button to cancel the message builder."""
+    keyboard = [
+        [KeyboardButton(_("keyboards.broadcaster_menu.cancel_and_back"))]
+    ]
+    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True)
+
+def get_deeplink_targets_keyboard() -> InlineKeyboardMarkup:
+    """Creates an InlineKeyboard with all available deeplink targets."""
+    keyboard = [
+        # Main Menu Targets
+        [
+            InlineKeyboardButton(_("keyboards.deeplink_targets.shop"), callback_data="customer_shop"),
+            InlineKeyboardButton(_("keyboards.deeplink_targets.my_services"), callback_data="customer_my_services")
+        ],
+        # Shop Sub-targets
+        [
+            InlineKeyboardButton(_("keyboards.deeplink_targets.custom_plan"), callback_data="shop_custom_volume"),
+            InlineKeyboardButton(_("keyboards.deeplink_targets.unlimited_plan"), callback_data="shop_unlimited_volume")
+        ],
+        # Other targets
+        [
+            InlineKeyboardButton(_("keyboards.deeplink_targets.guides"), callback_data="customer_guides"),
+            InlineKeyboardButton(_("keyboards.deeplink_targets.test_account"), callback_data="customer_test_account")
+        ],
+        # Back button
+        [
+            InlineKeyboardButton(_("keyboards.broadcaster_menu.back_to_button_type"), callback_data="builder_back_to_btn_type")
         ]
     ]
     return InlineKeyboardMarkup(keyboard)

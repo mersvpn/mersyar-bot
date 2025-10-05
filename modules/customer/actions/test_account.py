@@ -6,6 +6,7 @@ import io
 import html
 import secrets
 import string
+import re
 from telegram import Update
 from telegram.ext import ContextTypes, ConversationHandler
 from telegram.constants import ParseMode
@@ -35,15 +36,32 @@ async def handle_test_account_request(update: Update, context: ContextTypes.DEFA
     """
     (REWRITTEN) Starts the test account conversation.
     Checks limits and asks for the desired username.
+    (MODIFIED to handle both Message and CallbackQuery)
     """
     user = update.effective_user
-    
+    chat_id = update.effective_chat.id
+    query = update.callback_query
+
+    async def reply(text):
+        """Helper to send message regardless of entry point."""
+        if query:
+            # For callbacks, always send a new message as this starts a conversation
+            await context.bot.send_message(chat_id, text)
+        else:
+            await update.message.reply_text(text)
+
     bot_settings = await load_bot_settings()
     is_enabled = bot_settings.get('is_test_account_enabled', False)
     
     if not is_enabled:
-        await update.message.reply_text(_("customer.test_account.not_available"))
+        await reply(_("customer.test_account.not_available"))
         return ConversationHandler.END
+
+    if query:
+        await query.answer()
+        # Clean up the broadcast message
+        if query.message:
+            await query.message.delete()
 
     user_is_admin = await is_user_admin(user.id)
 
@@ -56,11 +74,14 @@ async def handle_test_account_request(update: Update, context: ContextTypes.DEFA
         received_count = await get_user_test_account_count(user.id)
         
         if received_count >= limit:
-            await update.message.reply_text(_("customer.test_account.limit_reached", limit=limit))
+            await reply(_("customer.test_account.limit_reached", limit=limit))
             return ConversationHandler.END
     
-    await update.message.reply_text(_("customer.test_account.prompt_for_username"))
+    await reply(_("customer.test_account.prompt_for_username"))
     return ASK_USERNAME
+
+# FILE: modules/customer/actions/test_account.py
+
 async def get_username_and_create_account(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """
     (MODIFIED) Receives the username, appends 'test', validates it, creates the test account,
@@ -68,15 +89,19 @@ async def get_username_and_create_account(update: Update, context: ContextTypes.
     """
     user = update.effective_user
     base_username = update.message.text.strip()
-    final_username = f"{base_username}test"
-
-    if not base_username or ' ' in base_username:
+    
+    # (✨ UX FIX) Append "test" only after basic validation.
+    if not base_username or ' ' in base_username or not re.match(r"^[a-zA-Z0-9_]+$", base_username):
         await update.message.reply_text(_("customer.test_account.invalid_username"))
         return ASK_USERNAME
 
+    final_username = f"{base_username}test"
+
     existing_user = await marzban_api.get_user_data(final_username)
-    if existing_user:
-        await update.message.reply_text(_("marzban.marzban_add_user.username_taken") + f"\n(نام کاربری نهایی `{final_username}` قبلاً استفاده شده است.)")
+    if existing_user and "error" not in existing_user:
+        # (✨ UX FIX) Use a more informative error message that shows the final username.
+        error_text = _("customer.test_account.username_taken", final_username=final_username)
+        await update.message.reply_text(error_text, parse_mode=ParseMode.MARKDOWN)
         return ASK_USERNAME
 
     processing_message = await update.message.reply_text(_("customer.test_account.processing"))
@@ -125,9 +150,7 @@ async def get_username_and_create_account(update: Update, context: ContextTypes.
     caption_text = _("customer.test_account.success_v2", hours=hours, gb=gb)
     caption_text += f"\n\n<code>{html.escape(sub_link)}</code>"
     
-    # --- CHANGE START: Create the keyboard ---
     reply_markup = get_connection_guide_keyboard()
-    # --- CHANGE END ---
     
     qr_code_image = None
     if "N/A" not in sub_link:
@@ -143,23 +166,19 @@ async def get_username_and_create_account(update: Update, context: ContextTypes.
     await processing_message.delete()
     
     if qr_code_image:
-        # --- CHANGE START: Add reply_markup to the message ---
         await update.message.reply_photo(
             photo=qr_code_image, 
             caption=caption_text, 
             parse_mode=ParseMode.HTML,
             reply_markup=reply_markup
         )
-        # --- CHANGE END ---
     else:
-        # --- CHANGE START: Add reply_markup to the message ---
         await update.message.reply_text(
             text=caption_text, 
             parse_mode=ParseMode.HTML, 
             disable_web_page_preview=True,
             reply_markup=reply_markup
         )
-        # --- CHANGE END ---
 
     if all_links:
         links_message_text = _("customer.test_account.individual_links_title") + "\n\n"
@@ -176,6 +195,16 @@ async def get_username_and_create_account(update: Update, context: ContextTypes.
         f"🤖 **Marzban User:** `{marzban_username}`"
     )
     await send_log(bot=context.bot, text=log_message, parse_mode=ParseMode.HTML)
-
+# (✨ UX FIX) After finishing, display a simple message and restore the main menu keyboard.
+    from shared.keyboards import get_customer_main_menu_keyboard
+    
+    # Get the correct main menu keyboard for the user.
+    keyboard = await get_customer_main_menu_keyboard(user_id=user.id)
+    
+    # Send a simple confirmation message with the main keyboard attached.
+    await update.message.reply_text(
+        _("general.returned_to_main_menu"), 
+        reply_markup=keyboard
+    )
     
     return ConversationHandler.END

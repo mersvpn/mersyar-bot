@@ -5,7 +5,7 @@ import logging.handlers
 import sys
 import os
 import asyncio
-
+from modules.broadcaster import handler as broadcaster_handler
 from modules.reminder.actions.jobs import cleanup_expired_test_accounts
 # ✨ NEW: Import argparse to read command-line arguments
 from modules.financials import handler as financials_handler
@@ -117,15 +117,19 @@ def main() -> None:
     application.add_handler(CallbackQueryHandler(debug_update_logger), group=-1)
     LOGGER.info("Universal debug logger has been activated.")
     
-    general_handler.register(application)
+    # (✨ FIX) Changed the registration order for correct priority.
+    # Group 0 Handlers (Highest Priority - Conversations)
+    broadcaster_handler.register(application)
     marzban_handler.register(application)
+    
+    # Group 1 Handlers (Lower Priority - General Actions)
+    general_handler.register(application)
     financials_handler.register(application)
     reminder_handler.register(application)
     customer_handler.register(application)
     bot_settings_handler.register(application)
     stats_handler.register(application)
     guides_handler.register(application)
-    financials_handler.register(application)
     payment_handler.register(application)
     
     if application.job_queue:

@@ -1,4 +1,4 @@
-# FILE: modules/customer/actions/unlimited_purchase.py (COMPLETE AND FINAL VERSION)
+# FILE: modules/customer/actions/unlimited_purchase.py (REVISED FOR I18N AND STABILITY)
 
 import logging
 import re
@@ -17,9 +17,8 @@ from modules.payment.actions.creation import send_custom_plan_invoice
 from shared.keyboards import get_back_to_main_menu_keyboard, get_customer_shop_keyboard
 from modules.marzban.actions.api import get_user_data
 from modules.marzban.actions.data_manager import normalize_username
-# Import the new, centralized rerouting function
 from modules.general.actions import end_conv_and_reroute
-from shared.callbacks import end_conversation_and_show_menu
+from shared.translator import _
 
 LOGGER = logging.getLogger(__name__)
 
@@ -27,44 +26,85 @@ LOGGER = logging.getLogger(__name__)
 ASK_USERNAME, CHOOSE_PLAN, CONFIRM_UNLIMITED_PLAN = range(3)
 USERNAME_PATTERN = r"^[a-zA-Z0-9_]{5,20}$"
 CANCEL_CALLBACK_DATA = "cancel_unlimited_plan"
-CANCEL_BUTTON = InlineKeyboardButton("✖️ لغو و بازگشت به فروشگاه", callback_data=CANCEL_CALLBACK_DATA)
+
+# --- Helper function for dynamic cancel button ---
+def _get_cancel_button() -> InlineKeyboardButton:
+    """Creates a cancel button with translated text."""
+    # (✨ TRANSLATION FIX) Use the full, correct key from keyboards.json
+    return InlineKeyboardButton(_("inline_keyboards.buttons.cancel_and_back_to_shop"), callback_data=CANCEL_CALLBACK_DATA)
 
 
-# --- Core Conversation Functions (Unchanged) ---
+# FILE: modules/customer/actions/unlimited_purchase.py
 
 async def start_unlimited_purchase(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    # --- DIAGNOSTIC LOG START ---
+    user_id = update.effective_user.id if update.effective_user else "Unknown"
+    trigger_type = "CallbackQuery" if update.callback_query else "Message"
+    trigger_data = update.callback_query.data if update.callback_query else update.message.text
+    
+    LOGGER.info(f"[DIAGNOSTIC] Customer's 'start_unlimited_purchase' triggered for user {user_id}. Type: {trigger_type}, Data: '{trigger_data}'")
+    # --- DIAGNOSTIC LOG END ---
+    
     context.user_data.clear()
-    text = (
-        "💎 *خرید پلن نامحدود*\n\n"
-        "مرحله ۱ از ۲: لطفاً یک **نام کاربری دلخواه** وارد کنید.\n\n"
-        "❗️ نام کاربری باید بین `5` تا `20` حرف **انگلیسی** و **اعداد**، بدون فاصله باشد."
-    )
-    await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=get_back_to_main_menu_keyboard())
+    text = _("unlimited_purchase.step1_ask_username")
+    
+    chat_id = update.effective_chat.id
+    target_message = update.callback_query.message if update.callback_query else update.message
+
+    if update.callback_query:
+        await update.callback_query.answer()
+        
+        # (✨ BUG FIX) Wrap message deletion in a try-except block to prevent crashes.
+        try:
+            await target_message.delete()
+        except Exception as e:
+            LOGGER.warning(f"Could not delete the source message for deeplink purchase: {e}")
+        
+        await context.bot.send_message(
+            chat_id=chat_id, 
+            text=text, 
+            parse_mode=ParseMode.MARKDOWN, 
+            reply_markup=get_back_to_main_menu_keyboard()
+        )
+    else:
+        await target_message.reply_text(
+            text=text, 
+            parse_mode=ParseMode.MARKDOWN, 
+            reply_markup=get_back_to_main_menu_keyboard()
+        )
+
     return ASK_USERNAME
 
 async def get_username_and_ask_plan(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     username_input = update.message.text.strip()
     if not re.match(USERNAME_PATTERN, username_input):
-        await update.message.reply_text("❌ نام کاربری نامعتبر است. لطفاً دوباره تلاش کنید.")
+        # (✨ I18N) Use translator
+        await update.message.reply_text(_("custom_purchase.username_invalid"))
         return ASK_USERNAME
 
     username_to_check = normalize_username(username_input)
     existing_user = await get_user_data(username_to_check)
     if existing_user and "error" not in existing_user:
-        await update.message.reply_text("❌ این نام کاربری قبلاً استفاده شده است.")
+        # (✨ I18N) Use translator
+        await update.message.reply_text(_("custom_purchase.username_taken"))
         return ASK_USERNAME
 
     context.user_data['unlimited_plan'] = {'username': username_to_check}
     active_plans = await get_active_unlimited_plans()
     if not active_plans:
-        await update.message.reply_text("متاسفانه در حال حاضر هیچ پلن نامحدودی برای فروش موجود نیست.", reply_markup=get_customer_shop_keyboard())
+        # (✨ I18N) Use translator
+        await update.message.reply_text(_("unlimited_purchase.no_plans_available"), reply_markup=get_customer_shop_keyboard())
         return ConversationHandler.END
 
-    keyboard_rows = [[InlineKeyboardButton(f"{p['plan_name']} - {p['price']:,} تومان", callback_data=f"unlim_select_{p['id']}")] for p in active_plans]
-    keyboard_rows.append([CANCEL_BUTTON])
+    keyboard_rows = [
+        # (✨ I18N) Use translator for button text format
+        [InlineKeyboardButton(_("unlimited_purchase.plan_button_format", name=p['plan_name'], price=f"{p['price']:,}"), callback_data=f"unlim_select_{p['id']}")] 
+        for p in active_plans
+    ]
+    keyboard_rows.append([_get_cancel_button()])
     
-    text = (f"✅ نام کاربری `{username_to_check}` انتخاب شد.\n\n"
-            "مرحله ۲ از ۲: لطفاً یکی از پلن‌های زیر را انتخاب کنید:")
+    # (✨ I18N) Use translator
+    text = _("unlimited_purchase.step2_ask_plan", username=f"`{username_to_check}`")
     await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard_rows), parse_mode=ParseMode.MARKDOWN)
     return CHOOSE_PLAN
 
@@ -75,81 +115,103 @@ async def select_plan_and_confirm(update: Update, context: ContextTypes.DEFAULT_
     plan_id = int(query.data.split('_')[-1])
     plan = await get_unlimited_plan_by_id(plan_id)
     if not plan or not plan['is_active']:
-        await query.edit_message_text("❌ این پلن دیگر در دسترس نیست.", reply_markup=None)
+        # (✨ I18N) Use translator
+        await query.edit_message_text(_("unlimited_purchase.plan_not_available"), reply_markup=None)
         return ConversationHandler.END
 
     context.user_data['unlimited_plan'].update({'plan_id': plan['id'], 'price': plan['price'], 'max_ips': plan['max_ips']})
     username = context.user_data['unlimited_plan']['username']
 
-    text = (f"🧾 *پیش‌فاکتور پلن نامحدود*\n\n"
-            f"👤 نام کاربری: *{username}*\n🔸 نوع پلن: *{plan['plan_name']}*\n"
-            f"🔸 تعداد کاربر: *{plan['max_ips']} دستگاه همزمان*\n"
-            f"-------------------------------------\n"
-            f"💳 مبلغ قابل پرداخت: *{plan['price']:,} تومان*\n\n"
-            "آیا اطلاعات فوق را تایید می‌کنید?")
-    keyboard = [[InlineKeyboardButton("✅ تایید و دریافت فاکتور", callback_data="unlim_confirm_final"), CANCEL_BUTTON]]
+    # (✨ I18N) Use translator for the invoice preview
+    text = _("unlimited_purchase.invoice_preview",
+             username=username,
+             plan_name=plan['plan_name'],
+             max_ips=plan['max_ips'],
+             price=f"{plan['price']:,}")
+             
+    keyboard = [
+        # (✨ I18N) Use translator for button text
+        [InlineKeyboardButton(_("buttons.confirm_and_get_invoice"), callback_data="unlim_confirm_final")],
+        [_get_cancel_button()]
+    ]
     await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.MARKDOWN)
     return CONFIRM_UNLIMITED_PLAN
 
 async def generate_unlimited_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
-    await query.answer("... در حال صدور فاکتور")
+    # (✨ I18N) Use translator
+    await query.answer(_("customer_service.generating_invoice"))
     
     user_id = query.from_user.id
     plan_data = context.user_data.get('unlimited_plan')
     if not plan_data:
-        await query.edit_message_text("❌ خطایی رخ داد. اطلاعات پلن یافت نشد.")
+        # (✨ I18N) Use translator
+        await query.edit_message_text(_("errors.plan_info_not_found"))
         return ConversationHandler.END
 
     plan_details_for_db = {
-        "invoice_type": "NEW_USER_UNLIMITED", # <-- CHANGE THIS
+        "invoice_type": "NEW_USER_UNLIMITED",
         "username": plan_data['username'], 
         "plan_id": plan_data['plan_id'], 
         "max_ips": plan_data['max_ips'], 
-        "volume": 0,  # <-- Set to 0 for unlimited
-        "duration": 30, # This can be made dynamic later if needed
+        "volume": 0,
+        "duration": 30,
         "price": plan_data['price']
     }
     
     invoice_id = await create_pending_invoice(user_id, plan_details_for_db, plan_data['price'])
     if not invoice_id:
-        await query.edit_message_text("❌ خطایی در سیستم رخ داد.")
+        # (✨ I18N) Use translator
+        await query.edit_message_text(_("customer_service.system_error_retry"))
         return ConversationHandler.END
         
     await query.message.delete()
-    invoice_display_details = {"volume": "نامحدود", "duration": 30, "price": plan_data['price']}
+    # (✨ I18N) Use translator for "unlimited" text
+    invoice_display_details = {"volume": _("general.unlimited"), "duration": 30, "price": plan_data['price']}
     await send_custom_plan_invoice(update, context, invoice_display_details, invoice_id)
+    context.user_data.clear()
     return ConversationHandler.END
+
+# FILE: modules/customer/actions/unlimited_purchase.py
 
 async def cancel_unlimited_purchase(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    from modules.customer.actions.panel import show_customer_panel
+    """
+    (REWRITTEN) Cancels the conversation and safely returns the user to the shop menu.
+    """
+    from .panel import show_customer_panel
     query = update.callback_query
     await query.answer()
-    await query.edit_message_text("فرآیند خرید پلن نامحدود لغو شد.", reply_markup=None)
-    await show_customer_panel(query, context)
+    
+    await query.edit_message_text(_("unlimited_purchase.purchase_cancelled"), reply_markup=None)
+    context.user_data.clear()
+    
+    # (✨ BUG FIX) Create a more complete DummyUpdate object with 'effective_chat'.
+    class DummyUpdate:
+        def __init__(self, original_update):
+            self.message = original_update.effective_message
+            self.effective_chat = original_update.effective_chat
+            self.callback_query = None
+
+    # Pass the original update object to get all necessary attributes
+    await show_customer_panel(DummyUpdate(update), context)
+    
     return ConversationHandler.END
 
-
-# --- Regex to match ALL main menu buttons ---
-MAIN_MENU_REGEX = r'^(🛍️فــــــــــروشـــــــــــگاه|📊ســــــــرویس‌های من|📱 راهــــــــــنمای اتصال|🔙 بازگشت به منوی اصلی)$'
-# --- Filter to IGNORE all main menu buttons, for use in states ---
+# Dynamically create regex from translated button texts
+MAIN_MENU_REGEX = f'^({_("keyboards.customer_main_menu.shop")}|{_("keyboards.customer_main_menu.my_services")}|{_("keyboards.customer_main_menu.connection_guide")}|{_("keyboards.general.back_to_main_menu")})$'
 IGNORE_MAIN_MENU_FILTER = filters.TEXT & ~filters.COMMAND & ~filters.Regex(MAIN_MENU_REGEX)
 
 
-# --- THE FINAL, CORRECTED CONVERSATION HANDLER ---
 unlimited_purchase_conv = ConversationHandler(
-    entry_points=[MessageHandler(filters.Regex('^💎 اشتراک با حجم نامحدود$'), start_unlimited_purchase)],
+    # (✨ I18N) Entry point now uses translated button text
+    entry_points=[MessageHandler(filters.Regex(f'^{_("keyboards.customer_shop.unlimited_volume_plan")}$'), start_unlimited_purchase)],
     states={
-        # This handler will now IGNORE main menu buttons, allowing fallbacks to catch them
         ASK_USERNAME: [MessageHandler(IGNORE_MAIN_MENU_FILTER, get_username_and_ask_plan)],
-        # CallbackQueryHandlers are not affected by text messages, so they are safe
         CHOOSE_PLAN: [CallbackQueryHandler(select_plan_and_confirm, pattern=r'^unlim_select_')],
-        CONFIRM_UNLIMITED_PLAN: [CallbackQueryHandler(generate_unlimited_invoice, pattern='^unlim_confirm_final$')],
+        CONFIRM_UNLIMITED_PLAN: [CallbackQueryHandler(generate_unlimited_invoice, pattern=r'^unlim_confirm_final$')],
     },
     fallbacks=[
         CallbackQueryHandler(cancel_unlimited_purchase, pattern=f'^{CANCEL_CALLBACK_DATA}$'),
-        
-        # This single handler now catches ALL main menu buttons and routes correctly
         MessageHandler(filters.Regex(MAIN_MENU_REGEX), end_conv_and_reroute),
     ],
     conversation_timeout=600,

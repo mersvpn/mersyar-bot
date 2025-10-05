@@ -151,9 +151,19 @@ async def handle_my_service(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     (REWRITTEN) This is now the entry point. It's very fast.
     It sends a "Loading..." message, starts the background task, and immediately
     enters the conversation state, making the UI responsive.
+    (MODIFIED to handle both Message and CallbackQuery)
     """
     user_id = update.effective_user.id
-    loading_message = await update.message.reply_text(_("customer.customer_service.loading"))
+    chat_id = update.effective_chat.id
+
+    # (✨ FIX) Respond based on the type of update
+    if update.callback_query:
+        await update.callback_query.answer()
+        # Delete the broadcast message before sending the "Loading..." message
+        await update.callback_query.message.delete()
+        loading_message = await context.bot.send_message(chat_id, _("customer.customer_service.loading"))
+    else:
+        loading_message = await update.message.reply_text(_("customer.customer_service.loading"))
 
     # Create and start the background task
     task = asyncio.create_task(
@@ -165,11 +175,6 @@ async def handle_my_service(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     
     # Immediately enter the next state so the "Cancel" button works instantly
     return CHOOSE_SERVICE
-
-
-# --- THE REST OF THE FILE REMAINS LARGELY UNCHANGED ---
-# Only back_to_main_menu_customer needs a small modification to handle task cancellation.
-
 async def display_service_details(user_id: int, message_to_edit, context: ContextTypes.DEFAULT_TYPE, marzban_username: str) -> int:
     from database.db_manager import get_user_note, is_auto_renew_enabled
     
