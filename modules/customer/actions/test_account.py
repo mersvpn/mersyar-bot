@@ -7,6 +7,7 @@ import html
 import secrets
 import string
 import re
+import datetime
 from telegram import Update
 from telegram.ext import ContextTypes, ConversationHandler
 from telegram.constants import ParseMode
@@ -18,7 +19,7 @@ from database.db_manager import (
     add_user_to_managed_list,
     save_user_note,
     link_user_to_telegram,
-    is_user_admin
+    is_user_admin,cleanup_marzban_user_data
 )
 from modules.marzban.actions.add_user import create_marzban_user_from_template
 # (NEW) Import API to check for existing users
@@ -31,6 +32,54 @@ LOGGER = logging.getLogger(__name__)
 
 # (NEW) Define states for the conversation
 ASK_USERNAME = 0
+
+
+# =================================================================
+# [جدید] تابع کمکی برای جاب یک‌بار مصرف حذف اکانت تست
+# =================================================================
+async def _cleanup_test_account_job(context: ContextTypes.DEFAULT_TYPE):
+    """
+    این تابع توسط JobQueue در زمان انقضا فراخوانی می‌شود.
+    اکانت تست را از مرزبان و دیتابیس محلی حذف کرده و به کاربر اطلاع می‌دهد.
+    """
+    job = context.job
+    marzban_username = job.data['marzban_username']
+    chat_id = job.data['chat_id']
+    
+    LOGGER.info(f"Job triggered: Cleaning up expired test account '{marzban_username}' for user {chat_id}.")
+    
+    try:
+        # مرحله ۱: حذف کاربر از پنل مرزبان
+        success, message = await marzban_api.delete_user_api(marzban_username)
+        if success:
+            LOGGER.info(f"Successfully deleted test account '{marzban_username}' from Marzban panel.")
+            # مرحله ۲: پاکسازی اطلاعات کاربر از دیتابیس ربات
+            await cleanup_marzban_user_data(marzban_username)
+            
+            # مرحله ۳: ارسال پیام به کاربر
+            keyboard = get_connection_guide_keyboard(is_for_test_account_expired=True)
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=_("customer.test_account.account_expired_notification"),
+                parse_mode=ParseMode.HTML,
+                reply_markup=keyboard
+            )
+        else:
+            LOGGER.error(f"Failed to delete expired test account '{marzban_username}' from Marzban. API Error: {message}")
+            # حتی اگر حذف از پنل ناموفق بود، به کاربر اطلاع می‌دهیم
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=_("customer.test_account.account_expired_notification_api_fail"),
+                parse_mode=ParseMode.HTML
+            )
+            
+    except Exception as e:
+        LOGGER.error(f"Critical error in _cleanup_test_account_job for user {marzban_username}: {e}", exc_info=True)
+
+
+# ... (بقیه کد فایل از اینجا شروع می‌شود) ...
+# async def handle_test_account_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+# ...
 
 async def handle_test_account_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """
@@ -82,15 +131,15 @@ async def handle_test_account_request(update: Update, context: ContextTypes.DEFA
 
 # FILE: modules/customer/actions/test_account.py
 
+# (این تابع را به طور کامل جایگزین کنید)
 async def get_username_and_create_account(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """
-    (MODIFIED) Receives the username, appends 'test', validates it, creates the test account,
-    and sends the result with a connection guide button.
+    (MODIFIED) Receives the username, validates it, creates the test account,
+    schedules a one-shot cleanup job, and sends the result.
     """
     user = update.effective_user
     base_username = update.message.text.strip()
     
-    # (✨ UX FIX) Append "test" only after basic validation.
     if not base_username or ' ' in base_username or not re.match(r"^[a-zA-Z0-9_]+$", base_username):
         await update.message.reply_text(_("customer.test_account.invalid_username"))
         return ASK_USERNAME
@@ -99,7 +148,6 @@ async def get_username_and_create_account(update: Update, context: ContextTypes.
 
     existing_user = await marzban_api.get_user_data(final_username)
     if existing_user and "error" not in existing_user:
-        # (✨ UX FIX) Use a more informative error message that shows the final username.
         error_text = _("customer.test_account.username_taken", final_username=final_username)
         await update.message.reply_text(error_text, parse_mode=ParseMode.MARKDOWN)
         return ASK_USERNAME
@@ -135,6 +183,9 @@ async def get_username_and_create_account(update: Update, context: ContextTypes.
     marzban_username = new_user_data['username']
     sub_link = new_user_data.get("subscription_url", "N/A")
     all_links = new_user_data.get("links", [])
+    
+    # [مهم و جدید] زمان انقضای کاربر را از API بگیرید
+    expire_timestamp = new_user_data.get('expire')
 
     # Perform all database operations
     await increment_user_test_account_count(user.id)
@@ -147,6 +198,25 @@ async def get_username_and_create_account(update: Update, context: ContextTypes.
         'is_test_account': True
     })
     
+    # =================================================================
+    # [جدید] زمان‌بندی جاب یک‌بار مصرف برای حذف اکانت در زمان انقضا
+    # =================================================================
+    if expire_timestamp and context.job_queue:
+        expire_datetime = datetime.datetime.fromtimestamp(expire_timestamp)
+        job_data = {
+            'marzban_username': marzban_username,
+            'chat_id': update.effective_chat.id
+        }
+        context.job_queue.run_once(
+            _cleanup_test_account_job,
+            when=expire_datetime,
+            data=job_data,
+            name=f"cleanup_test_{marzban_username}"
+        )
+        LOGGER.info(f"Scheduled one-shot cleanup job for test account '{marzban_username}' at {expire_datetime}")
+    else:
+        LOGGER.warning(f"Could not schedule cleanup job for '{marzban_username}'. Expire timestamp or job_queue not found.")
+
     caption_text = _("customer.test_account.success_v2", hours=hours, gb=gb)
     caption_text += f"\n\n<code>{html.escape(sub_link)}</code>"
     
@@ -195,13 +265,11 @@ async def get_username_and_create_account(update: Update, context: ContextTypes.
         f"🤖 **Marzban User:** `{marzban_username}`"
     )
     await send_log(bot=context.bot, text=log_message, parse_mode=ParseMode.HTML)
-# (✨ UX FIX) After finishing, display a simple message and restore the main menu keyboard.
+
     from shared.keyboards import get_customer_main_menu_keyboard
     
-    # Get the correct main menu keyboard for the user.
     keyboard = await get_customer_main_menu_keyboard(user_id=user.id)
     
-    # Send a simple confirmation message with the main keyboard attached.
     await update.message.reply_text(
         _("general.returned_to_main_menu"), 
         reply_markup=keyboard

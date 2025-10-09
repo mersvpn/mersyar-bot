@@ -19,6 +19,10 @@ setup_backup_job() {
     info "--- Automated Backup Setup ---"
     warning "This will schedule a periodic backup of your database and .env file."
 
+    # --- [اصلاح ۱] نام دیتابیس را به صورت ثابت تعریف می‌کنیم ---
+    # این نام باید با چیزی که در زمان نصب در .env ایجاد می‌شود، یکسان باشد.
+    local DB_NAME_FOR_BACKUP="mersyar_bot_db"
+
     read -p "Enter backup interval in minutes (e.g., 1440 for daily, 120 for every 2 hours): " INTERVAL
     read -p "Enter the Telegram Bot Token for sending backups: " BACKUP_BOT_TOKEN
     read -p "Enter the destination Telegram Channel/Chat ID: " BACKUP_CHAT_ID
@@ -46,28 +50,54 @@ setup_backup_job() {
     fi
 
     info "Creating the backup script (backup_script.sh)..."
+    # --- [اصلاح ۲] قالب اسکریپت بکاپ به طور کامل بازنویسی و بهینه شد ---
     cat << EOF > "${PROJECT_DIR}/backup_script.sh"
 #!/bin/bash
+# Script Version: 2.0 - Optimized for single-database backup
 set -e
+
+# --- Configuration ---
 BOT_TOKEN="\$1"
 CHAT_ID="\$2"
 PROJECT_DIR="${PROJECT_DIR}"
 DB_CONTAINER="mersyar-db"
-BACKUP_FILENAME="mersyar_backup_\$(date +%Y-%m-%d_%H-%M-%S).tar.gz"
+DB_NAME="${DB_NAME_FOR_BACKUP}" # <-- استفاده از نام دیتابیس مشخص شده
 
-cd "\$PROJECT_DIR"
+# --- Dynamic variables ---
+TIMESTAMP=\$(date +%Y-%m-%d_%H-%M-%S)
+BACKUP_FILENAME="mersyar_backup_\${TIMESTAMP}.tar.gz"
+DB_DUMP_FILENAME="\${DB_NAME}_dump_\${TIMESTAMP}.sql"
+
+# --- Main Execution ---
+cd "\$PROJECT_DIR" || { echo "Error: Failed to cd to \$PROJECT_DIR" >&2; exit 1; }
+
+echo "Starting backup for database: '\$DB_NAME'..."
+
 DB_ROOT_PASSWORD=\$(docker exec "\$DB_CONTAINER" printenv MYSQL_ROOT_PASSWORD | tr -d '\r')
-docker exec -e MYSQL_PWD="\$DB_ROOT_PASSWORD" "\$DB_CONTAINER" mysqldump -u root --all-databases > db_dump.sql
-tar -czf "\$BACKUP_FILENAME" db_dump.sql .env
-
-if curl -s -o /dev/null -w "%{http_code}" -F "chat_id=\$CHAT_ID" -F "document=@\$BACKUP_FILENAME" -F "caption=Mersyar-Bot Backup: \$(date)" "https://api.telegram.org/bot\$BOT_TOKEN/sendDocument" | grep -q "200"; then
-    echo "Backup sent successfully."
-else
-    echo "Failed to send backup to Telegram. Check Bot Token and Chat ID." >&2
+if [ -z "\$DB_ROOT_PASSWORD" ]; then
+    echo "Error: Could not get MYSQL_ROOT_PASSWORD from container." >&2
     exit 1
 fi
 
-rm db_dump.sql "\$BACKUP_FILENAME"
+# --- [اصلاح ۳] دستور mysqldump برای بکاپ گرفتن فقط از دیتابیس ربات ---
+echo "Dumping database..."
+docker exec -e MYSQL_PWD="\$DB_ROOT_PASSWORD" "\$DB_CONTAINER" mysqldump -u root "\$DB_NAME" > "\$DB_DUMP_FILENAME"
+
+echo "Creating archive: \$BACKUP_FILENAME..."
+tar -czf "\$BACKUP_FILENAME" "\$DB_DUMP_FILENAME" .env
+
+echo "Sending backup to Telegram..."
+HTTP_CODE=\$(curl -s -o /dev/null -w "%{http_code}" -F "chat_id=\$CHAT_ID" -F "document=@\$BACKUP_FILENAME" -F "caption=Mersyar-Bot Backup (\${DB_NAME}) - \$(date)" "https://api.telegram.org/bot\$BOT_TOKEN/sendDocument")
+
+if [ "\$HTTP_CODE" -eq 200 ]; then
+    echo "Backup sent successfully."
+else
+    echo "Failed to send backup. HTTP Code: \$HTTP_CODE" >&2
+fi
+
+echo "Cleaning up temporary files..."
+rm "\$DB_DUMP_FILENAME" "\$BACKUP_FILENAME"
+echo "Backup process finished."
 EOF
 
     chmod +x "${PROJECT_DIR}/backup_script.sh"

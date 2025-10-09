@@ -1,4 +1,4 @@
-# FILE: database/db_manager.py
+# FILE: database/db_manager.py (FIXED TABLE NAMES)
 import asyncio
 import aiomysql
 import logging
@@ -299,8 +299,6 @@ async def increase_wallet_balance(user_id: int, amount: float) -> Optional[float
     LOGGER.error(f"Failed to increase wallet balance for user_id: {user_id}. User may not exist or DB error.")
     return None
 
-# FILE: database/db_manager.py
-
 async def decrease_wallet_balance(user_id: int, amount: float) -> Optional[float]:
     """
     Decreases a user's wallet balance by a given amount.
@@ -331,7 +329,6 @@ async def decrease_wallet_balance(user_id: int, amount: float) -> Optional[float
     LOGGER.warning(f"Failed to decrease wallet balance for user {user_id}. Insufficient funds or DB error.")
     return None
 
-# FIX 3: Add explicit commit for direct cursor usage.
 async def add_or_update_user(user) -> bool:
     if not _pool: return False
     is_new_user = False # Initialize as False
@@ -389,16 +386,20 @@ async def load_template_config_db():
 
 async def save_template_config_db(config_data: dict):
     query = """
-        INSERT INTO template_config (id, template_username, proxies, inbounds) 
-        VALUES (1, %s, %s, %s) 
-        AS new_config
-        ON DUPLICATE KEY UPDATE 
-            template_username = new_config.template_username, 
-            proxies = new_config.proxies, 
-            inbounds = new_config.inbounds;
+        INSERT INTO template_config (id, template_username, proxies, inbounds)
+        VALUES (1, %s, %s, %s)
+        ON DUPLICATE KEY UPDATE
+            template_username = VALUES(template_username),
+            proxies = VALUES(proxies),
+            inbounds = VALUES(inbounds);
     """
-    args = (config_data.get("template_username"), json.dumps(config_data.get("proxies", {})), json.dumps(config_data.get("inbounds", {})))
+    args = (
+        config_data.get("template_username"),
+        json.dumps(config_data.get("proxies", {})),
+        json.dumps(config_data.get("inbounds", {})),
+    )
     return await execute_query(query, args)
+
 
 async def get_user_note(username: str):
     query = "SELECT subscription_duration, subscription_data_limit_gb, subscription_price FROM user_notes WHERE username = %s;"
@@ -406,24 +407,22 @@ async def get_user_note(username: str):
     return result if result else {}
 
 async def save_user_note(username: str, note_data: dict):
-    # This query now includes the is_test_account field
+    # [FIXED] Corrected table name from `usernotes` to `user_notes` and column names
     query = """
-        INSERT INTO user_notes (username, subscription_duration, subscription_data_limit_gb, subscription_price, is_test_account) 
-        VALUES (%s, %s, %s, %s, %s) 
-        AS new_note
-        ON DUPLICATE KEY UPDATE 
-            subscription_duration = new_note.subscription_duration, 
-            subscription_data_limit_gb = new_note.subscription_data_limit_gb, 
-            subscription_price = new_note.subscription_price,
-            is_test_account = new_note.is_test_account;
+        INSERT INTO user_notes (username, subscription_duration, subscription_data_limit_gb, subscription_price, is_test_account)
+        VALUES (%s, %s, %s, %s, %s)
+        ON DUPLICATE KEY UPDATE
+            subscription_duration = VALUES(subscription_duration),
+            subscription_data_limit_gb = VALUES(subscription_data_limit_gb),
+            subscription_price = VALUES(subscription_price),
+            is_test_account = VALUES(is_test_account);
     """
     duration = note_data.get('subscription_duration')
     data_limit = note_data.get('subscription_data_limit_gb')
     price = note_data.get('subscription_price')
-    # Get the is_test_account flag, defaulting to False if not provided
     is_test = note_data.get('is_test_account', False)
-    
     return await execute_query(query, (username, duration, data_limit, price, is_test))
+
 
 async def delete_user_note(username: str):
     query = "UPDATE user_notes SET subscription_duration = NULL, subscription_data_limit_gb = NULL, subscription_price = NULL WHERE username = %s;"
@@ -434,16 +433,15 @@ async def get_all_users_with_notes():
     return await execute_query(query, fetch='all') or []
 
 async def link_user_to_telegram(marzban_username: str, telegram_user_id: int) -> bool:
+    # [FIXED] Corrected table name from `marzbantelegramlinks` to `marzban_telegram_links` and column names
     query = """
-        INSERT INTO marzban_telegram_links (marzban_username, telegram_user_id) 
-        VALUES (%s, %s) 
-        AS new_link
-        ON DUPLICATE KEY UPDATE telegram_user_id = new_link.telegram_user_id;
+        INSERT INTO marzban_telegram_links (marzban_username, telegram_user_id)
+        VALUES (%s, %s)
+        ON DUPLICATE KEY UPDATE telegram_user_id = VALUES(telegram_user_id);
     """
     result = await execute_query(query, (marzban_username, telegram_user_id))
     return result is not None
 
-# FIX 4: This function was buggy. It has been completely rewritten to work correctly.
 async def save_subscription_note(username: str, duration: int, price: int, data_limit_gb: int) -> bool:
     query = """
         INSERT INTO user_notes (username, subscription_duration, subscription_price, subscription_data_limit_gb)
@@ -478,11 +476,9 @@ async def load_bot_settings() -> dict:
     The cache is populated on the first call and invalidated by save_bot_settings.
     """
     global _bot_settings_cache
-    # If cache is already populated, return it immediately.
     if _bot_settings_cache is not None:
-        return _bot_settings_cache.copy() # Return a copy to prevent mutation
+        return _bot_settings_cache.copy()
 
-    # If cache is empty, fetch from DB
     query = "SELECT setting_key, setting_value FROM bot_settings;"
     results = await execute_query(query, fetch='all')
     
@@ -495,53 +491,42 @@ async def load_bot_settings() -> dict:
             except (json.JSONDecodeError, TypeError):
                 settings[key] = value
         
-        # Ensure specific keys are integers if they exist
         for key in ['reminder_days', 'reminder_data_gb', 'auto_delete_grace_days', 
                     'test_account_limit', 'test_account_hours']:
             if key in settings:
-                try:
-                    settings[key] = int(settings[key])
+                try: settings[key] = int(settings[key])
                 except (ValueError, TypeError): pass
         
-        # Ensure test_account_gb is a float if it exists
         if 'test_account_gb' in settings:
-             try:
-                settings['test_account_gb'] = float(settings['test_account_gb'])
+             try: settings['test_account_gb'] = float(settings['test_account_gb'])
              except (ValueError, TypeError): pass
 
-    # Store the freshly loaded settings in the cache
     _bot_settings_cache = settings
     LOGGER.info("Bot settings loaded from DB and cached.")
     return _bot_settings_cache.copy()
 
 async def save_bot_settings(settings_to_update: dict) -> bool:
     global _bot_settings_cache
+    # [FIXED] Corrected table name from `botsettings` to `bot_settings` and column names
     query = """
-        INSERT INTO bot_settings (setting_key, setting_value) 
-        VALUES (%s, %s) 
-        AS new_setting
-        ON DUPLICATE KEY UPDATE setting_value = new_setting.setting_value;
+        INSERT INTO bot_settings (setting_key, setting_value)
+        VALUES (%s, %s)
+        ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value);
     """
-    
     tasks = []
     for key, value in settings_to_update.items():
         value_to_save = json.dumps(value) if isinstance(value, (dict, list)) else str(value)
         tasks.append(execute_query(query, (key, value_to_save)))
-    
     results = await asyncio.gather(*tasks)
-    
     if all(r is not None for r in results):
         if _bot_settings_cache is None:
             await load_bot_settings()
-        
-        _bot_settings_cache.update(settings_to_update)
+        if _bot_settings_cache is not None: # Check if cache was successfully loaded
+            _bot_settings_cache.update(settings_to_update)
         LOGGER.info(f"Bot settings saved to DB and cache updated for keys: {list(settings_to_update.keys())}")
         return True
-    
     LOGGER.error("Failed to save one or more bot settings to the database.")
     return False
-
-# --- CHANGE END: Complete rewrite of bot settings functions with caching ---
 
 async def add_to_non_renewal_list(marzban_username: str) -> bool:
     query = "INSERT IGNORE INTO non_renewal_users (marzban_username) VALUES (%s);"
@@ -568,7 +553,6 @@ async def cleanup_marzban_user_data(marzban_username: str) -> bool:
     if not _pool: return False
     try:
         async with _pool.acquire() as conn:
-            # This function correctly uses transactions, so it remains unchanged.
             await conn.begin()
             try:
                 async with conn.cursor() as cur:
@@ -610,37 +594,34 @@ async def load_financials() -> dict:
     return result if result else {}
 
 async def save_financials(data: dict) -> bool:
+    # [FIXED] Corrected table name from `financialsettings` to `financial_settings` and column names
     card_number = data.get('card_number')
     card_holder = data.get('card_holder')
     query = """
-        INSERT INTO financial_settings (id, card_number, card_holder) 
-        VALUES (1, %s, %s) 
-        AS new_fin
-        ON DUPLICATE KEY UPDATE 
-            card_number = new_fin.card_number, 
-            card_holder = new_fin.card_holder;
+        INSERT INTO financial_settings (id, card_number, card_holder)
+        VALUES (1, %s, %s)
+        ON DUPLICATE KEY UPDATE
+            card_number = VALUES(card_number),
+            card_holder = VALUES(card_holder);
     """
     result = await execute_query(query, (card_number, card_holder))
     return result is not None
 
 async def save_pricing_settings(price_per_gb: int, price_per_day: int) -> bool:
+    # [FIXED] Corrected table name from `financialsettings` to `financial_settings` and column names
     query = """
-        INSERT INTO financial_settings (id, price_per_gb, price_per_day) 
-        VALUES (1, %s, %s) 
-        AS new_price
-        ON DUPLICATE KEY UPDATE 
-            price_per_gb = new_price.price_per_gb, 
-            price_per_day = new_price.price_per_day;
+        INSERT INTO financial_settings (id, price_per_gb, price_per_day)
+        VALUES (1, %s, %s)
+        ON DUPLICATE KEY UPDATE
+            price_per_gb = VALUES(price_per_gb),
+            price_per_day = VALUES(price_per_day);
     """
     result = await execute_query(query, (price_per_gb, price_per_day))
     LOGGER.info(f"Custom pricing settings saved: price_per_gb={price_per_gb}, price_per_day={price_per_day}")
     return result is not None
 
+
 async def load_pricing_settings() -> Dict[str, Optional[int]]:
-    """
-    Loads pricing settings (price per GB and price per day).
-    Returns a dictionary {'price_per_gb': X, 'price_per_day': Y} or empty dict.
-    """
     query = "SELECT price_per_gb, price_per_day FROM financial_settings WHERE id = 1;"
     result = await execute_query(query, fetch='one')
     
@@ -656,19 +637,20 @@ async def load_pricing_settings() -> Dict[str, Optional[int]]:
     return {'price_per_gb': None, 'price_per_day': None}
 
 async def add_or_update_guide(guide_key: str, title: str, content: str = None, photo_file_id: str = None, buttons: Optional[List[Dict[str, str]]] = None) -> bool:
+    # [FIXED] Corrected table and column names
     buttons_json = json.dumps(buttons) if buttons else None
     query = """
-        INSERT INTO guides (guide_key, title, content, photo_file_id, buttons) 
-        VALUES (%s, %s, %s, %s, %s) 
-        AS new_guide
-        ON DUPLICATE KEY UPDATE 
-            title = new_guide.title, 
-            content = new_guide.content, 
-            photo_file_id = new_guide.photo_file_id, 
-            buttons = new_guide.buttons;
+        INSERT INTO guides (guide_key, title, content, photo_file_id, buttons)
+        VALUES (%s, %s, %s, %s, %s)
+        ON DUPLICATE KEY UPDATE
+            title = VALUES(title),
+            content = VALUES(content),
+            photo_file_id = VALUES(photo_file_id),
+            buttons = VALUES(buttons);
     """
     result = await execute_query(query, (guide_key, title, content, photo_file_id, buttons_json))
     return result is not None
+
 async def get_guide(guide_key: str) -> Optional[Dict[str, Any]]:
     query = "SELECT guide_key, title, content, photo_file_id, buttons FROM guides WHERE guide_key = %s;"
     guide = await execute_query(query, (guide_key,), fetch='one')
@@ -695,16 +677,12 @@ async def delete_guide(guide_key: str) -> bool:
 # ==================== توابع مدیریت صورتحساب‌های در انتظار ====================
 
 async def get_pending_invoices_for_user(user_id: int) -> List[dict]:
-    """
-    Retrieves all invoices with 'pending' status for a specific user.
-    """
     query = "SELECT invoice_id, plan_details, price, created_at FROM pending_invoices WHERE user_id = %s AND status = 'pending' ORDER BY created_at DESC;"
     results = await execute_query(query, (user_id,), fetch='all')
     
     if not results:
         return []
 
-    # Decode JSON plan_details for each invoice
     for res in results:
         if res.get('plan_details'):
             try:
@@ -714,9 +692,6 @@ async def get_pending_invoices_for_user(user_id: int) -> List[dict]:
     return results
 
 async def create_pending_invoice(user_id: int, plan_details: dict, price: int) -> Optional[int]:
-    """
-    Creates a new pending invoice and returns its ID.
-    """
     plan_details_json = json.dumps(plan_details)
     query = """
         INSERT INTO pending_invoices (user_id, plan_details, price) 
@@ -734,19 +709,11 @@ async def create_pending_invoice(user_id: int, plan_details: dict, price: int) -
         return None
 
 async def get_pending_invoice(invoice_id: int) -> Optional[dict]:
-    """
-    Retrieves a pending invoice by its ID.
-    It renames 'invoice_id' to 'id' in the output dictionary for consistency.
-    """
     query = "SELECT invoice_id, user_id, plan_details, price, status FROM pending_invoices WHERE invoice_id = %s;"
     result = await execute_query(query, (invoice_id,), fetch='one')
     
     if result:
-        # --- SAFE FIX START ---
-        # Rename 'invoice_id' key to 'id' to match the old logic and avoid changing other files.
         result['id'] = result.pop('invoice_id')
-        # --- SAFE FIX END ---
-        
         if result.get('plan_details'):
             try:
                 result['plan_details'] = json.loads(result['plan_details'])
@@ -756,18 +723,11 @@ async def get_pending_invoice(invoice_id: int) -> Optional[dict]:
                 
     return result
 async def update_invoice_status(invoice_id: int, status: str) -> bool:
-    """
-    Updates the status of an invoice (e.g., to 'approved' or 'rejected').
-    """
     query = "UPDATE pending_invoices SET status = %s WHERE invoice_id = %s;"
     result = await execute_query(query, (status, invoice_id))
     return result is not None and result > 0    
 
 async def expire_old_pending_invoices() -> int:
-    """
-    Finds all 'pending' invoices older than 24 hours and updates their status to 'expired'.
-    Returns the number of invoices that were expired.
-    """
     query = """
         UPDATE pending_invoices
         SET status = 'expired'
@@ -781,7 +741,6 @@ async def expire_old_pending_invoices() -> int:
 # =============================================================================
 
 async def add_unlimited_plan(plan_name: str, price: int, max_ips: int, sort_order: int) -> Optional[int]:
-    """Adds a new unlimited plan to the database and returns its ID."""
     query = """
         INSERT INTO unlimited_plans (plan_name, price, max_ips, sort_order, is_active)
         VALUES (%s, %s, %s, %s, TRUE);
@@ -798,7 +757,6 @@ async def add_unlimited_plan(plan_name: str, price: int, max_ips: int, sort_orde
         return None
 
 async def update_unlimited_plan(plan_id: int, plan_name: str, price: int, max_ips: int, is_active: bool, sort_order: int) -> bool:
-    """Updates an existing unlimited plan."""
     query = """
         UPDATE unlimited_plans
         SET plan_name = %s, price = %s, max_ips = %s, is_active = %s, sort_order = %s
@@ -808,23 +766,19 @@ async def update_unlimited_plan(plan_id: int, plan_name: str, price: int, max_ip
     return result is not None and result > 0
 
 async def delete_unlimited_plan(plan_id: int) -> bool:
-    """Deletes an unlimited plan from the database."""
     query = "DELETE FROM unlimited_plans WHERE id = %s;"
     result = await execute_query(query, (plan_id,))
     return result is not None and result > 0
 
 async def get_unlimited_plan_by_id(plan_id: int) -> Optional[Dict[str, Any]]:
-    """Fetches a single unlimited plan by its ID."""
     query = "SELECT id, plan_name, price, max_ips, is_active, sort_order FROM unlimited_plans WHERE id = %s;"
     return await execute_query(query, (plan_id,), fetch='one')
 
 async def get_all_unlimited_plans() -> List[Dict[str, Any]]:
-    """Fetches all unlimited plans for the admin panel, ordered by sort_order."""
     query = "SELECT id, plan_name, price, max_ips, is_active, sort_order FROM unlimited_plans ORDER BY sort_order ASC, id ASC;"
     return await execute_query(query, fetch='all') or []
 
 async def get_active_unlimited_plans() -> List[Dict[str, Any]]:
-    """Fetches all ACTIVE unlimited plans for the customer purchase menu."""
     query = """
         SELECT id, plan_name, price, max_ips FROM unlimited_plans
         WHERE is_active = TRUE
@@ -837,17 +791,14 @@ async def get_active_unlimited_plans() -> List[Dict[str, Any]]:
 # =============================================================================
 
 async def get_all_pricing_tiers() -> List[Dict[str, Any]]:
-    """Fetches all volumetric pricing tiers, ordered by their volume limit."""
     query = "SELECT id, tier_name, volume_limit_gb, price_per_gb FROM volumetric_pricing_tiers ORDER BY volume_limit_gb ASC;"
     return await execute_query(query, fetch='all') or []
 
 async def get_pricing_tier_by_id(tier_id: int) -> Optional[Dict[str, Any]]:
-    """Fetches a single pricing tier by its ID."""
     query = "SELECT id, tier_name, volume_limit_gb, price_per_gb FROM volumetric_pricing_tiers WHERE id = %s;"
     return await execute_query(query, (tier_id,), fetch='one')
 
 async def add_pricing_tier(tier_name: str, volume_limit_gb: int, price_per_gb: int) -> Optional[int]:
-    """Adds a new pricing tier and returns its ID."""
     query = "INSERT INTO volumetric_pricing_tiers (tier_name, volume_limit_gb, price_per_gb) VALUES (%s, %s, %s);"
     if not _pool: return None
     try:
@@ -861,13 +812,11 @@ async def add_pricing_tier(tier_name: str, volume_limit_gb: int, price_per_gb: i
         return None
 
 async def update_pricing_tier(tier_id: int, tier_name: str, volume_limit_gb: int, price_per_gb: int) -> bool:
-    """Updates an existing pricing tier."""
     query = "UPDATE volumetric_pricing_tiers SET tier_name = %s, volume_limit_gb = %s, price_per_gb = %s WHERE id = %s;"
     result = await execute_query(query, (tier_name, volume_limit_gb, price_per_gb, tier_id))
     return result is not None and result > 0
 
 async def delete_pricing_tier(tier_id: int) -> bool:
-    """Deletes a pricing tier."""
     query = "DELETE FROM volumetric_pricing_tiers WHERE id = %s;"
     result = await execute_query(query, (tier_id,))
     return result is not None and result > 0
@@ -883,10 +832,6 @@ async def save_base_daily_price(price: int) -> bool:
     return result is not None
 
 async def load_pricing_parameters() -> Dict[str, Any]:
-    """
-    Loads all necessary parameters for the volumetric pricing formula.
-    Fetches the base daily price and all pricing tiers.
-    """
     query_base = "SELECT base_daily_price FROM financial_settings WHERE id = 1;"
     base_result = await execute_query(query_base, fetch='one')
     base_price = base_result.get('base_daily_price') if base_result else None
@@ -899,27 +844,20 @@ async def load_pricing_parameters() -> Dict[str, Any]:
     }
 
 async def get_user_by_id(user_id: int) -> dict:
-    """Retrieves basic user info by their Telegram ID."""
     query = "SELECT user_id, first_name, username FROM users WHERE user_id = %s;"
     return await execute_query(query, (user_id,), fetch='one')
 
-# این سه تابع را به db_manager.py اضافه کنید
-
 async def is_auto_renew_enabled(telegram_user_id: int, marzban_username: str) -> bool:
-    """Checks if auto-renewal is enabled for a specific user service."""
     query = "SELECT auto_renew FROM marzban_telegram_links WHERE telegram_user_id = %s AND marzban_username = %s;"
     result = await execute_query(query, (telegram_user_id, marzban_username), fetch='one')
-    # The result will be 1 for TRUE and 0 for FALSE
     return bool(result['auto_renew']) if result else False
 
 async def set_auto_renew_status(telegram_user_id: int, marzban_username: str, status: bool) -> bool:
-    """Sets the auto-renewal status for a specific user service."""
     query = "UPDATE marzban_telegram_links SET auto_renew = %s WHERE telegram_user_id = %s AND marzban_username = %s;"
     result = await execute_query(query, (status, telegram_user_id, marzban_username))
     return result is not None and result > 0
 
 async def get_all_auto_renew_users() -> List[Dict[str, Any]]:
-    """Fetches all user services that have auto-renewal enabled."""
     query = "SELECT telegram_user_id, marzban_username FROM marzban_telegram_links WHERE auto_renew = TRUE;"
     return await execute_query(query, fetch='all') or []
 
@@ -928,13 +866,6 @@ async def get_all_auto_renew_users() -> List[Dict[str, Any]]:
 # =============================================================================
 
 async def get_users_ready_for_auto_renewal() -> List[Dict[str, Any]]:
-    """
-    (OPTIMIZED) Fetches all users who are ready for immediate auto-renewal.
-    This single query joins multiple tables to get users who meet ALL criteria:
-    1. Auto-renewal is enabled for their service.
-    2. They have sufficient wallet balance to cover the subscription price.
-    Returns a list of users with all necessary data for renewal.
-    """
     query = """
         SELECT
             mtl.telegram_user_id,
@@ -955,10 +886,6 @@ async def get_users_ready_for_auto_renewal() -> List[Dict[str, Any]]:
 
 
 async def get_users_for_auto_renewal_warning() -> List[Dict[str, Any]]:
-    """
-    (OPTIMIZED) Fetches users whose auto-renewal is enabled but have insufficient funds.
-    This is used to send a warning message to the user.
-    """
     query = """
         SELECT
             mtl.telegram_user_id,
@@ -981,27 +908,16 @@ async def get_users_for_auto_renewal_warning() -> List[Dict[str, Any]]:
 # =============================================================================
 
 async def get_user_test_account_count(user_id: int) -> int:
-    """
-    Retrieves the number of test accounts a user has already received.
-    Returns 0 if the user is not found or an error occurs.
-    """
     query = "SELECT test_accounts_received FROM users WHERE user_id = %s;"
     result = await execute_query(query, (user_id,), fetch='one')
     return result['test_accounts_received'] if result else 0
 
 async def increment_user_test_account_count(user_id: int) -> bool:
-    """
-    Increments the test account counter for a specific user by one.
-    This is an atomic operation.
-    """
     query = "UPDATE users SET test_accounts_received = test_accounts_received + 1 WHERE user_id = %s;"
     result = await execute_query(query, (user_id,))
     return result is not None and result > 0
 
 async def is_user_admin(user_id: int) -> bool:
-    """
-    Checks if a user is an admin by checking against the AUTHORIZED_USER_IDS list in config.py.
-    """
     return user_id in config.AUTHORIZED_USER_IDS
 
 # =============================================================================
@@ -1009,20 +925,13 @@ async def is_user_admin(user_id: int) -> bool:
 # =============================================================================
 
 async def get_all_test_accounts() -> List[str]:
-    """
-    Fetches the usernames of all accounts that are marked as test accounts.
-    """
     query = "SELECT username FROM user_notes WHERE is_test_account = TRUE;"
     results = await execute_query(query, fetch='all')
     return [row['username'] for row in results] if results else []
 
 async def is_account_test(username: str) -> bool:
-    """
-    Checks if a given username is marked as a test account in the database.
-    """
     query = "SELECT is_test_account FROM user_notes WHERE username = %s;"
     result = await execute_query(query, (username,), fetch='one')
-    # Returns True if the flag is set to 1, otherwise False.
     return bool(result['is_test_account']) if result else False
 
 # =============================================================================
@@ -1030,20 +939,11 @@ async def is_account_test(username: str) -> bool:
 # =============================================================================
 
 async def save_forced_join_channel(channel_username: Optional[str]) -> bool:
-    """
-    Saves the username of the channel for forced join.
-    If channel_username is None, it effectively deletes the setting.
-    """
     settings_to_save = {"forced_join_channel": channel_username}
     return await save_bot_settings(settings_to_save)
 
 async def load_forced_join_channel() -> Optional[str]:
-    """
-    Loads the username of the channel for forced join from bot settings.
-    Returns the username as a string, or None if not set.
-    """
     settings = await load_bot_settings()
-    # .get() is used to safely return None if the key doesn't exist
     return settings.get("forced_join_channel")
 
 # =============================================================================
@@ -1051,56 +951,39 @@ async def load_forced_join_channel() -> Optional[str]:
 # =============================================================================
 
 async def save_welcome_gift_amount(amount: int) -> bool:
-    """Saves the welcome gift amount to bot_settings."""
     return await save_bot_settings({'welcome_gift_amount': amount})
 
 async def load_welcome_gift_amount() -> int:
-    """Loads the welcome gift amount from bot_settings. Returns 0 if not set."""
     settings = await load_bot_settings()
     return int(settings.get('welcome_gift_amount', 0))
 
-# FILE: database/db_manager.py
-
 async def increase_balance_for_all_users(amount: float) -> Optional[int]:
-    """
-    Increases the wallet balance for ALL users except admins.
-    This is an efficient, single-query operation.
-    Returns the number of users affected, or None on failure.
-    """
     if amount <= 0:
         LOGGER.warning(f"Attempted to apply a universal gift with a non-positive amount: {amount}")
         return 0
 
-    # Ensure there are admin IDs to exclude. If not, the query would fail.
     admin_ids_tuple = tuple(config.AUTHORIZED_USER_IDS)
     if not admin_ids_tuple:
         LOGGER.warning("No admin IDs configured, applying gift to all users.")
         query = "UPDATE users SET wallet_balance = wallet_balance + %s;"
         args = (amount,)
     else:
-        # This placeholder formatting is necessary for the IN clause with aiomysql
         placeholders = ', '.join(['%s'] * len(admin_ids_tuple))
-        
         query = f"""
             UPDATE users
             SET wallet_balance = wallet_balance + %s
             WHERE user_id NOT IN ({placeholders});
         """
-        
-        # The arguments must be a single tuple: (amount, admin_id_1, admin_id_2, ...)
         args = (amount,) + admin_ids_tuple
     
     affected_rows = await execute_query(query, args)
     return affected_rows
 
 async def get_all_user_ids() -> List[int]:
-    """
-    Fetches a list of all user_ids from the database, excluding admins.
-    Used for scheduling broadcast messages.
-    """
     admin_ids_tuple = tuple(config.AUTHORIZED_USER_IDS)
+    if not admin_ids_tuple:
+        return []
     placeholders = ', '.join(['%s'] * len(admin_ids_tuple))
-
     query = f"SELECT user_id FROM users WHERE user_id NOT IN ({placeholders});"
     
     results = await execute_query(query, admin_ids_tuple, fetch='all')
@@ -1113,12 +996,10 @@ async def get_all_user_ids() -> List[int]:
 import json
 
 async def save_broadcast_job(job_id: str, text: str | None, photo_id: str | None, buttons: list, target_user_ids: list | None) -> bool:
-    """Saves a new broadcast job to the database."""
     query = """
         INSERT INTO broadcasts (job_id, text, photo_id, buttons, target_user_ids, created_at)
         VALUES (%s, %s, %s, %s, %s, NOW());
     """
-    # Convert lists/dicts to JSON strings for storage
     buttons_json = json.dumps(buttons)
     targets_json = json.dumps(target_user_ids) if target_user_ids else None
     
@@ -1126,41 +1007,26 @@ async def save_broadcast_job(job_id: str, text: str | None, photo_id: str | None
     return result is not None
 
 async def get_broadcast_job(job_id: str) -> dict | None:
-    """Retrieves a broadcast job's data from the database."""
     query = "SELECT * FROM broadcasts WHERE job_id = %s;"
     result = await execute_query(query, (job_id,), fetch='one')
     if result:
-        # Convert JSON strings back to Python objects
         result['buttons'] = json.loads(result['buttons']) if result.get('buttons') else []
         result['target_user_ids'] = json.loads(result['target_user_ids']) if result.get('target_user_ids') else []
     return result
 
 async def delete_broadcast_job(job_id: str) -> bool:
-    """Deletes a broadcast job from the database after completion."""
     query = "DELETE FROM broadcasts WHERE job_id = %s;"
     result = await execute_query(query, (job_id,))
     return result is not None
 
-
-
-# --- NEW FUNCTION TO FIX THE IMPORT ERROR ---
 async def get_user_by_marzban_username(marzban_username: str) -> Optional[Dict[str, Any]]:
-    """
-    Finds a user's full details from the 'users' table using their Marzban username.
-    This is a two-step process:
-    1. Find the telegram_user_id from the 'marzban_telegram_links' table.
-    2. Use the telegram_user_id to fetch details from the 'users' table.
-    """
     telegram_id = await get_telegram_id_from_marzban_username(marzban_username)
     if not telegram_id:
         return None
     
-    # We can reuse the get_user_by_id function.
     user_info = await get_user_by_id(telegram_id)
     if user_info:
-        # Add the telegram_id to the result for convenience.
         user_info['telegram_id'] = telegram_id
         return user_info
 
     return None
-

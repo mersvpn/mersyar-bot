@@ -339,6 +339,7 @@ async def schedule_daily_job(application: Application, time_obj: datetime.time):
 async def cleanup_expired_test_accounts(context: ContextTypes.DEFAULT_TYPE) -> None:
     """
     This job runs periodically (e.g., hourly) to find and delete expired test accounts.
+    (MODIFIED: Sends notification to customer after deleting expired test account)
     """
     from shared.translator import _
     
@@ -355,8 +356,13 @@ async def cleanup_expired_test_accounts(context: ContextTypes.DEFAULT_TYPE) -> N
     
     deleted_users_count = 0
     
+    # (NEW) Load users_map to find Telegram ID for notifications
+    users_map = await load_users_map()
+
     # 2. Iterate through each test account username
     for username in test_account_usernames:
+        telegram_user_id = users_map.get(normalize_username(username)) # (NEW) Get Telegram user ID
+        
         # 3. Get the user's current data from the Marzban panel
         user_data = await get_user_data(username)
         
@@ -364,6 +370,19 @@ async def cleanup_expired_test_accounts(context: ContextTypes.DEFAULT_TYPE) -> N
         if not user_data:
             LOGGER.warning(f"Test account '{username}' found in DB but not in Marzban. Cleaning up DB records.")
             await cleanup_marzban_user_data(normalize_username(username))
+            # (NEW) If we have a Telegram ID, notify the user they are cleaned up
+            if telegram_user_id:
+                try:
+                    await context.bot.send_message(
+                        chat_id=telegram_user_id,
+                        text=_("customer.test_account.account_expired_notification_no_panel"),
+                        parse_mode=ParseMode.HTML,
+                        reply_markup=InlineKeyboardMarkup([[
+                            InlineKeyboardButton(_("general.buy_subscription_button"), callback_data="customer_show_shop")
+                        ]])
+                    )
+                except Exception as e:
+                    LOGGER.warning(f"Failed to send cleanup notification to user {telegram_user_id} for ghost test account {username}: {e}")
             continue
             
         # 4. Check if the user is expired
@@ -379,6 +398,20 @@ async def cleanup_expired_test_accounts(context: ContextTypes.DEFAULT_TYPE) -> N
                 await cleanup_marzban_user_data(normalize_username(username))
                 deleted_users_count += 1
                 LOGGER.info(f"Successfully deleted expired test account '{username}'.")
+                
+                # (NEW) Send notification to the user
+                if telegram_user_id:
+                    try:
+                        await context.bot.send_message(
+                            chat_id=telegram_user_id,
+                            text=_("customer.test_account.account_expired_notification"),
+                            parse_mode=ParseMode.HTML,
+                            reply_markup=InlineKeyboardMarkup([[
+                                InlineKeyboardButton(_("general.buy_subscription_button"), callback_data="customer_show_shop")
+                            ]])
+                        )
+                    except Exception as e:
+                        LOGGER.warning(f"Failed to send expiration notification to user {telegram_user_id} for test account {username}: {e}")
             else:
                 LOGGER.error(f"Failed to delete expired test account '{username}' from Marzban. API Error: {message}")
                 
@@ -387,4 +420,4 @@ async def cleanup_expired_test_accounts(context: ContextTypes.DEFAULT_TYPE) -> N
         await send_log(context.bot, log_message)
         LOGGER.info(f"Test account cleanup job finished. Deleted {deleted_users_count} expired accounts.")
     else:
-        LOGGER.info("Test account cleanup job finished. No accounts were expired.")    
+        LOGGER.info("Test account cleanup job finished. No accounts were expired.")
