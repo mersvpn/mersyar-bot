@@ -1,5 +1,4 @@
-# FILE: modules/customer/actions/test_account.py (REWRITTEN FOR CONVERSATION)
-
+# --- START OF FILE modules/customer/actions/test_account.py ---
 import logging
 import qrcode
 import io
@@ -11,37 +10,24 @@ import datetime
 from telegram import Update
 from telegram.ext import ContextTypes, ConversationHandler
 from telegram.constants import ParseMode
-from modules.general.actions import start
-from database.db_manager import (
-    load_bot_settings,
-    get_user_test_account_count,
-    increment_user_test_account_count,
-    add_user_to_managed_list,
-    save_user_note,
-    link_user_to_telegram,
-    is_user_admin,cleanup_marzban_user_data
-)
+
+from database.crud import bot_setting as crud_bot_setting
+from database.crud import user as crud_user
+from database.crud import user_note as crud_user_note
 from modules.marzban.actions.add_user import create_marzban_user_from_template
-# (NEW) Import API to check for existing users
 from modules.marzban.actions import api as marzban_api
+from modules.marzban.actions.data_manager import link_user_to_telegram, add_user_to_managed_list, cleanup_marzban_user_data, is_user_admin
 from shared.translator import _
 from shared.log_channel import send_log
 from shared.callbacks import end_conversation_and_show_menu
 from shared.keyboards import get_connection_guide_keyboard
+
 LOGGER = logging.getLogger(__name__)
 
-# (NEW) Define states for the conversation
 ASK_USERNAME = 0
 
 
-# =================================================================
-# [جدید] تابع کمکی برای جاب یک‌بار مصرف حذف اکانت تست
-# =================================================================
 async def _cleanup_test_account_job(context: ContextTypes.DEFAULT_TYPE):
-    """
-    این تابع توسط JobQueue در زمان انقضا فراخوانی می‌شود.
-    اکانت تست را از مرزبان و دیتابیس محلی حذف کرده و به کاربر اطلاع می‌دهد.
-    """
     job = context.job
     marzban_username = job.data['marzban_username']
     chat_id = job.data['chat_id']
@@ -49,14 +35,11 @@ async def _cleanup_test_account_job(context: ContextTypes.DEFAULT_TYPE):
     LOGGER.info(f"Job triggered: Cleaning up expired test account '{marzban_username}' for user {chat_id}.")
     
     try:
-        # مرحله ۱: حذف کاربر از پنل مرزبان
         success, message = await marzban_api.delete_user_api(marzban_username)
         if success:
             LOGGER.info(f"Successfully deleted test account '{marzban_username}' from Marzban panel.")
-            # مرحله ۲: پاکسازی اطلاعات کاربر از دیتابیس ربات
             await cleanup_marzban_user_data(marzban_username)
             
-            # مرحله ۳: ارسال پیام به کاربر
             keyboard = get_connection_guide_keyboard(is_for_test_account_expired=True)
             await context.bot.send_message(
                 chat_id=chat_id,
@@ -66,7 +49,6 @@ async def _cleanup_test_account_job(context: ContextTypes.DEFAULT_TYPE):
             )
         else:
             LOGGER.error(f"Failed to delete expired test account '{marzban_username}' from Marzban. API Error: {message}")
-            # حتی اگر حذف از پنل ناموفق بود، به کاربر اطلاع می‌دهیم
             await context.bot.send_message(
                 chat_id=chat_id,
                 text=_("customer.test_account.account_expired_notification_api_fail"),
@@ -77,29 +59,18 @@ async def _cleanup_test_account_job(context: ContextTypes.DEFAULT_TYPE):
         LOGGER.error(f"Critical error in _cleanup_test_account_job for user {marzban_username}: {e}", exc_info=True)
 
 
-# ... (بقیه کد فایل از اینجا شروع می‌شود) ...
-# async def handle_test_account_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-# ...
-
 async def handle_test_account_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """
-    (REWRITTEN) Starts the test account conversation.
-    Checks limits and asks for the desired username.
-    (MODIFIED to handle both Message and CallbackQuery)
-    """
     user = update.effective_user
     chat_id = update.effective_chat.id
     query = update.callback_query
 
     async def reply(text):
-        """Helper to send message regardless of entry point."""
         if query:
-            # For callbacks, always send a new message as this starts a conversation
             await context.bot.send_message(chat_id, text)
         else:
             await update.message.reply_text(text)
 
-    bot_settings = await load_bot_settings()
+    bot_settings = await crud_bot_setting.load_bot_settings()
     is_enabled = bot_settings.get('is_test_account_enabled', False)
     
     if not is_enabled:
@@ -108,7 +79,6 @@ async def handle_test_account_request(update: Update, context: ContextTypes.DEFA
 
     if query:
         await query.answer()
-        # Clean up the broadcast message
         if query.message:
             await query.message.delete()
 
@@ -120,7 +90,7 @@ async def handle_test_account_request(update: Update, context: ContextTypes.DEFA
             limit = 1
             LOGGER.warning("Invalid 'test_account_limit' in settings. Defaulting to 1.")
             
-        received_count = await get_user_test_account_count(user.id)
+        received_count = await crud_user.get_user_test_account_count(user.id)
         
         if received_count >= limit:
             await reply(_("customer.test_account.limit_reached", limit=limit))
@@ -129,14 +99,8 @@ async def handle_test_account_request(update: Update, context: ContextTypes.DEFA
     await reply(_("customer.test_account.prompt_for_username"))
     return ASK_USERNAME
 
-# FILE: modules/customer/actions/test_account.py
 
-# (این تابع را به طور کامل جایگزین کنید)
 async def get_username_and_create_account(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """
-    (MODIFIED) Receives the username, validates it, creates the test account,
-    schedules a one-shot cleanup job, and sends the result.
-    """
     user = update.effective_user
     base_username = update.message.text.strip()
     
@@ -154,7 +118,7 @@ async def get_username_and_create_account(update: Update, context: ContextTypes.
 
     processing_message = await update.message.reply_text(_("customer.test_account.processing"))
 
-    bot_settings = await load_bot_settings()
+    bot_settings = await crud_bot_setting.load_bot_settings()
     hours = bot_settings.get('test_account_hours')
     gb = bot_settings.get('test_account_gb')
     days_from_hours = (hours / 24) if hours else 0
@@ -184,23 +148,18 @@ async def get_username_and_create_account(update: Update, context: ContextTypes.
     sub_link = new_user_data.get("subscription_url", "N/A")
     all_links = new_user_data.get("links", [])
     
-    # [مهم و جدید] زمان انقضای کاربر را از API بگیرید
     expire_timestamp = new_user_data.get('expire')
 
-    # Perform all database operations
-    await increment_user_test_account_count(user.id)
+    await crud_user.increment_user_test_account_count(user.id)
     await link_user_to_telegram(marzban_username, user.id)
     await add_user_to_managed_list(marzban_username)
-    await save_user_note(marzban_username, {
+    await crud_user_note.save_user_note(marzban_username, {
         'subscription_duration': round(days_from_hours, 2),
         'subscription_data_limit_gb': gb,
         'subscription_price': 0,
         'is_test_account': True
     })
     
-    # =================================================================
-    # [جدید] زمان‌بندی جاب یک‌بار مصرف برای حذف اکانت در زمان انقضا
-    # =================================================================
     if expire_timestamp and context.job_queue:
         expire_datetime = datetime.datetime.fromtimestamp(expire_timestamp)
         job_data = {
@@ -276,3 +235,5 @@ async def get_username_and_create_account(update: Update, context: ContextTypes.
     )
     
     return ConversationHandler.END
+
+# --- END OF FILE modules/customer/actions/test_account.py ---

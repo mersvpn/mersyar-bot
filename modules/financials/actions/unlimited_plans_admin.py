@@ -1,4 +1,4 @@
-# FILE: modules/financials/actions/unlimited_plans_admin.py (REVISED FOR I18N)
+# --- START OF FILE modules/financials/actions/unlimited_plans_admin.py ---
 import html
 import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -8,10 +8,7 @@ from telegram.ext import (
 )
 from telegram.constants import ParseMode
 
-from database.db_manager import (
-    get_all_unlimited_plans, add_unlimited_plan, delete_unlimited_plan,
-    get_unlimited_plan_by_id, update_unlimited_plan
-)
+from database.crud import unlimited_plan as crud_unlimited_plan
 from .settings import show_plan_management_menu
 from shared.callbacks import end_conversation_and_show_menu
 
@@ -24,7 +21,7 @@ async def manage_unlimited_plans_menu(update: Update, context: ContextTypes.DEFA
     query = update.callback_query
     await query.answer()
 
-    all_plans = await get_all_unlimited_plans()
+    all_plans = await crud_unlimited_plan.get_all_unlimited_plans()
     
     text = _("financials_unlimited.menu_title")
     keyboard_rows = []
@@ -34,23 +31,24 @@ async def manage_unlimited_plans_menu(update: Update, context: ContextTypes.DEFA
     else:
         text += _("financials_unlimited.plans_list_title")
         for plan in all_plans:
-            status_icon = "✅" if plan['is_active'] else "❌"
-            plan_name_escaped = html.escape(plan['plan_name'])  # <-- این خط اضافه شده
+            status_icon = "✅" if plan.is_active else "❌"
+            plan_name_escaped = html.escape(plan.plan_name)
             plan_text = _("financials.financials_unlimited.plan_list_item", 
-                        status_icon=status_icon, name=plan_name_escaped, # <-- اینجا از متغیر جدید استفاده شده
-                        price=f"{plan['price']:,}", ips=plan['max_ips'])
+                        status_icon=status_icon, name=plan_name_escaped,
+                        price=f"{plan.price:,}", ips=plan.max_ips)
             
             plan_buttons = [
-                InlineKeyboardButton(_("financials_unlimited.button_delete"), callback_data=f"unlimplan_delete_{plan['id']}"),
-                InlineKeyboardButton(_("financials_unlimited.button_toggle_status"), callback_data=f"unlimplan_toggle_{plan['id']}")
+                InlineKeyboardButton(_("financials_unlimited.button_delete"), callback_data=f"unlimplan_delete_{plan.id}"),
+                InlineKeyboardButton(_("financials_unlimited.button_toggle_status"), callback_data=f"unlimplan_toggle_{plan.id}")
             ]
-            keyboard_rows.append([InlineKeyboardButton(plan_text, callback_data=f"unlimplan_noop_{plan['id']}")])
+            keyboard_rows.append([InlineKeyboardButton(plan_text, callback_data=f"unlimplan_noop_{plan.id}")])
             keyboard_rows.append(plan_buttons)
 
     keyboard_rows.append([InlineKeyboardButton(_("financials_unlimited.button_add_new"), callback_data="unlimplan_add_new")])
     keyboard_rows.append([InlineKeyboardButton(_("financials_settings.button_back_to_payment_methods"), callback_data="back_to_plan_management")])
     
     await query.edit_message_text(text=text, reply_markup=InlineKeyboardMarkup(keyboard_rows), parse_mode=ParseMode.HTML)
+
 
 async def start_add_plan(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     from shared.translator import _
@@ -62,14 +60,16 @@ async def start_add_plan(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     await query.edit_message_text(text=text, parse_mode=ParseMode.MARKDOWN)
     return GET_NAME
 
+
 async def get_plan_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     from shared.translator import _
     plan_name = update.message.text.strip()
-    context.user_data['new_unlimited_plan']['name'] = plan_name
+    context.user_data['new_unlimited_plan']['plan_name'] = plan_name
     
     text = _("financials_unlimited.name_saved", name=plan_name) + _("financials_unlimited.step2_ask_price")
     await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN)
     return GET_PRICE
+
 
 async def get_plan_price(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     from shared.translator import _
@@ -85,6 +85,7 @@ async def get_plan_price(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN)
     return GET_IPS
 
+
 async def get_max_ips(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     from shared.translator import _
     try:
@@ -98,7 +99,8 @@ async def get_max_ips(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     text = _("financials_unlimited.ips_saved", ips=max_ips) + _("financials_unlimited.step4_ask_sort_order")
     await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN)
     return GET_SORT_ORDER
-    
+
+
 async def get_sort_order_and_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     from shared.translator import _
     try:
@@ -111,7 +113,7 @@ async def get_sort_order_and_confirm(update: Update, context: ContextTypes.DEFAU
     plan_data = context.user_data['new_unlimited_plan']
 
     text = _("financials_unlimited.confirm_prompt_title")
-    text += _("financials_unlimited.confirm_name", name=plan_data['name'])
+    text += _("financials_unlimited.confirm_name", name=plan_data['plan_name'])
     text += _("financials_unlimited.confirm_price", price=f"{plan_data['price']:,}")
     text += _("financials_unlimited.confirm_ips", ips=plan_data['max_ips'])
     text += _("financials_unlimited.confirm_sort_order", sort_order=plan_data['sort_order'])
@@ -124,6 +126,7 @@ async def get_sort_order_and_confirm(update: Update, context: ContextTypes.DEFAU
     await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.MARKDOWN)
     return CONFIRM_ADD
 
+
 async def save_new_plan(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     from shared.translator import _
     query = update.callback_query
@@ -133,10 +136,11 @@ async def save_new_plan(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         await query.edit_message_text(_("financials_unlimited.error_plan_info_lost"))
         return ConversationHandler.END
 
-    await add_unlimited_plan(**plan_data)
+    await crud_unlimited_plan.add_unlimited_plan(plan_data)
     await query.edit_message_text(_("financials_unlimited.add_success"))
     await manage_unlimited_plans_menu(update, context)
     return ConversationHandler.END
+
 
 async def cancel_add_plan(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     from shared.translator import _
@@ -147,34 +151,37 @@ async def cancel_add_plan(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     await manage_unlimited_plans_menu(update, context)
     return ConversationHandler.END
 
+
 async def confirm_delete_plan(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     from shared.translator import _
     query = update.callback_query
     plan_id = int(query.data.split('_')[-1])
-    plan = await get_unlimited_plan_by_id(plan_id)
+    plan = await crud_unlimited_plan.get_unlimited_plan_by_id(plan_id)
     if not plan:
         await query.answer(_("financials_unlimited.plan_not_found"), show_alert=True)
         return
 
-    text = _("financials_unlimited.delete_confirm_prompt", name=plan['plan_name'])
+    text = _("financials_unlimited.delete_confirm_prompt", name=plan.plan_name)
     keyboard = [[
         InlineKeyboardButton(_("financials_unlimited.button_confirm_delete"), callback_data=f"unlimplan_do_delete_{plan_id}"),
         InlineKeyboardButton(_("financials_unlimited.button_cancel_delete"), callback_data="admin_manage_unlimited")
     ]]
     await query.answer()
     await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
-    
+
+
 async def execute_delete_plan(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     from shared.translator import _
     query = update.callback_query
     plan_id = int(query.data.split('_')[-1])
     await query.answer(_("financials_unlimited.deleting"))
     
-    if await delete_unlimited_plan(plan_id):
+    if await crud_unlimited_plan.delete_unlimited_plan(plan_id):
         await query.edit_message_text(_("financials_unlimited.delete_success"))
     else:
         await query.edit_message_text(_("financials_unlimited.delete_error"))
     await manage_unlimited_plans_menu(update, context)
+
 
 async def toggle_plan_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     from shared.translator import _
@@ -182,20 +189,17 @@ async def toggle_plan_status(update: Update, context: ContextTypes.DEFAULT_TYPE)
     plan_id = int(query.data.split('_')[-1])
     await query.answer(_("financials_unlimited.toggling_status"))
     
-    plan = await get_unlimited_plan_by_id(plan_id)
+    plan = await crud_unlimited_plan.get_unlimited_plan_by_id(plan_id)
     if not plan:
         await query.answer(_("financials_unlimited.plan_not_found"), show_alert=True)
         return
         
-    await update_unlimited_plan(
-    plan_id=plan_id,
-    plan_name=plan['plan_name'],
-    price=plan['price'],
-    max_ips=plan['max_ips'],
-    sort_order=plan['sort_order'],
-    is_active=not plan['is_active']
-)
+    await crud_unlimited_plan.update_unlimited_plan(
+        plan_id=plan_id,
+        update_data={'is_active': not plan.is_active}
+    )
     await manage_unlimited_plans_menu(update, context)
+
 
 add_unlimited_plan_conv = ConversationHandler(
     entry_points=[CallbackQueryHandler(start_add_plan, pattern='^unlimplan_add_new$')],
@@ -212,3 +216,5 @@ add_unlimited_plan_conv = ConversationHandler(
     fallbacks=[CommandHandler('cancel', end_conversation_and_show_menu)],
     conversation_timeout=600
 )
+
+# --- END OF FILE modules/financials/actions/unlimited_plans_admin.py ---

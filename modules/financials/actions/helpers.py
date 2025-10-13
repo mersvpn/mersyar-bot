@@ -8,7 +8,7 @@ async def format_financial_info_message() -> str:
     """
     Asynchronously loads financial data and formats it into a user-friendly message.
     """
-    financials = await load_financials()
+    financials = await crud_financial.get_financial_settings()
 
     # --- FIX: Changed 'account_holder' to 'card_holder' to match the database schema ---
     card_holder = financials.get("card_holder", "تنظیم نشده")

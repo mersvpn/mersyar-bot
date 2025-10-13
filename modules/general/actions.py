@@ -1,12 +1,11 @@
-# FILE: modules/general/actions.py (MODIFIED FOR FORCED JOIN)
-
+# --- START OF FILE modules/general/actions.py ---
 import logging
 from telegram import Update, User
 from telegram.ext import ContextTypes, ConversationHandler
 from telegram.constants import ParseMode
-from database import db_manager
+from database.crud import user as crud_user
+from database.crud import bot_setting as crud_bot_setting
 from config import config
-# (✨ MODIFIED) Import path is corrected and new decorator is added
 from shared.auth import is_admin, admin_only, ensure_channel_membership
 import html
 
@@ -41,13 +40,11 @@ async def send_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, mes
 
     target_message = update.effective_message
     if update.callback_query:
-        # If it's a callback, we might need to delete the old message and send a new one.
         try:
-            # Check if the message is the one that prompted the join, and edit it.
             if target_message and target_message.text and "باید در کانال زیر عضو شوید" in target_message.text:
                  await target_message.edit_text(message_text, reply_markup=reply_markup)
                  return
-            else: # Otherwise, delete and send new
+            else:
                 await target_message.delete()
         except Exception: pass
         await context.bot.send_message(chat_id=update.effective_chat.id, text=message_text, reply_markup=reply_markup)
@@ -55,26 +52,22 @@ async def send_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, mes
         await target_message.reply_text(message_text, reply_markup=reply_markup)
 
 
-# در فایل modules/general/actions.py
-
-# ... (import های دیگر)
-
 @ensure_channel_membership
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
     try:
-        is_new_user = await db_manager.add_or_update_user(user)
+        is_new_user = await crud_user.add_or_update_user(user)
         LOGGER.info(f"[DEBUG GIFT] User {user.id} started. Is new user? -> {is_new_user}")
         
         if is_new_user:
             await log_new_user_joined(context.bot, user)
             
-            # Welcome Gift Logic
-            welcome_gift = await db_manager.load_welcome_gift_amount()
+            bot_settings = await crud_bot_setting.load_bot_settings()
+            welcome_gift = bot_settings.get('welcome_gift_amount', 0)
             LOGGER.info(f"[DEBUG GIFT] Welcome gift amount from DB: {welcome_gift}")
 
             if welcome_gift > 0:
-                new_balance = await db_manager.increase_wallet_balance(user.id, welcome_gift)
+                new_balance = await crud_user.increase_wallet_balance(user.id, welcome_gift)
                 LOGGER.info(f"[DEBUG GIFT] Balance increased for user {user.id}. New balance: {new_balance}")
                 
                 if new_balance is not None:
@@ -104,7 +97,7 @@ async def switch_to_customer_view(update: Update, context: ContextTypes.DEFAULT_
 
 @admin_only
 async def switch_to_admin_view(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    context.user_data.pop('is_admin_in_customer_view', None)
+    context.user_data.pop('is_admin_in_customer_view', 'None')
     await update.message.reply_text(
         _("general.views.switched_to_admin"),
         reply_markup=get_admin_main_menu_keyboard(), parse_mode=ParseMode.MARKDOWN
@@ -132,7 +125,6 @@ async def end_conv_and_reroute(update: Update, context: ContextTypes.DEFAULT_TYP
     elif text == guide_button_text:
         await guide.show_guides_to_customer(update, context)
     else:
-        # Fallback to the main start function
         await start(update, context)
 
     context.user_data.clear()
@@ -152,11 +144,9 @@ async def notify_admins_on_link(context: ContextTypes.DEFAULT_TYPE, customer: Us
         except Exception as e:
             LOGGER.error(f"Failed to send linking notification to admin {admin_id}: {e}")
 
-# (✨ MODIFIED) This function now always calls start() at the end to ensure the decorator runs
 async def handle_deep_link(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
     args = context.args
-    # First, handle the potential linking process
     if args and len(args) > 0 and args[0].startswith("link-"):
         marzban_username_raw = args[0].split('-', 1)[1]
         marzban_username_normalized = normalize_username(marzban_username_raw)
@@ -175,5 +165,6 @@ async def handle_deep_link(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             else:
                 await update.message.reply_text(_("marzban.linking.link_error"))
 
-    # ALWAYS call the start function at the end. The decorator on start() will handle the join check.
     await start(update, context)
+
+# --- END OF FILE modules/general/actions.py ---

@@ -1,5 +1,4 @@
-# FILE: modules/bot_settings/actions.py (MODIFIED FOR FORCED JOIN)
-
+# --- START OF FILE modules/bot_settings/actions.py ---
 import logging
 from telegram import Update, error
 from telegram.ext import ContextTypes, ConversationHandler
@@ -10,32 +9,27 @@ from shared.keyboards import (
     get_test_account_settings_keyboard, get_cancel_keyboard
 )
 from .data_manager import is_bot_active, set_bot_status
-# (✨ NEW) Import new DB functions
-from database.db_manager import load_bot_settings, save_bot_settings, save_forced_join_channel, load_forced_join_channel
+from database.crud import bot_setting as crud_bot_setting
 from shared.translator import _
 
 LOGGER = logging.getLogger(__name__)
 
-# --- States for Main Settings Conversation ---
 MENU_STATE = 0
 SET_CHANNEL_ID = 1
-GET_FORCED_JOIN_CHANNEL = 2 # (✨ NEW) State for the new conversation
+GET_FORCED_JOIN_CHANNEL = 2
 
-# --- States for NEW Test Account Conversation ---
 ADMIN_TEST_ACCOUNT_MENU = 10
 GET_HOURS = 11
 GET_GB = 12
 GET_LIMIT = 13
 
-# =============================================================================
-# Standard Helper Functions
-# =============================================================================
 
 async def show_helper_tools_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     target = update.effective_message
     if not target:
         return
     await target.reply_text(_("bot_settings.helper_tools_menu_title"), reply_markup=get_helper_tools_keyboard())
+
 
 async def back_to_settings_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     chat_id = update.effective_chat.id
@@ -60,9 +54,10 @@ async def back_to_settings_menu(update: Update, context: ContextTypes.DEFAULT_TY
 
     return ConversationHandler.END
 
+
 async def _build_and_send_main_settings_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    bot_settings = await load_bot_settings()
+    bot_settings = await crud_bot_setting.load_bot_settings()
     is_active_status = await is_bot_active()
     
     maintenance_btn_text = _("bot_settings.status_on") if is_active_status else _("bot_settings.status_off_maintenance")
@@ -76,7 +71,6 @@ async def _build_and_send_main_settings_menu(update: Update, context: ContextTyp
     wallet_btn_text = _("bot_settings.status_active") if is_wallet_enabled else _("bot_settings.status_inactive")
     wallet_callback = "toggle_wallet_disable" if is_wallet_enabled else "toggle_wallet_enable"
 
-    # (✨ NEW) Logic for Forced Join button
     is_forced_join_enabled = bot_settings.get('is_forced_join_active', False)
     forced_join_btn_text = _("bot_settings.status_active") if is_forced_join_enabled else _("bot_settings.status_inactive")
     forced_join_callback = "toggle_forced_join_disable" if is_forced_join_enabled else "toggle_forced_join_enable"
@@ -86,7 +80,6 @@ async def _build_and_send_main_settings_menu(update: Update, context: ContextTyp
         [InlineKeyboardButton(maintenance_btn_text, callback_data=maintenance_callback), InlineKeyboardButton(_("bot_settings.label_bot_status"), callback_data="noop")],
         [InlineKeyboardButton(log_channel_btn_text, callback_data=log_channel_callback), InlineKeyboardButton(_("bot_settings.label_log_channel"), callback_data="noop")],
         [InlineKeyboardButton(wallet_btn_text, callback_data=wallet_callback), InlineKeyboardButton(_("bot_settings.label_wallet_status"), callback_data="noop")],
-        # (✨ NEW) Add new button to the keyboard
         [InlineKeyboardButton(forced_join_btn_text, callback_data=forced_join_callback), InlineKeyboardButton(_("bot_settings.label_forced_join"), callback_data="noop")],
         [InlineKeyboardButton(_("bot_settings.button_back_to_tools"), callback_data="bot_status_back")]
     ]
@@ -104,9 +97,11 @@ async def _build_and_send_main_settings_menu(update: Update, context: ContextTyp
         if update.message: await update.message.delete()
         await context.bot.send_message(chat_id=update.effective_chat.id, text=menu_text, reply_markup=reply_markup, parse_mode=ParseMode.MARKDOWN)
 
+
 async def start_bot_settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await _build_and_send_main_settings_menu(update, context)
     return MENU_STATE
+
 
 async def toggle_maintenance_mode(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
@@ -117,36 +112,39 @@ async def toggle_maintenance_mode(update: Update, context: ContextTypes.DEFAULT_
     await _build_and_send_main_settings_menu(update, context)
     return MENU_STATE
 
+
 async def toggle_log_channel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     new_status = (query.data == "toggle_log_channel_enable")
-    await save_bot_settings({"is_log_channel_enabled": new_status})
+    await crud_bot_setting.save_bot_settings({"is_log_channel_enabled": new_status})
     feedback = _("bot_settings.feedback_log_channel_enabled") if new_status else _("bot_settings.feedback_log_channel_disabled")
     await query.answer(feedback, show_alert=True)
     await _build_and_send_main_settings_menu(update, context)
     return MENU_STATE
 
+
 async def toggle_wallet_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     new_status = (query.data == "toggle_wallet_enable")
-    await save_bot_settings({"is_wallet_enabled": new_status})
+    await crud_bot_setting.save_bot_settings({"is_wallet_enabled": new_status})
     feedback = _("bot_settings.feedback_wallet_enabled") if new_status else _("bot_settings.feedback_wallet_disabled")
     await query.answer(feedback, show_alert=True)
     await _build_and_send_main_settings_menu(update, context)
     return MENU_STATE
 
-# (✨ NEW) New function to toggle forced join status
+
 async def toggle_forced_join_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     new_status = (query.data == "toggle_forced_join_enable")
-    await save_bot_settings({"is_forced_join_active": new_status})
+    await crud_bot_setting.save_bot_settings({"is_forced_join_active": new_status})
     feedback = _("bot_settings.feedback_forced_join_enabled") if new_status else _("bot_settings.feedback_forced_join_disabled")
     await query.answer(feedback, show_alert=True)
     await _build_and_send_main_settings_menu(update, context)
     return MENU_STATE
 
+
 async def prompt_for_channel_id(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    bot_settings = await load_bot_settings()
+    bot_settings = await crud_bot_setting.load_bot_settings()
     current_channel_id = bot_settings.get('log_channel_id', _("marzban_credentials.not_set"))
     text = _("bot_settings.current_log_channel_id", id=f"`{current_channel_id}`") + _("bot_settings.prompt_for_channel_id")
     
@@ -157,6 +155,7 @@ async def prompt_for_channel_id(update: Update, context: ContextTypes.DEFAULT_TY
     )
     return SET_CHANNEL_ID
 
+
 async def process_channel_id(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     channel_id = update.message.text.strip()
     if not (channel_id.startswith('@') or channel_id.startswith('-100')):
@@ -166,7 +165,7 @@ async def process_channel_id(update: Update, context: ContextTypes.DEFAULT_TYPE)
         )
         return SET_CHANNEL_ID
 
-    await save_bot_settings({'log_channel_id': channel_id})
+    await crud_bot_setting.save_bot_settings({'log_channel_id': channel_id})
     await update.message.reply_text(
         _("bot_settings.channel_id_updated", id=f"`{channel_id}`"), 
         parse_mode=ParseMode.MARKDOWN, 
@@ -174,12 +173,10 @@ async def process_channel_id(update: Update, context: ContextTypes.DEFAULT_TYPE)
     )
     return ConversationHandler.END
 
-# (✨ NEW SECTION) Conversation handlers for setting the forced join channel
-# =============================================================================
 
 async def prompt_for_forced_join_channel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Entry point for the conversation to set the forced join channel."""
-    current_channel = await load_forced_join_channel()
+    bot_settings = await crud_bot_setting.load_bot_settings()
+    current_channel = bot_settings.get("forced_join_channel")
     
     if current_channel:
         message_text = _("bot_settings.forced_join.prompt_with_current", channel=f"@{current_channel}")
@@ -193,15 +190,13 @@ async def prompt_for_forced_join_channel(update: Update, context: ContextTypes.D
     )
     return GET_FORCED_JOIN_CHANNEL
 
+
 async def process_forced_join_channel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Saves the provided channel username."""
     channel_username = update.message.text.strip()
     
-    # Remove '@' if the admin accidentally included it
     if channel_username.startswith('@'):
         channel_username = channel_username[1:]
 
-    # A simple validation for a valid username format
     if not channel_username or not channel_username.replace("_", "").isalnum():
         await update.message.reply_text(
             _("bot_settings.forced_join.invalid_username"),
@@ -209,21 +204,18 @@ async def process_forced_join_channel(update: Update, context: ContextTypes.DEFA
         )
         return GET_FORCED_JOIN_CHANNEL
         
-    await save_forced_join_channel(channel_username)
+    await crud_bot_setting.save_bot_settings({"forced_join_channel": channel_username})
     
     await update.message.reply_text(
         _("bot_settings.forced_join.success", channel=f"@{channel_username}"),
-        reply_markup=get_helper_tools_keyboard(), # Return to the helper tools menu
+        reply_markup=get_helper_tools_keyboard(),
         parse_mode=ParseMode.HTML
     )
     return ConversationHandler.END
-# =============================================================================
-# REWRITTEN Test Account Settings Conversation
-# =============================================================================
+
 
 async def _get_test_account_menu_text() -> str:
-    """Generates the text for the test account settings menu."""
-    settings = await load_bot_settings()
+    settings = await crud_bot_setting.load_bot_settings()
     status = _("bot_settings.status_active") if settings.get('is_test_account_enabled', False) else _("bot_settings.status_inactive")
     limit = settings.get('test_account_limit', _("marzban_credentials.not_set"))
     hours = settings.get('test_account_hours', _("marzban_credentials.not_set"))
@@ -234,13 +226,11 @@ async def _get_test_account_menu_text() -> str:
         status=status, limit=limit, hours=hours, gb=gb
     )
 
-# --- FIX 1: Added a parameter to control message deletion ---
+
 async def start_test_account_settings(update: Update, context: ContextTypes.DEFAULT_TYPE, should_delete_trigger_message: bool = True) -> int:
-    """Entry point for the test account settings conversation."""
     text = await _get_test_account_menu_text()
     keyboard = await get_test_account_settings_keyboard()
     
-    # --- FIX 2: Deletion is now conditional ---
     if should_delete_trigger_message and update.message:
         try:
             await update.message.delete()
@@ -255,13 +245,13 @@ async def start_test_account_settings(update: Update, context: ContextTypes.DEFA
     )
     return ADMIN_TEST_ACCOUNT_MENU
 
+
 async def toggle_test_account_activation(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Toggles the activation status and refreshes the menu."""
     query = update.callback_query
     await query.answer()
     
     new_status = query.data == "admin_test_acc_enable"
-    await save_bot_settings({'is_test_account_enabled': new_status})
+    await crud_bot_setting.save_bot_settings({'is_test_account_enabled': new_status})
     
     text = await _get_test_account_menu_text()
     keyboard = await get_test_account_settings_keyboard()
@@ -274,12 +264,12 @@ async def toggle_test_account_activation(update: Update, context: ContextTypes.D
             
     return ADMIN_TEST_ACCOUNT_MENU
 
+
 async def prompt_for_value(update: Update, context: ContextTypes.DEFAULT_TYPE, setting_key: str, prompt_text_key: str) -> int:
-    """Deletes the menu and sends a clean prompt for a value."""
     query = update.callback_query
     await query.answer()
     
-    settings = await load_bot_settings()
+    settings = await crud_bot_setting.load_bot_settings()
     current_value = settings.get(setting_key, _("marzban_credentials.not_set"))
     prompt_text = _(prompt_text_key, current=current_value)
     
@@ -300,17 +290,20 @@ async def prompt_for_value(update: Update, context: ContextTypes.DEFAULT_TYPE, s
     if setting_key == 'test_account_gb': return GET_GB
     if setting_key == 'test_account_limit': return GET_LIMIT
 
+
 async def prompt_for_hours(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     return await prompt_for_value(update, context, 'test_account_hours', "bot_settings.test_account_v2.prompt_for_hours")
+
 
 async def prompt_for_gb(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     return await prompt_for_value(update, context, 'test_account_gb', "bot_settings.test_account_v2.prompt_for_gb")
 
+
 async def prompt_for_limit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     return await prompt_for_value(update, context, 'test_account_limit', "bot_settings.test_account_v2.prompt_for_limit")
 
+
 async def process_and_save_value(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Processes value, saves it, and resends the updated menu."""
     value_text = update.message.text.strip()
     setting_key = context.user_data.get('setting_to_change')
     
@@ -327,7 +320,7 @@ async def process_and_save_value(update: Update, context: ContextTypes.DEFAULT_T
         if setting_key == 'test_account_gb': return GET_GB
         if setting_key == 'test_account_limit': return GET_LIMIT
 
-    await save_bot_settings({setting_key: value})
+    await crud_bot_setting.save_bot_settings({setting_key: value})
     
     try:
         await update.message.delete()
@@ -336,11 +329,10 @@ async def process_and_save_value(update: Update, context: ContextTypes.DEFAULT_T
 
     context.user_data.clear()
     
-    # --- FIX 3: Call the start function with the new parameter set to False ---
     return await start_test_account_settings(update, context, should_delete_trigger_message=False)
 
+
 async def back_to_management_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Returns to the main helper tools menu and ends the conversation safely."""
     context.user_data.clear()
     chat_id = update.effective_chat.id
     
@@ -354,3 +346,5 @@ async def back_to_management_menu(update: Update, context: ContextTypes.DEFAULT_
     await context.bot.send_message(chat_id, _("bot_settings.helper_tools_menu_title"), reply_markup=get_helper_tools_keyboard())
 
     return ConversationHandler.END
+
+# --- END OF FILE modules/bot_settings/actions.py ---

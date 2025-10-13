@@ -1,50 +1,52 @@
-# FILE: modules/payment/actions/renewal.py
-
+# --- START OF FILE modules/payment/actions/renewal.py ---
 import logging
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import ContextTypes
 from telegram.constants import ParseMode
 from telegram.error import TelegramError
 
-from database.db_manager import (
-    load_financials, get_user_note, get_telegram_id_from_marzban_username,
-    create_pending_invoice
+from database.crud import (
+    financial_setting as crud_financial,
+    user_note as crud_user_note,
+    marzban_link as crud_marzban_link,
+    pending_invoice as crud_invoice
 )
 from shared.translator import _
 from shared.callback_types import SendReceipt, StartManualInvoice
-from shared.financial_utils import calculate_payment_details # <--- وارد کردن موتور جدید
+from shared.financial_utils import calculate_payment_details
 
 LOGGER = logging.getLogger(__name__)
 
 
 async def send_renewal_invoice_to_user(context: ContextTypes.DEFAULT_TYPE, user_telegram_id: int, username: str, renewal_days: int, price: int, data_limit_gb: int):
-    """
-    Creates and sends a standardized renewal invoice to a user.
-    It now uses the central payment calculation engine to handle wallet balance.
-    """
     try:
-        financials = await load_financials()
-        if not financials.get("card_holder") or not financials.get("card_number"):
+        financials = await crud_financial.load_financial_settings()
+        if not financials or not financials.card_holder or not financials.card_number:
             LOGGER.error(f"Cannot send renewal invoice to {username}: Financial settings not configured.")
             return
 
+        # Simplified plan_details for consistency. The source of truth is user_note.
         plan_details = {
-            'username': username, 
-            'volume': data_limit_gb, 
-            'duration': renewal_days,
-            'invoice_type': 'RENEWAL'
+            'invoice_type': 'RENEWAL',
+            'username': username,
+            'price': price
         }
-        invoice_id = await create_pending_invoice(user_telegram_id, plan_details, price)
-        if not invoice_id:
+        
+        invoice_obj = await crud_invoice.create_pending_invoice({
+            'user_id': user_telegram_id,
+            'plan_details': plan_details,
+            'price': price
+        })
+
+        if not invoice_obj:
             LOGGER.error(f"Failed to create renewal invoice for {username}.")
             return
 
-        # --- ✨ Modern Payment Calculation ✨ ---
+        invoice_id = invoice_obj.invoice_id
         payment_info = await calculate_payment_details(user_telegram_id, price)
         payable_amount = payment_info["payable_amount"]
         paid_from_wallet = payment_info["paid_from_wallet"]
         has_sufficient_funds = payment_info["has_sufficient_funds"]
-        # --- ----------------------------- ---
 
         invoice_text = _("financials_payment.invoice_title_renewal")
         invoice_text += _("financials_payment.invoice_number", id=invoice_id)
@@ -60,10 +62,9 @@ async def send_renewal_invoice_to_user(context: ContextTypes.DEFAULT_TYPE, user_
         invoice_text += _("financials_payment.invoice_payable_amount", amount=f"`{payable_amount:,.0f}`")
         
         if payable_amount > 0:
-            invoice_text += _("financials_payment.invoice_payment_details", card_number=f"`{financials['card_number']}`", card_holder=f"`{financials['card_holder']}`")
+            invoice_text += _("financials_payment.invoice_payment_details", card_number=f"`{financials.card_number}`", card_holder=f"`{financials.card_holder}`")
             invoice_text += _("financials_payment.invoice_footer_prompt")
         
-        # --- Modernized Keyboard Logic ---
         keyboard_rows = []
         if has_sufficient_funds:
             wallet_button_text = _("financials_payment.button_pay_with_wallet_full", price=f"{int(price):,}")
@@ -92,23 +93,20 @@ async def send_renewal_invoice_to_user(context: ContextTypes.DEFAULT_TYPE, user_
 
 
 async def send_manual_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    Handler for the admin button to send a renewal invoice based on saved user notes.
-    """
     query = update.callback_query
     await query.answer()
     username = query.data.split('_', 2)[-1]
     admin_chat_id = update.effective_chat.id
 
     try:
-        customer_id = await get_telegram_id_from_marzban_username(username)
+        customer_id = await crud_marzban_link.get_telegram_id_by_marzban_username(username)
         if not customer_id:
             await context.bot.send_message(admin_chat_id, _("financials_payment.error_customer_telegram_not_found", username=f"`{username}`"), parse_mode=ParseMode.MARKDOWN)
             return
             
-        note_data = await get_user_note(username)
-        price = note_data.get('subscription_price')
-        duration = note_data.get('subscription_duration')
+        note_data = await crud_user_note.get_user_note(username)
+        price = note_data.subscription_price if note_data else None
+        duration = note_data.subscription_duration if note_data else None
         
         if price is None or duration is None:
             callback_obj = StartManualInvoice(customer_id=customer_id, username=username)
@@ -124,17 +122,19 @@ async def send_manual_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE
             )
             return
 
-        # Use the central, modernized function to send the invoice
+        data_limit_gb = note_data.subscription_data_limit_gb if note_data and note_data.subscription_data_limit_gb is not None else 0
         await send_renewal_invoice_to_user(
             context,
             user_telegram_id=customer_id,
             username=username,
             renewal_days=duration,
             price=price,
-            data_limit_gb=note_data.get('subscription_data_limit_gb', 0)
+            data_limit_gb=data_limit_gb
         )
         await context.bot.send_message(admin_chat_id, _("financials_payment.invoice_sent_to_user_success_no_id"))
 
     except Exception as e:
         LOGGER.error(f"Failed to send manual invoice for user {username}: {e}", exc_info=True)
         await context.bot.send_message(admin_chat_id, _("financials_payment.unknown_error"), parse_mode=ParseMode.MARKDOWN)
+
+# --- END OF FILE modules/payment/actions/renewal.py ---

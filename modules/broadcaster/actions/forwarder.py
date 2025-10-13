@@ -1,3 +1,5 @@
+# --- START OF FILE modules/broadcaster/actions/forwarder.py (REVISED) ---
+
 # FILE: modules/broadcaster/actions/forwarder.py (NEW FILE)
 
 import logging
@@ -10,7 +12,9 @@ from telegram.error import TelegramError
 
 from shared.translator import _
 from shared.keyboards import get_message_builder_cancel_keyboard
-from database.db_manager import get_all_user_ids
+# --- MODIFIED IMPORT ---
+from database.crud import user as crud_user
+# --- ----------------- ---
 
 LOGGER = logging.getLogger(__name__)
 
@@ -75,7 +79,7 @@ async def forward_message_job(context: ContextTypes.DEFAULT_TYPE) -> None:
     from_chat_id = job_data['from_chat_id']
     message_id = job_data['message_id']
 
-    user_ids = await get_all_user_ids()
+    user_ids = await crud_user.get_all_user_ids()
     total = len(user_ids)
     success, failure = 0, 0
     
@@ -129,3 +133,5 @@ async def cancel_forwarder(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     # Now call show_broadcast_menu with a clean, predictable update object
     await show_broadcast_menu(DummyUpdate(message), context)
     return ConversationHandler.END
+
+# --- END OF FILE modules/broadcaster/actions/forwarder.py (REVISED) ---

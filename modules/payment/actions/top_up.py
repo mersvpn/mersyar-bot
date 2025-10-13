@@ -5,7 +5,7 @@ from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import ContextTypes
 from telegram.constants import ParseMode
 
-from database.db_manager import load_financials, get_user_wallet_balance, create_pending_invoice
+from database.crud import load_financials, get_user_wallet_balance, create_pending_invoice
 from shared.translator import _
 
 LOGGER = logging.getLogger(__name__)
@@ -16,7 +16,7 @@ async def send_data_top_up_invoice(context: ContextTypes.DEFAULT_TYPE, user_id: 
     Creates and sends an invoice for a data top-up request.
     """
     try:
-        financials = await load_financials()
+        financials = await crud_financial.get_financial_settings()
         if not financials.get("card_holder") or not financials.get("card_number"):
             LOGGER.error(f"Cannot send data top-up invoice to {username}: Financial settings not configured.")
             # Optionally, notify the user

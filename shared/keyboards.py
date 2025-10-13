@@ -1,9 +1,13 @@
+# --- START OF FILE shared/keyboards.py (REVISED AND COMPLETE) ---
+
 # FILE: shared/keyboards.py (FINAL VERSION - NAMESPACE CORRECTED)
 
 from telegram import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
 from config import config
 from shared.translator import _
-from database.db_manager import load_bot_settings
+# --- MODIFIED IMPORT ---
+from database.crud import bot_setting as crud_bot_setting
+# --- ----------------- ---
 
 # =============================================================================
 #  ReplyKeyboardMarkup Section
@@ -52,7 +56,7 @@ def get_helper_tools_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
 async def get_customer_main_menu_keyboard(user_id: int) -> ReplyKeyboardMarkup:
-    bot_settings = await load_bot_settings()
+    bot_settings = await crud_bot_setting.load_bot_settings()
     is_wallet_enabled = bot_settings.get('is_wallet_enabled', False)
     
     # --- FIX: All keys now use the 'keyboards.' namespace ---
@@ -91,7 +95,7 @@ def get_back_to_main_menu_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
 async def get_customer_view_for_admin_keyboard() -> ReplyKeyboardMarkup:
-    bot_settings = await load_bot_settings() 
+    bot_settings = await crud_bot_setting.load_bot_settings()
     is_wallet_enabled = bot_settings.get('is_wallet_enabled', False)
 
     # --- FIX: All keys now use the 'keyboards.' namespace ---
@@ -193,7 +197,7 @@ def get_back_to_management_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
 async def get_test_account_settings_keyboard() -> InlineKeyboardMarkup:
-    bot_settings = await load_bot_settings()
+    bot_settings = await crud_bot_setting.load_bot_settings()
     is_enabled = bot_settings.get('is_test_account_enabled', False)
     
     # --- FIX: All keys now use the 'keyboards.' namespace ---
@@ -312,3 +316,5 @@ def get_deeplink_targets_keyboard() -> InlineKeyboardMarkup:
         ]
     ]
     return InlineKeyboardMarkup(keyboard)
+
+# --- END OF FILE shared/keyboards.py (REVISED AND COMPLETE) ---

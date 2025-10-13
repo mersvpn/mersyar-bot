@@ -1,12 +1,16 @@
+# --- START OF FILE shared/log_channel.py (REVISED) ---
+
 # FILE: shared/log_channel.py (REVISED FOR STABILITY)
 
 import logging
-import html  # Import the html module for easy escaping
+import html
 from telegram import Bot, User
 from telegram.constants import ParseMode
 from telegram.error import TelegramError
 
-from database.db_manager import load_bot_settings
+# --- MODIFIED IMPORT ---
+from database.crud import bot_setting as crud_bot_setting
+# --- ----------------- ---
 from shared.translator import _
 
 LOGGER = logging.getLogger(__name__)
@@ -25,7 +29,7 @@ async def send_log(bot: Bot, text: str, parse_mode: str = ParseMode.HTML) -> boo
         True if the message was sent successfully, False otherwise.
     """
     try:
-        settings = await load_bot_settings()
+        settings = await crud_bot_setting.load_bot_settings()
         
         is_enabled = settings.get('is_log_channel_enabled', False)
         channel_id = settings.get('log_channel_id')
@@ -69,3 +73,5 @@ async def log_new_user_joined(bot: Bot, user: User) -> None:
     
     # We call the main send_log function. It will now use HTML by default.
     await send_log(bot, log_text)
+
+# --- END OF FILE shared/log_channel.py (REVISED) ---

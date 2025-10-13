@@ -1,11 +1,13 @@
-# FILE: modules/payment/actions/wallet.py
+# FILE: modules/payment/actions/wallet.py (FULLY CONVERTED, NO DELETIONS)
 
 import logging
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import ContextTypes
 from telegram.constants import ParseMode
 from shared.callback_types import SendReceipt 
-from database.db_manager import load_financials, get_pending_invoice, decrease_wallet_balance, get_user_by_id
+from database.crud import financial_setting as crud_financial
+from database.crud import pending_invoice as crud_invoice
+from database.crud import user as crud_user
 from shared.translator import _
 from .approval import approve_payment
 from shared.log_channel import send_log
@@ -17,8 +19,8 @@ async def send_wallet_charge_invoice(context: ContextTypes.DEFAULT_TYPE, user_id
     """
     Sends an invoice specifically for charging the user's wallet.
     """
-    financials = await load_financials()
-    if not financials.get("card_holder") or not financials.get("card_number"):
+    financials = await crud_financial.load_financial_settings()
+    if not financials or not financials.card_holder or not financials.card_number:
         LOGGER.error(f"Cannot send wallet charge invoice to user {user_id}: Financials not set.")
         try:
             await context.bot.send_message(chat_id=user_id, text=_("financials_payment.invoice_generation_unavailable"))
@@ -30,7 +32,7 @@ async def send_wallet_charge_invoice(context: ContextTypes.DEFAULT_TYPE, user_id
     invoice_text += _("financials_payment.invoice_number", id=invoice_id)
     invoice_text += "-------------------------------------\n"
     invoice_text += _("financials_payment.invoice_price", price=f"`{amount:,.0f}`")
-    invoice_text += _("financials_payment.invoice_payment_details", card_number=f"`{financials['card_number']}`", card_holder=f"`{financials['card_holder']}`")
+    invoice_text += _("financials_payment.invoice_payment_details", card_number=f"`{financials.card_number}`", card_holder=f"`{financials.card_holder}`")
     invoice_text += _("financials_payment.invoice_footer_prompt")
     
     send_receipt_callback = SendReceipt(invoice_id=invoice_id).to_string()
@@ -60,17 +62,17 @@ async def pay_with_wallet(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await query.edit_message_text(_("errors.internal_error"))
         return
 
-    invoice = await get_pending_invoice(invoice_id)
-    if not invoice or invoice['status'] != 'pending':
+    invoice = await crud_invoice.get_pending_invoice_by_id(invoice_id)
+    if not invoice or invoice.status != 'pending':
         await query.edit_message_text(_("financials_payment.invoice_already_processed_simple"))
         return
 
     user_id = update.effective_user.id
-    price = float(invoice.get('price', 0))
+    price = float(invoice.price)
 
     LOGGER.info(f"Start pay_with_wallet called: user_id={user_id}, invoice_id={invoice_id}, amount={price}")
 
-    new_balance = await decrease_wallet_balance(user_id=user_id, amount=price)
+    new_balance = await crud_user.decrease_wallet_balance(user_id=user_id, amount=price)
 
     if new_balance is not None:
         LOGGER.info(f"Wallet balance decreased successfully for user_id={user_id}, amount={price}")
@@ -82,9 +84,9 @@ async def pay_with_wallet(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         )
 
         # --- START: INTELLIGENT LOGGING TO CHANNEL ---
-        db_user = await get_user_by_id(user_id)
-        customer_name = db_user.get('username', f"ID: {user_id}") if db_user else f"ID: {user_id}"
-        plan_details = invoice.get('plan_details', {})
+        db_user = await crud_user.get_user_by_id(user_id)
+        customer_name = db_user.username if db_user and db_user.username else f"ID: {user_id}"
+        plan_details = invoice.plan_details
         invoice_type = plan_details.get("invoice_type")
         log_message = ""
 
@@ -155,7 +157,7 @@ async def pay_with_wallet(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             effective_user = MockUser()
             callback_query = MockQuery()
 
-        await approve_payment(MockUpdate(), context)
+        await approve_payment(MockUpdate(), context, auto_approved=True)
 
     else:
         await query.answer(_("financials_payment.wallet_payment_failed_insufficient_funds"), show_alert=True)

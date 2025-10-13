@@ -1,31 +1,27 @@
-# FILE: modules/payment/actions/manual.py (MODIFIED FOR CALLBACK_TYPES)
-
+# --- START OF FILE modules/payment/actions/manual.py ---
 import logging
+from decimal import Decimal
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import (
     ContextTypes, ConversationHandler, MessageHandler,
-    CommandHandler, filters
+    CommandHandler, filters, CallbackQueryHandler
 )
 from telegram.constants import ParseMode
-from telegram.ext import CallbackQueryHandler
 
-# --- MODIFIED: Added get_user_by_marzban_username ---
-from database.db_manager import load_financials, get_user_note, create_pending_invoice, get_user_by_marzban_username
+from database.crud import financial_setting as crud_financial
+from database.crud import user_note as crud_user_note
+from database.crud import pending_invoice as crud_invoice
+from database.crud import user as crud_user
 from shared.keyboards import get_admin_main_menu_keyboard
 from modules.general.actions import start as back_to_main_menu_action
 from config import config
 from shared.translator import _
-# --- MODIFIED: Import new callback types ---
 from shared.callback_types import StartManualInvoice, SendReceipt
 
-# Using a more specific name for the state
 GET_MANUAL_PRICE = 0
-
 LOGGER = logging.getLogger(__name__)
 
-
 async def start_manual_invoice_conv(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Starts the conversation for an admin to create a manual invoice."""
     query = update.callback_query
     if not update.effective_user or update.effective_user.id not in config.AUTHORIZED_USER_IDS:
         if query: await query.answer(_("financials_payment.access_denied"), show_alert=True)
@@ -33,7 +29,6 @@ async def start_manual_invoice_conv(update: Update, context: ContextTypes.DEFAUL
 
     await query.answer()
     
-    # --- MODIFIED: Use the new callback class to parse data ---
     callback_obj = StartManualInvoice.from_string(query.data)
     if not callback_obj:
         LOGGER.error(f"Invalid callback data for payment request: {query.data}")
@@ -43,13 +38,11 @@ async def start_manual_invoice_conv(update: Update, context: ContextTypes.DEFAUL
     marzban_username = callback_obj.username
     customer_id = callback_obj.customer_id
 
-    # If customer_id was a placeholder (0), try to find the real one from the database
     if customer_id == 0:
-        user_db_info = await get_user_by_marzban_username(marzban_username)
-        if user_db_info and user_db_info.get('telegram_id'):
-            customer_id = user_db_info['telegram_id']
+        user_db_info = await crud_user.get_user_by_marzban_username(marzban_username)
+        if user_db_info and user_db_info.user_id:
+            customer_id = user_db_info.user_id
         else:
-            # If still not found, inform the admin and end the conversation
             await query.edit_message_text(
                 _("financials_payment.error_customer_id_not_found", username=f"`{marzban_username}`"),
                 parse_mode=ParseMode.MARKDOWN
@@ -60,13 +53,11 @@ async def start_manual_invoice_conv(update: Update, context: ContextTypes.DEFAUL
     
     await query.edit_message_text(
         text=_("financials_payment.manual_invoice_prompt", username=f"`{marzban_username}`"),
-        
+        parse_mode=ParseMode.MARKDOWN
     )
     return GET_MANUAL_PRICE
 
-
 async def process_manual_price_and_send(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Processes the price entered by the admin and sends the manual invoice."""
     payment_info = context.user_data.get('payment_info')
     if not payment_info:
         await update.message.reply_text(_("financials_payment.error_user_info_lost"))
@@ -81,33 +72,47 @@ async def process_manual_price_and_send(update: Update, context: ContextTypes.DE
         await update.message.reply_text(_("financials_payment.invalid_price_input"))
         return GET_MANUAL_PRICE
         
-    financials = await load_financials()
-    if not financials.get("card_holder") or not financials.get("card_number"):
+    financials = await crud_financial.load_financial_settings()
+    if not financials or not financials.card_holder or not financials.card_number:
         await update.message.reply_text(_("financials_payment.error_financials_not_set"), parse_mode=ParseMode.MARKDOWN)
         return ConversationHandler.END
 
-    user_note = await get_user_note(marzban_username)
-    if not user_note:
-        LOGGER.warning(f"No subscription note found for {marzban_username} while creating manual invoice.")
+    # Step 1: Update the user_note with the new price first. This becomes the source of truth.
+    await crud_user_note.create_or_update_user_note(
+        marzban_username=marzban_username,
+        price=price_int
+    )
 
-    # Get current duration and volume, but overwrite price with the admin's input
-    duration = user_note.get('subscription_duration', 0) if user_note else 0
-    volume = user_note.get('subscription_data_limit_gb', 0) if user_note else 0
-    
+    # Step 2: Now, read the updated (or existing) note to build the invoice
+    user_note = await crud_user_note.get_user_note(marzban_username)
+    if not user_note:
+        LOGGER.error(f"Failed to read user_note for {marzban_username} immediately after saving.")
+        await update.message.reply_text(_("errors.internal_error"))
+        return ConversationHandler.END
+
+    duration = user_note.subscription_duration or 0
+    volume = user_note.subscription_data_limit_gb or 0
+
+    # Step 3: Create plan_details with consistent keys for the approval function
     plan_details = {
+        'invoice_type': 'MANUAL',
         'username': marzban_username,
-        'volume': volume,
-        'duration': duration,
-        'price': price_int,  # <-- IMPORTANT: Save the manually entered price
-        'invoice_type': 'MANUAL_INVOICE' # <-- IMPORTANT: Mark this invoice type
+        'renewal_days': duration,
+        'data_limit_gb': volume,
+        'price': price_int
     }
 
-    # Pass price_int to create_pending_invoice as it's the final price
-    invoice_id = await create_pending_invoice(customer_id, plan_details, price_int)
-    if not invoice_id:
+    invoice = await crud_invoice.create_pending_invoice({
+        'user_id': customer_id,
+        'plan_details': plan_details,
+        'price': price_int
+    })
+
+    if not invoice:
         await update.message.reply_text(_("financials_payment.error_creating_invoice_db"))
         return ConversationHandler.END
 
+    invoice_id = invoice.invoice_id
     LOGGER.info(f"Admin created manual invoice #{invoice_id} for user '{marzban_username}'.")
 
     try:
@@ -115,10 +120,9 @@ async def process_manual_price_and_send(update: Update, context: ContextTypes.DE
         payment_message += _("financials_payment.invoice_number", id=invoice_id)
         payment_message += _("financials_payment.invoice_service", username=f"`{marzban_username}`")
         payment_message += _("financials_payment.invoice_price", price=f"`{price_int:,}`")
-        payment_message += _("financials_payment.invoice_payment_details", card_number=financials['card_number'], card_holder=financials['card_holder'])
+        payment_message += _("financials_payment.invoice_payment_details", card_number=f"`{financials.card_number}`", card_holder=f"`{financials.card_holder}`")
         payment_message += _("financials_payment.invoice_footer_prompt")
         
-        # --- MODIFIED: Use the new callback class to build the button data ---
         send_receipt_callback = SendReceipt(invoice_id=invoice_id).to_string()
         
         keyboard = InlineKeyboardMarkup([
@@ -136,18 +140,16 @@ async def process_manual_price_and_send(update: Update, context: ContextTypes.DE
     await update.message.reply_text(_("financials_payment.back_to_main_menu"), reply_markup=get_admin_main_menu_keyboard())
     return ConversationHandler.END
 
-
 async def cancel_manual_invoice_conv(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Cancels the manual invoice creation conversation."""
     await update.message.reply_text(_("financials_payment.manual_invoice_cancelled"), reply_markup=get_admin_main_menu_keyboard())
     context.user_data.clear()
     return ConversationHandler.END
 
-
 manual_invoice_conv = ConversationHandler(
-    # --- MODIFIED: Use the PREFIX from the new callback class for the pattern ---
     entry_points=[CallbackQueryHandler(start_manual_invoice_conv, pattern=f"^{StartManualInvoice.PREFIX}:")],
     states={GET_MANUAL_PRICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_manual_price_and_send)]},
     fallbacks=[CommandHandler('cancel', cancel_manual_invoice_conv), CommandHandler('start', back_to_main_menu_action)],
     conversation_timeout=300, per_user=True, per_chat=True
 )
+
+# --- END OF FILE modules/payment/actions/manual.py ---```

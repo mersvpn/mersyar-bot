@@ -6,6 +6,7 @@ import datetime
 import asyncio # <-- کتابخانه جدید برای ایجاد تاخیر
 from typing import Tuple, Dict, Any, Optional, Union, List
 from .constants import GB_IN_BYTES
+from database.crud import marzban_credential as crud_credential
 from .data_manager import normalize_username
 
 LOGGER = logging.getLogger(__name__)
@@ -105,6 +106,24 @@ async def _api_request(method: str, endpoint: str, **kwargs) -> Optional[Dict[st
 async def get_all_users() -> Optional[List[Dict[str, Any]]]:
     response = await _api_request("GET", "/api/users", timeout=40.0)
     return response.get("users") if response and "error" not in response else None
+
+async def init_marzban_credentials():
+    """
+    اطلاعات اتصال به مرزبان را از دیتابیس خوانده و در حافظه کش می‌کند.
+    """
+    global _marzban_credentials
+    creds_obj = await crud_credential.load_marzban_credentials()
+    
+    if creds_obj:
+        _marzban_credentials = {
+            "base_url": creds_obj.base_url,
+            "username": creds_obj.username,
+            "password": creds_obj.password
+        }
+        LOGGER.info("Marzban credentials loaded into memory.")
+    else:
+        _marzban_credentials = {}
+        LOGGER.warning("Marzban credentials could not be loaded from database.")
 
 async def get_user_data(username: str) -> Optional[Dict[str, Any]]:
     if not username: return None

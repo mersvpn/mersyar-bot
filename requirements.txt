@@ -8,10 +8,11 @@ python-dotenv
 httpx[http2]
 
 # ===== Database Connector =====
-# For connecting to MySQL asynchronously
+SQLAlchemy>=2.0
 aiomysql
 # Required by aiomysql for modern MySQL authentication
 cryptography
+alembic
 
 # ===== Date & Time =====
 jdatetime
@@ -19,7 +20,4 @@ jdatetime
 # ===== Utilities =====
 qrcode
 Pillow
-
 aiofiles
-
-python-telegram-bot

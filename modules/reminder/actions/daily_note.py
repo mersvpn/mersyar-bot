@@ -1,5 +1,4 @@
-# FILE: modules/reminder/actions/daily_note.py (REVISED)
-
+# --- START OF FILE modules/reminder/actions/daily_note.py ---
 import logging
 import uuid
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
@@ -10,15 +9,11 @@ from telegram.ext import (
 from telegram.constants import ParseMode
 from telegram.helpers import escape_markdown
 from shared.callbacks import end_conversation_and_show_menu
-from database import db_manager
-# V V V V V THE FIX IS HERE (IMPORTS) V V V V V
-
-# ^ ^ ^ ^ ^ THE FIX IS HERE (IMPORTS) ^ ^ ^ ^ ^
+from database.crud import admin_daily_note as crud_daily_note
 from shared.keyboards import get_settings_and_tools_keyboard
 
 LOGGER = logging.getLogger(__name__)
 
-# Conversation states
 (
     MAIN_MENU, LIST_NOTES, VIEW_NOTE,
     ADD_GET_TITLE, ADD_GET_TEXT, CONFIRM_DELETE,
@@ -27,10 +22,6 @@ LOGGER = logging.getLogger(__name__)
 
 
 async def main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """
-    Entry point for the daily notes conversation.
-    Deletes the user's trigger message and sends a clean menu.
-    """
     is_entry = update.message is not None
 
     keyboard = [
@@ -64,7 +55,7 @@ async def main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 
 
 async def _build_list_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    notes = await db_manager.get_all_daily_notes()
+    notes = await crud_daily_note.get_all_daily_notes()
     keyboard = []
     text = " L️ **لیست یادداشت‌ها**\n\n"
 
@@ -73,7 +64,7 @@ async def _build_list_message(update: Update, context: ContextTypes.DEFAULT_TYPE
     else:
         text += "برای مشاهده، ویرایش یا حذف، روی عنوان کلیک کنید."
         for note in notes:
-            keyboard.append([InlineKeyboardButton(note.get("title", "بدون عنوان"), callback_data=f"dnote_view_{note['id']}")])
+            keyboard.append([InlineKeyboardButton(note.title or "بدون عنوان", callback_data=f"dnote_view_{note.id}")])
     
     keyboard.append([InlineKeyboardButton("🔙 بازگشت به منو", callback_data="dnote_main_menu_prompt")])
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -82,15 +73,15 @@ async def _build_list_message(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 async def _build_view_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     note_id = context.user_data.get('current_note_id')
-    note_to_show = await db_manager.get_daily_note_by_id(note_id)
+    note_to_show = await crud_daily_note.get_daily_note_by_id(note_id)
 
     if not note_to_show:
         await update.callback_query.answer("خطا: یادداشت یافت نشد.", show_alert=True)
         await _build_list_message(update, context)
         return LIST_NOTES
 
-    title = escape_markdown(note_to_show.get('title', ''))
-    body = escape_markdown(note_to_show.get('text', ''))
+    title = escape_markdown(note_to_show.title or '')
+    body = escape_markdown(note_to_show.text or '')
     text = f"**عنوان:** {title}\n\n**متن:**\n{body}"
     keyboard = [
         [
@@ -132,7 +123,7 @@ async def add_get_text_and_save(update: Update, context: ContextTypes.DEFAULT_TY
     note_id = str(uuid.uuid4())
     title = context.user_data.pop('new_note_title', 'Untitled')
     text = update.message.text
-    await db_manager.add_daily_note(note_id, title, text)
+    await crud_daily_note.add_daily_note({'id': note_id, 'title': title, 'text': text})
     
     await update.message.reply_text("✅ یادداشت جدید با موفقیت ذخیره شد.", reply_markup=get_settings_and_tools_keyboard())
     
@@ -158,7 +149,7 @@ async def delete_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
 
 async def delete_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     note_id = context.user_data.pop('current_note_id')
-    await db_manager.delete_daily_note_by_id(note_id)
+    await crud_daily_note.delete_daily_note_by_id(note_id)
     await update.callback_query.answer("یادداشت حذف شد.")
     return await list_notes(update, context)
 
@@ -198,16 +189,19 @@ async def edit_save(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         await update.message.reply_text("خطا: اطلاعات ویرایش یافت نشد.")
         return await main_menu(update, context)
 
-    note_to_edit = await db_manager.get_daily_note_by_id(note_id)
-    if note_to_edit:
-        note_to_edit[field_to_edit] = update.message.text
-        await db_manager.update_daily_note(note_id, note_to_edit['title'], note_to_edit['text'])
+    update_data = {field_to_edit: update.message.text}
+    success = await crud_daily_note.update_daily_note(note_id, update_data)
+
+    if success:
         await update.message.reply_text("✅ یادداشت با موفقیت ویرایش شد.")
     else:
         await update.message.reply_text("خطا: یادداشت برای ویرایش یافت نشد.")
     
-    # Create a dummy query to call the next state
     dummy_update = Update(update.update_id, callback_query=update.callback_query)
+    # The callback_query object needs to be constructed correctly for _build_view_message
+    if dummy_update.callback_query:
+        dummy_update.callback_query.message = update.message
+
     return await _build_view_message(dummy_update, context)
 
 
@@ -241,13 +235,12 @@ daily_notes_conv = ConversationHandler(
         EDIT_GET_TITLE: [MessageHandler(filters.TEXT & ~filters.COMMAND, edit_save)],
         EDIT_GET_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, edit_save)],
     },
-    # V V V V V THE FIX IS HERE (FALLBACKS) V V V V V
     fallbacks=[
         CommandHandler('cancel', end_conversation_and_show_menu),
         CallbackQueryHandler(end_conversation_and_show_menu, pattern='^cancel_conv$')
     ],
-    # ^ ^ ^ ^ ^ THE FIX IS HERE (FALLBACKS) ^ ^ ^ ^ ^
     conversation_timeout=600,
     per_user=True,
     per_chat=True
 )
+# --- END OF FILE modules/reminder/actions/daily_note.py ---

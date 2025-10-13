@@ -1,4 +1,4 @@
-# FILE: modules/customer/actions/renewal.py (REWRITTEN FOR CORRECT WORKFLOW)
+# --- START OF FILE modules/customer/actions/renewal.py ---
 
 import logging
 from telegram import Update
@@ -9,8 +9,9 @@ from telegram.helpers import escape_markdown
 from config import config
 from modules.marzban.actions.data_manager import normalize_username
 from shared.translator import _
-# --- NEW IMPORTS ---
-from database.db_manager import get_user_note
+# --- MODIFIED IMPORTS ---
+from database.crud import user_note as crud_user_note
+from database.crud import non_renewal_user as crud_non_renewal_user
 from modules.payment.actions.renewal import send_renewal_invoice_to_user
 
 LOGGER = logging.getLogger(__name__)
@@ -27,11 +28,16 @@ async def handle_renewal_request(update: Update, context: ContextTypes.DEFAULT_T
     user_id = update.effective_user.id
     marzban_username = query.data.split('_')[-1]
     
-    # Get subscription details from the database
-    note_data = await get_user_note(marzban_username)
-    price = note_data.get('subscription_price')
-    duration = note_data.get('subscription_duration')
-    data_limit_gb = note_data.get('subscription_data_limit_gb', 0) # Default to 0 if not set
+    # Get subscription details from the database using the new CRUD function
+    note_data = await crud_user_note.get_user_note(marzban_username)
+    
+    # Check if a note exists first, then check its attributes
+    if not note_data:
+        price, duration, data_limit_gb = None, None, 0
+    else:
+        price = note_data.subscription_price
+        duration = note_data.subscription_duration
+        data_limit_gb = note_data.subscription_data_limit_gb or 0 # Default to 0 if None
 
     # Check if subscription details are valid
     if price is None or duration is None or price <= 0 or duration <= 0:
@@ -69,8 +75,6 @@ async def handle_renewal_request(update: Update, context: ContextTypes.DEFAULT_T
 
 async def handle_do_not_renew(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handles the user's choice to opt-out of renewal reminders."""
-    from database.db_manager import add_to_non_renewal_list
-
     query = update.callback_query
     await query.answer()
 
@@ -80,7 +84,8 @@ async def handle_do_not_renew(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     LOGGER.info(f"User {user.id} ({normalized_user}) opted out of renewal reminders.")
 
-    await add_to_non_renewal_list(normalized_user)
+    # Use the new CRUD function to add to the non-renewal list
+    await crud_non_renewal_user.add_to_non_renewal_list(normalized_user)
 
     await query.edit_message_text(_("renewal.do_not_renew_success"))
 
@@ -102,3 +107,5 @@ async def handle_do_not_renew(update: Update, context: ContextTypes.DEFAULT_TYPE
                 )
             except Exception as e:
                 LOGGER.error(f"Failed to send 'do not renew' notification to admin {admin_id}: {e}")
+
+# --- END OF FILE modules/customer/actions/renewal.py ---

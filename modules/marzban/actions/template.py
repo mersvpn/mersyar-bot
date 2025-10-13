@@ -1,11 +1,12 @@
-# FILE: modules/marzban/actions/template.py (REVISED FOR I18N)
+# --- START OF FILE modules/marzban/actions/template.py ---
 import logging
 from telegram import Update, ReplyKeyboardRemove
 from telegram.ext import ContextTypes, ConversationHandler
 from telegram.constants import ParseMode
 
 from .constants import SET_TEMPLATE_USER_PROMPT
-from .data_manager import load_template_config, save_template_config, normalize_username
+from database.crud import template_config as crud_template
+from .data_manager import normalize_username
 from shared.keyboards import get_settings_and_tools_keyboard
 from .api import get_user_data
 
@@ -13,8 +14,8 @@ LOGGER = logging.getLogger(__name__)
 
 async def set_template_user_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     from shared.translator import _
-    template_config = await load_template_config()
-    current_template = template_config.get("template_username", _("marzban_template.not_set"))
+    template_config_obj = await crud_template.load_template_config()
+    current_template = template_config_obj.template_username if template_config_obj else _("marzban_template.not_set")
     LOGGER.info(f"[Template] Entering template setup. Current: '{current_template}'")
 
     message = _("marzban_template.title")
@@ -43,9 +44,9 @@ async def set_template_user_process(update: Update, context: ContextTypes.DEFAUL
         await update.message.reply_text(_("marzban_template.validation_error", username=f"`{username}`"))
         return SET_TEMPLATE_USER_PROMPT
 
-    template_config = {"template_username": username, "proxies": proxies, "inbounds": inbounds}
-    LOGGER.info(f"[Template] Saving new template config: {template_config}")
-    await save_template_config(template_config)
+    template_config_data = {"template_username": username, "proxies": proxies, "inbounds": inbounds}
+    LOGGER.info(f"[Template] Saving new template config: {template_config_data}")
+    await crud_template.save_template_config(template_config_data)
 
     confirmation_message = _("marzban_template.success_title")
     confirmation_message += _("marzban_template.success_username", username=f"`{username}`")
@@ -57,3 +58,5 @@ async def set_template_user_process(update: Update, context: ContextTypes.DEFAUL
         confirmation_message, reply_markup=get_settings_and_tools_keyboard(), parse_mode=ParseMode.MARKDOWN
     )
     return ConversationHandler.END
+
+# --- END OF FILE modules/marzban/actions/template.py ---

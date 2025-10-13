@@ -1,5 +1,4 @@
-# FILE: modules/reminder/actions/jobs.py (REFACTORED & OPTIMIZED VERSION)
-
+# --- START OF FILE modules/reminder/actions/jobs.py ---
 import datetime
 import logging
 import jdatetime
@@ -8,40 +7,34 @@ from telegram.constants import ParseMode
 from telegram.helpers import escape_markdown
 from telegram import InlineKeyboardMarkup, InlineKeyboardButton
 
-from modules.marzban.actions.data_manager import load_users_map, normalize_username
-from modules.marzban.actions.api import get_all_users, delete_user_api, get_user_data # (renew_user_subscription_api removed)
+from modules.marzban.actions.api import get_all_users, delete_user_api, get_user_data
 from modules.marzban.actions.constants import GB_IN_BYTES
 from shared.log_channel import send_log
-from database.db_manager import (
-    load_bot_settings, load_non_renewal_users, expire_old_pending_invoices,
-    
-    get_users_ready_for_auto_renewal, get_users_for_auto_renewal_warning, 
-    get_all_managed_users, cleanup_marzban_user_data,get_all_test_accounts,is_account_test,create_pending_invoice,
-    decrease_wallet_balance, increase_wallet_balance, get_user_note, get_all_auto_renew_users, get_user_wallet_balance
+from database.crud import (
+    bot_setting as crud_bot_setting,
+    non_renewal_user as crud_non_renewal,
+    pending_invoice as crud_invoice,
+    bot_managed_user as crud_managed_user,
+    user_note as crud_user_note,
+    user as crud_user,marzban_link as crud_marzban_link
 )
-from modules.payment.actions.approval import approve_payment 
+from modules.marzban.actions.data_manager import cleanup_marzban_user_data, load_users_map
+from modules.payment.actions.approval import approve_payment
 
 LOGGER = logging.getLogger(__name__)
 
 async def _perform_auto_renewal(context: ContextTypes.DEFAULT_TYPE, telegram_user_id: int, marzban_username: str, subscription_price: int, **kwargs) -> bool:
-    """
-    Performs auto-renewal by first deducting from the wallet, and if successful,
-    directly triggering the approval logic.
-    """
     price = float(subscription_price)
 
-    # Step 1: Secure the funds first
-    new_balance = await decrease_wallet_balance(telegram_user_id, price)
+    new_balance = await crud_user.decrease_wallet_balance(telegram_user_id, price)
     if new_balance is None:
         LOGGER.error(f"Auto-renew for {marzban_username} aborted: Insufficient funds at the moment of transaction.")
         return False
 
     LOGGER.info(f"Auto-renewal funds secured for {marzban_username}. Balance deducted. Proceeding to renewal.")
 
-    # Step 2: Create a temporary invoice for the approval system to process
-    # Note: We need to get duration and volume for the invoice details
-    note_data = await get_user_note(marzban_username)
-    duration = note_data.get('subscription_duration', 30)
+    note_data = await crud_user_note.get_user_note(marzban_username)
+    duration = note_data.subscription_duration if note_data else 30
     user_panel_data = await get_user_data(marzban_username)
     volume_gb = (user_panel_data.get('data_limit', 0) / GB_IN_BYTES) if user_panel_data else 0
 
@@ -52,20 +45,25 @@ async def _perform_auto_renewal(context: ContextTypes.DEFAULT_TYPE, telegram_use
         'price': price,
         'invoice_type': 'RENEWAL'
     }
-    invoice_id = await create_pending_invoice(telegram_user_id, plan_details, price)
-    if not invoice_id:
+    
+    invoice_obj = await crud_invoice.create_pending_invoice({
+        'user_id': telegram_user_id,
+        'plan_details': plan_details,
+        'price': int(price)
+    })
+
+    if not invoice_obj:
         LOGGER.critical(f"CRITICAL: Wallet balance for {marzban_username} was deducted, but invoice creation failed. Rolling back payment.")
-        await increase_wallet_balance(telegram_user_id, price)
+        await crud_user.increase_wallet_balance(telegram_user_id, price)
         return False
 
-    # Step 3: Trigger the approval logic directly using a mock update
     class MockUser:
         id = 0
         full_name = "سیستم تمدید خودکار"
 
     class MockQuery:
-        data = f"approve_receipt_{invoice_id}"
-        message = type('obj', (object,), {'caption' : f"Auto-approved invoice #{invoice_id} via auto-renew job"})()
+        data = f"approve_receipt_{invoice_obj.invoice_id}"
+        message = type('obj', (object,), {'caption' : f"Auto-approved invoice #{invoice_obj.invoice_id} via auto-renew job"})()
         async def answer(self, *args, **kwargs): pass
         async def edit_message_caption(self, *args, **kwargs): pass
     
@@ -75,15 +73,13 @@ async def _perform_auto_renewal(context: ContextTypes.DEFAULT_TYPE, telegram_use
         
     try:
         await approve_payment(MockUpdate(), context)
-        LOGGER.info(f"Auto-renewal for {marzban_username} (Invoice #{invoice_id}) completed successfully.")
+        LOGGER.info(f"Auto-renewal for {marzban_username} (Invoice #{invoice_obj.invoice_id}) completed successfully.")
         return True
     except Exception as e:
         LOGGER.critical(f"CRITICAL: Auto-renewal for {marzban_username} failed at approval stage. Rolling back payment. Error: {e}", exc_info=True)
-        await increase_wallet_balance(telegram_user_id, price)
+        await crud_user.increase_wallet_balance(telegram_user_id, price)
         return False
-# =============================================================================
-#  Main Daily Job Function (Completely Refactored for Performance)
-# =============================================================================
+
 
 async def check_users_for_reminders(context: ContextTypes.DEFAULT_TYPE) -> None:
     from shared.translator import _
@@ -93,15 +89,13 @@ async def check_users_for_reminders(context: ContextTypes.DEFAULT_TYPE) -> None:
     LOGGER.info(f"Executing daily job for admin {admin_id}...")
 
     try:
-        # --- Stage 0: Initial Cleanup ---
-        expired_count = await expire_old_pending_invoices()
+        expired_count = await crud_invoice.expire_old_pending_invoices()
         if expired_count > 0:
             log_message = _("reminder_jobs.invoice_expiry_report_title")
             log_message += _("reminder_jobs.invoice_expiry_report_body", count=f"`{expired_count}`")
             await send_log(context.bot, log_message, parse_mode=ParseMode.MARKDOWN)
 
-        # --- Stage 1: Load essential data ---
-        settings = await load_bot_settings()
+        settings = await crud_bot_setting.load_bot_settings()
         all_users_from_panel = await get_all_users()
         if all_users_from_panel is None:
             await context.bot.send_message(admin_id, _("reminder_jobs.daily_report_panel_error"))
@@ -110,45 +104,44 @@ async def check_users_for_reminders(context: ContextTypes.DEFAULT_TYPE) -> None:
         panel_users_dict = {user['username']: user for user in all_users_from_panel if user.get('username')}
         days_threshold = settings.get('reminder_days', 3)
         data_gb_threshold = settings.get('reminder_data_gb', 1)
-        non_renewal_list = await load_non_renewal_users()
+        non_renewal_list = await crud_non_renewal.get_all_non_renewal_users()
         users_map = await load_users_map()
         
-        # Get all users with auto-renew enabled from the links table
-        auto_renew_candidates = await get_all_auto_renew_users()
+        # [ORM CHANGE]: Use the new CRUD function
+        auto_renew_candidates = await crud_marzban_link.get_all_auto_renew_links()
         
-        # --- Initialize report lists ---
         expiring_users, low_data_users, auto_renew_success_report, auto_renew_fail_report = [], [], [], []
         processed_users = set()
 
-        # --- Stage 2: Process ALL auto-renewal candidates ---
         LOGGER.info(f"Found {len(auto_renew_candidates)} total users with auto-renew enabled. Checking them now...")
-        for user_data in auto_renew_candidates:
-            marzban_username = user_data['marzban_username']
+        for user_link in auto_renew_candidates:  # <-- Changed variable name for clarity
+            # [ORM CHANGE]: Access attributes with dot notation
+            marzban_username = user_link.marzban_username
+            telegram_user_id = user_link.telegram_user_id
+            
             panel_user = panel_users_dict.get(marzban_username)
-
-            if not panel_user or panel_user.get('status') != 'active' or await is_account_test(marzban_username):
+            note_info = await crud_user_note.get_user_note(marzban_username)
+            
+            if not panel_user or panel_user.get('status') != 'active' or (note_info and note_info.is_test_account):
                 continue
 
             if expire_ts := panel_user.get('expire'):
                 expire_date = datetime.datetime.fromtimestamp(expire_ts)
                 now = datetime.datetime.now()
-                # Check if user is in the renewal window
                 if now < expire_date < (now + datetime.timedelta(days=days_threshold)):
                     
-                    # Fetch the LATEST wallet balance and note info right before processing
-                    user_note = await get_user_note(marzban_username)
-                    wallet_balance = await get_user_wallet_balance(user_data['telegram_user_id'])
-                    price = float(user_note.get('subscription_price', 0))
+                    user_note = await crud_user_note.get_user_note(marzban_username)
+                    wallet_balance_obj = await crud_user.get_user_wallet_balance(telegram_user_id)
+                    wallet_balance = float(wallet_balance_obj) if wallet_balance_obj is not None else 0.0
+                    price = float(user_note.subscription_price) if user_note and user_note.subscription_price is not None else 0.0
 
-                    # Scenario A: Sufficient funds
-                    if wallet_balance is not None and wallet_balance >= price and price > 0:
+                    if wallet_balance >= price and price > 0:
                         LOGGER.info(f"Attempting auto-renewal for '{marzban_username}' (Sufficient funds).")
-                        # Pass all necessary data to the renewal function
                         full_user_data = {
-                            "telegram_user_id": user_data['telegram_user_id'],
+                            "telegram_user_id": telegram_user_id,
                             "marzban_username": marzban_username,
-                            "subscription_price": price,
-                            "subscription_duration": user_note.get('subscription_duration', 30)
+                            "subscription_price": int(price),
+                            "subscription_duration": user_note.subscription_duration if user_note else 30
                         }
 
                         if await _perform_auto_renewal(context, **full_user_data):
@@ -156,25 +149,24 @@ async def check_users_for_reminders(context: ContextTypes.DEFAULT_TYPE) -> None:
                         else:
                             auto_renew_fail_report.append(panel_user)
                     
-                    # Scenario B: Insufficient funds
                     else:
                         LOGGER.info(f"User '{marzban_username}' has insufficient funds for auto-renewal. Sending warning.")
                         try:
-                            await context.bot.send_message(user_data['telegram_user_id'], _("reminder_jobs.auto_renew_failed_customer_funds"))
+                            await context.bot.send_message(telegram_user_id, _("reminder_jobs.auto_renew_failed_customer_funds"))
                             auto_renew_fail_report.append(panel_user)
                         except Exception as e:
                             LOGGER.warning(f"Failed to send warning to customer for {marzban_username}: {e}")
                     
                     processed_users.add(marzban_username)
         
-        # --- Stage 3: Process Standard Reminders for Remaining Users ---
         LOGGER.info("Processing standard reminders for users without auto-renew or not in expiry window.")
         for panel_user in all_users_from_panel:
             username = panel_user.get('username')
-            if not username or username in processed_users or normalize_username(username) in non_renewal_list:
+            note_info = await crud_user_note.get_user_note(username)
+            if not username or username in processed_users or username in non_renewal_list:
                 continue
 
-            if panel_user.get('status') != 'active' or await is_account_test(username):
+            if panel_user.get('status') != 'active' or (note_info and note_info.is_test_account):
                 continue
 
             is_expiring, is_low_data, expire_date = False, False, None
@@ -187,7 +179,7 @@ async def check_users_for_reminders(context: ContextTypes.DEFAULT_TYPE) -> None:
             if data_limit > 0 and (data_limit - (panel_user.get('used_traffic') or 0)) < (data_gb_threshold * GB_IN_BYTES):
                 is_low_data = True
             
-            customer_telegram_id = users_map.get(normalize_username(username))
+            customer_telegram_id = users_map.get(username)
             if customer_telegram_id and (is_expiring or is_low_data):
                 try:
                     customer_message = _("reminder_jobs.customer_reminder_title", username=f"`{username}`")
@@ -210,7 +202,6 @@ async def check_users_for_reminders(context: ContextTypes.DEFAULT_TYPE) -> None:
             if is_expiring: expiring_users.append(panel_user)
             if is_low_data and not is_expiring: low_data_users.append(panel_user)
         
-        # --- Stage 4: Compile and Send Admin Report ---
         auto_renew_attempts = auto_renew_success_report + auto_renew_fail_report
         if any([expiring_users, low_data_users, auto_renew_attempts]):
             jalali_today = jdatetime.datetime.now().strftime('%Y/%m/%d')
@@ -246,7 +237,6 @@ async def check_users_for_reminders(context: ContextTypes.DEFAULT_TYPE) -> None:
         else:
             LOGGER.info("No items to report today. Reminder job finished.")
         
-        # --- Stage 5: Run Cleanup Job ---
         await auto_delete_expired_users(context)
 
     except Exception as e:
@@ -257,13 +247,13 @@ async def check_users_for_reminders(context: ContextTypes.DEFAULT_TYPE) -> None:
         except Exception as notify_error:
             LOGGER.error(f"Failed to notify admin about the job failure: {notify_error}")
 
-# The auto_delete_expired_users function does not need changes as it's already efficient.
+
 async def auto_delete_expired_users(context: ContextTypes.DEFAULT_TYPE) -> None:
     from shared.translator import _
     
     LOGGER.info("Starting auto-delete job for expired users...")
     
-    settings = await load_bot_settings()
+    settings = await crud_bot_setting.load_bot_settings()
     grace_days = settings.get('auto_delete_grace_days', 0)
     if grace_days <= 0:
         LOGGER.info("Auto-delete is disabled. Skipping."); return
@@ -272,7 +262,7 @@ async def auto_delete_expired_users(context: ContextTypes.DEFAULT_TYPE) -> None:
     if all_users is None:
         LOGGER.error("Auto-delete job failed: Could not fetch users."); return
 
-    managed_users_set = set(await get_all_managed_users())
+    managed_users_set = set(await crud_managed_user.get_all_managed_users())
     if not managed_users_set:
         LOGGER.info("No bot-managed users found. Auto-delete job finished."); return
         
@@ -281,7 +271,7 @@ async def auto_delete_expired_users(context: ContextTypes.DEFAULT_TYPE) -> None:
 
     for user in all_users:
         username = user.get('username')
-        if not username or user.get('status') == 'active' or normalize_username(username) not in managed_users_set:
+        if not username or user.get('status') == 'active' or username not in managed_users_set:
             continue
             
         if expire_ts := user.get('expire'):
@@ -289,7 +279,7 @@ async def auto_delete_expired_users(context: ContextTypes.DEFAULT_TYPE) -> None:
             if datetime.datetime.now() > (expire_date + grace_period):
                 LOGGER.info(f"User '{username}' is expired for more than {grace_days} days. Deleting...")
                 if (await delete_user_api(username))[0]:
-                    await cleanup_marzban_user_data(normalize_username(username))
+                    await cleanup_marzban_user_data(username)
                     deleted_users.append(username)
                 else:
                     LOGGER.error(f"Failed to delete user '{username}' from Marzban panel.")
@@ -303,11 +293,9 @@ async def auto_delete_expired_users(context: ContextTypes.DEFAULT_TYPE) -> None:
         LOGGER.info("Auto-delete job finished. No users met deletion criteria.")
 
 
-# The scheduling functions do not need changes.
 async def schedule_initial_daily_job(application: Application):
-    from database.db_manager import load_bot_settings
     try:
-        settings = await load_bot_settings()
+        settings = await crud_bot_setting.load_bot_settings()
         admin_id = application.bot_data.get('admin_id_for_jobs')
         if not admin_id:
             LOGGER.warning("Cannot schedule daily job: Admin ID not found."); return
@@ -315,6 +303,7 @@ async def schedule_initial_daily_job(application: Application):
         await schedule_daily_job(application, time_obj)
     except Exception as e:
         LOGGER.error(f"Failed to schedule initial daily job: {e}", exc_info=True)
+
 
 async def schedule_daily_job(application: Application, time_obj: datetime.time):
     admin_id = application.bot_data.get('admin_id_for_jobs')
@@ -332,45 +321,33 @@ async def schedule_daily_job(application: Application, time_obj: datetime.time):
     job_queue.run_daily(callback=check_users_for_reminders, time=job_time, chat_id=admin_id, name=job_name)
     LOGGER.info(f"Daily job (reminders & cleanup) scheduled for {job_time.strftime('%H:%M')} Tehran time.")
 
-# =============================================================================
-#  Hourly Job for Test Account Cleanup
-# =============================================================================
 
 async def cleanup_expired_test_accounts(context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    This job runs periodically (e.g., hourly) to find and delete expired test accounts.
-    (MODIFIED: Sends notification to customer after deleting expired test account)
-    """
     from shared.translator import _
     
     LOGGER.info("Starting hourly job: Cleaning up expired test accounts...")
     
-    # 1. Get the list of all usernames marked as 'test_account' from our DB
-    test_account_usernames = await get_all_test_accounts()
+    test_accounts = await crud_user_note.get_all_test_accounts()
     
-    if not test_account_usernames:
+    if not test_accounts:
         LOGGER.info("Test account cleanup job finished. No test accounts found in the database.")
         return
         
-    LOGGER.info(f"Found {len(test_account_usernames)} test accounts to check.")
+    LOGGER.info(f"Found {len(test_accounts)} test accounts to check.")
     
     deleted_users_count = 0
     
-    # (NEW) Load users_map to find Telegram ID for notifications
     users_map = await load_users_map()
 
-    # 2. Iterate through each test account username
-    for username in test_account_usernames:
-        telegram_user_id = users_map.get(normalize_username(username)) # (NEW) Get Telegram user ID
+    for test_account in test_accounts:
+        username = test_account.username
+        telegram_user_id = users_map.get(username)
         
-        # 3. Get the user's current data from the Marzban panel
         user_data = await get_user_data(username)
         
-        # If user doesn't exist in Marzban, clean them up from our DB anyway
         if not user_data:
             LOGGER.warning(f"Test account '{username}' found in DB but not in Marzban. Cleaning up DB records.")
-            await cleanup_marzban_user_data(normalize_username(username))
-            # (NEW) If we have a Telegram ID, notify the user they are cleaned up
+            await cleanup_marzban_user_data(username)
             if telegram_user_id:
                 try:
                     await context.bot.send_message(
@@ -385,21 +362,17 @@ async def cleanup_expired_test_accounts(context: ContextTypes.DEFAULT_TYPE) -> N
                     LOGGER.warning(f"Failed to send cleanup notification to user {telegram_user_id} for ghost test account {username}: {e}")
             continue
             
-        # 4. Check if the user is expired
         expire_ts = user_data.get('expire', 0)
         
-        # Only proceed if the user has an expiration date and it's in the past
         if expire_ts and expire_ts < datetime.datetime.now().timestamp():
             LOGGER.info(f"Test account '{username}' has expired. Deleting now...")
             
-            # 5. Delete the user from both Marzban panel and our local database
             success, message = await delete_user_api(username)
             if success:
-                await cleanup_marzban_user_data(normalize_username(username))
+                await cleanup_marzban_user_data(username)
                 deleted_users_count += 1
                 LOGGER.info(f"Successfully deleted expired test account '{username}'.")
                 
-                # (NEW) Send notification to the user
                 if telegram_user_id:
                     try:
                         await context.bot.send_message(
@@ -421,3 +394,5 @@ async def cleanup_expired_test_accounts(context: ContextTypes.DEFAULT_TYPE) -> N
         LOGGER.info(f"Test account cleanup job finished. Deleted {deleted_users_count} expired accounts.")
     else:
         LOGGER.info("Test account cleanup job finished. No accounts were expired.")
+
+# --- END OF FILE modules/reminder/actions/jobs.py ---

@@ -1,5 +1,4 @@
-# FILE: modules/customer/actions/service.py (REFACTORED FOR RESPONSIVENESS)
-
+# --- START OF FILE modules/customer/actions/service.py ---
 import datetime
 import jdatetime
 import logging
@@ -10,21 +9,15 @@ from telegram.ext import ContextTypes, ConversationHandler
 from telegram.constants import ParseMode
 from config import config
 from shared.translator import _
-from shared.keyboards import get_customer_main_menu_keyboard, get_admin_main_menu_keyboard
+from shared.keyboards import get_customer_main_menu_keyboard, get_admin_main_menu_keyboard, get_back_to_main_menu_keyboard
 from modules.marzban.actions.api import get_user_data, reset_subscription_url_api
 from modules.marzban.actions.constants import GB_IN_BYTES
 from modules.marzban.actions.data_manager import normalize_username
-from database.db_manager import (
-    is_auto_renew_enabled,
-    set_auto_renew_status,
-    load_pricing_parameters,
-    create_pending_invoice,
-    is_account_test,
-    get_linked_marzban_usernames, 
-    unlink_user_from_telegram
-)
-from modules.payment.actions.creation import send_custom_plan_invoice
-from shared.keyboards import get_back_to_main_menu_keyboard
+from database.crud import marzban_link as crud_marzban_link
+from database.crud import user_note as crud_user_note
+from database.crud import volumetric_tier as crud_volumetric
+from database.crud import financial_setting as crud_financial
+from modules.payment.actions.creation import create_and_send_invoice
 
 LOGGER = logging.getLogger(__name__)
 
@@ -32,17 +25,9 @@ CHOOSE_SERVICE, DISPLAY_SERVICE, CONFIRM_RESET_SUB, CONFIRM_DELETE = range(4)
 PROMPT_FOR_DATA_AMOUNT, CONFIRM_DATA_PURCHASE = range(4, 6)
 ITEMS_PER_PAGE = 8
 
-# =============================================================================
-#  BACKGROUND TASK (NEW LOGIC)
-#  This function contains all the slow network operations.
-# =============================================================================
 async def _fetch_and_display_services(context: ContextTypes.DEFAULT_TYPE, user_id: int, loading_message):
-    """
-    This is the background task. It fetches all data from Marzban, filters it,
-    and then edits the "Loading..." message with the final result.
-    """
     try:
-        linked_usernames_raw = await get_linked_marzban_usernames(user_id)
+        linked_usernames_raw = await crud_marzban_link.get_linked_marzban_usernames(user_id)
         if not linked_usernames_raw:
             await loading_message.edit_text(_("customer.customer_service.no_service_linked"))
             return
@@ -64,13 +49,13 @@ async def _fetch_and_display_services(context: ContextTypes.DEFAULT_TYPE, user_i
 
         if dead_links_to_cleanup:
             LOGGER.info(f"Cleaning up {len(dead_links_to_cleanup)} dead links for user {user_id}: {dead_links_to_cleanup}")
-            cleanup_tasks = [unlink_user_from_telegram(dead_username) for dead_username in dead_links_to_cleanup]
+            cleanup_tasks = [crud_marzban_link.delete_marzban_link(dead_username) for dead_username in dead_links_to_cleanup]
             await asyncio.gather(*cleanup_tasks)
         
-        is_test_tasks = [is_account_test(acc['username']) for acc in valid_linked_accounts]
+        is_test_tasks = [crud_user_note.get_user_note(acc['username']) for acc in valid_linked_accounts]
         is_test_results = await asyncio.gather(*is_test_tasks)
         
-        final_accounts_to_show = [acc for i, acc in enumerate(valid_linked_accounts) if not is_test_results[i]]
+        final_accounts_to_show = [acc for i, acc in enumerate(valid_linked_accounts) if not (is_test_results[i] and is_test_results[i].is_test_account)]
         
         if not final_accounts_to_show:
             await loading_message.edit_text(_("customer.customer_service.no_valid_service_found"))
@@ -78,7 +63,6 @@ async def _fetch_and_display_services(context: ContextTypes.DEFAULT_TYPE, user_i
         
         if len(final_accounts_to_show) == 1:
             original_username = final_accounts_to_show[0]['username']
-            # Directly call display_service_details to edit the message
             await display_service_details(user_id, loading_message, context, original_username)
         else:
             sorted_services = sorted(final_accounts_to_show, key=lambda u: u['username'].lower())
@@ -88,23 +72,17 @@ async def _fetch_and_display_services(context: ContextTypes.DEFAULT_TYPE, user_i
 
     except asyncio.CancelledError:
         LOGGER.info(f"Service loading for user {user_id} was cancelled by the user.")
-        # The message will be deleted by the cancellation handler, so no need to edit it.
     except Exception as e:
         LOGGER.error(f"An error occurred while fetching services for user {user_id}: {e}", exc_info=True)
         try:
             await loading_message.edit_text(_("customer.customer_service.panel_connection_error"))
         except Exception:
-            pass # Message might have been deleted already
+            pass
     finally:
-        # Clean up the task from user_data once it's finished or cancelled
         context.user_data.pop('service_loader_task', None)
 
 
-# =============================================================================
-#  PAGINATION HELPER FUNCTIONS (UNCHANGED)
-# =============================================================================
 async def _build_paginated_service_keyboard(services: list, page: int = 0) -> InlineKeyboardMarkup:
-    # This function is unchanged
     start_index = page * ITEMS_PER_PAGE
     end_index = start_index + ITEMS_PER_PAGE
     keyboard = []
@@ -129,7 +107,6 @@ async def _build_paginated_service_keyboard(services: list, page: int = 0) -> In
     return InlineKeyboardMarkup(keyboard)
 
 async def handle_service_page_change(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    # This function is unchanged
     query = update.callback_query
     await query.answer()
     direction, page_str = query.data.split('_')[1:]
@@ -142,45 +119,31 @@ async def handle_service_page_change(update: Update, context: ContextTypes.DEFAU
     await query.edit_message_text(_("customer.customer_service.multiple_services_prompt"), reply_markup=reply_markup)
     return CHOOSE_SERVICE
 
-# =============================================================================
-#  CORE FUNCTIONS
-# =============================================================================
 
 async def handle_my_service(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """
-    (REWRITTEN) This is now the entry point. It's very fast.
-    It sends a "Loading..." message, starts the background task, and immediately
-    enters the conversation state, making the UI responsive.
-    (MODIFIED to handle both Message and CallbackQuery)
-    """
     user_id = update.effective_user.id
     chat_id = update.effective_chat.id
 
-    # (✨ FIX) Respond based on the type of update
     if update.callback_query:
         await update.callback_query.answer()
-        # Delete the broadcast message before sending the "Loading..." message
         await update.callback_query.message.delete()
         loading_message = await context.bot.send_message(chat_id, _("customer.customer_service.loading"))
     else:
         loading_message = await update.message.reply_text(_("customer.customer_service.loading"))
 
-    # Create and start the background task
     task = asyncio.create_task(
         _fetch_and_display_services(context=context, user_id=user_id, loading_message=loading_message)
     )
     
-    # Store the task so we can cancel it if the user navigates away
     context.user_data['service_loader_task'] = task
     
-    # Immediately enter the next state so the "Cancel" button works instantly
     return CHOOSE_SERVICE
+
+
 async def display_service_details(user_id: int, message_to_edit, context: ContextTypes.DEFAULT_TYPE, marzban_username: str) -> int:
-    from database.db_manager import get_user_note, is_auto_renew_enabled
-    
     await message_to_edit.edit_text(text=_("customer.customer_service.getting_service_info", username=marzban_username))
     user_info = await get_user_data(marzban_username)
-    # ... (rest of this function is unchanged)
+
     if not user_info or "error" in user_info:
         await message_to_edit.edit_text(_("customer.customer_service.service_not_found_in_panel"))
         return ConversationHandler.END
@@ -200,9 +163,9 @@ async def display_service_details(user_id: int, message_to_edit, context: Contex
         expire_str = _("customer.customer_service.unlimited_label")
         duration_str = _("customer.customer_service.duration_unknown")
 
-        note_data = await get_user_note(normalize_username(marzban_username))
-        if note_data and note_data.get('subscription_duration'):
-            duration_str = _("customer.customer_service.duration_days", days=note_data['subscription_duration'])
+        note_data = await crud_user_note.get_user_note(normalize_username(marzban_username))
+        if note_data and note_data.subscription_duration:
+            duration_str = _("customer.customer_service.duration_days", days=note_data.subscription_duration)
 
         if user_info.get('expire'):
             expire_date = datetime.datetime.fromtimestamp(user_info['expire'])
@@ -231,7 +194,7 @@ async def display_service_details(user_id: int, message_to_edit, context: Contex
             [InlineKeyboardButton(_("keyboards.buttons.back_to_main_menu"), callback_data="customer_back_to_main_menu")]
         ])
     else:
-        auto_renew_is_on = await is_auto_renew_enabled(user_id, marzban_username)
+        auto_renew_is_on = await crud_marzban_link.is_auto_renew_enabled(user_id, marzban_username)
         
         if auto_renew_is_on:
             auto_renew_text = _("keyboards.buttons.auto_renew_active")
@@ -261,7 +224,6 @@ async def display_service_details(user_id: int, message_to_edit, context: Contex
 
 
 async def choose_service(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    # This function is unchanged
     query = update.callback_query
     await query.answer()
     marzban_username = query.data.split('select_service_')[-1]
@@ -271,18 +233,12 @@ async def choose_service(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 
 async def back_to_main_menu_customer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """
-    (MODIFIED) This function now checks for and cancels the background task
-    if the user decides to cancel while services are still loading.
-    """
     query = update.callback_query
     await query.answer()
     
-    # --- CHANGE START: Cancel the background task if it's running ---
     task = context.user_data.pop('service_loader_task', None)
     if task and not task.done():
         task.cancel()
-    # --- CHANGE END ---
     
     user_id = update.effective_user.id
     message_text = _("general.operation_cancelled")
@@ -307,9 +263,6 @@ async def back_to_main_menu_customer(update: Update, context: ContextTypes.DEFAU
     return ConversationHandler.END
 
 
-# ... All other functions (confirm_reset_subscription, execute_reset_subscription, etc.) remain completely unchanged ...
-# They are copied here for completeness of the file.
-
 async def confirm_reset_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()
@@ -322,6 +275,7 @@ async def confirm_reset_subscription(update: Update, context: ContextTypes.DEFAU
     ])
     await query.edit_message_text(text, reply_markup=keyboard, parse_mode=ParseMode.MARKDOWN)
     return CONFIRM_RESET_SUB
+
 
 async def execute_reset_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
@@ -343,6 +297,7 @@ async def execute_reset_subscription(update: Update, context: ContextTypes.DEFAU
         await query.edit_message_text(text, reply_markup=keyboard)
     return DISPLAY_SERVICE
 
+
 async def request_delete_service(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()
@@ -354,6 +309,7 @@ async def request_delete_service(update: Update, context: ContextTypes.DEFAULT_T
     ])
     await query.edit_message_text(text, reply_markup=keyboard, parse_mode=ParseMode.MARKDOWN)
     return CONFIRM_DELETE
+
 
 async def confirm_delete_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
@@ -374,19 +330,21 @@ async def confirm_delete_request(update: Update, context: ContextTypes.DEFAULT_T
                 LOGGER.error(f"Failed to send delete request to admin {admin_id} for {username}: {e}", exc_info=True)
     return ConversationHandler.END
 
+
 async def start_data_purchase(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()
     marzban_username = query.data.split('purchase_data_')[-1]
     context.user_data['purchase_data_username'] = marzban_username
-    pricing_params = await load_pricing_parameters()
-    if not pricing_params.get("tiers"):
+    tiers = await crud_volumetric.get_all_pricing_tiers()
+    if not tiers:
         await query.edit_message_text(_("customer.customer_service.purchase_data_not_configured"))
         return ConversationHandler.END
     text = _("customer.customer_service.purchase_data_prompt", username=f"`{marzban_username}`")
     await query.message.delete()
     await context.bot.send_message(chat_id=query.message.chat_id, text=text, reply_markup=get_back_to_main_menu_keyboard(), parse_mode=ParseMode.MARKDOWN)
     return PROMPT_FOR_DATA_AMOUNT
+
 
 async def calculate_price_and_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     try:
@@ -395,33 +353,33 @@ async def calculate_price_and_confirm(update: Update, context: ContextTypes.DEFA
     except (ValueError, TypeError):
         await update.message.reply_text(_("customer.customer_service.invalid_number_input"))
         return PROMPT_FOR_DATA_AMOUNT
-    pricing_params = await load_pricing_parameters()
-    tiers = sorted(pricing_params.get("tiers", []), key=lambda x: x['volume_limit_gb'])
+    tiers = await crud_volumetric.get_all_pricing_tiers()
     price_per_gb = 0
     if tiers:
         for tier in tiers:
-            if volume_gb <= tier['volume_limit_gb']:
-                price_per_gb = tier['price_per_gb']
+            if volume_gb <= tier.volume_limit_gb:
+                price_per_gb = tier.price_per_gb
                 break
-        if price_per_gb == 0: price_per_gb = tiers[-1]['price_per_gb']
+        if price_per_gb == 0: price_per_gb = tiers[-1].price_per_gb
     if price_per_gb == 0:
         await update.message.reply_text(_("customer.customer_service.pricing_system_error"))
         return ConversationHandler.END
     total_price = volume_gb * price_per_gb
     username = context.user_data.get('purchase_data_username')
     context.user_data['purchase_data_details'] = {
-    "volume": volume_gb, 
-    "price": total_price, 
-    "plan_type": "data_top_up", 
-    "username": username,
-    "invoice_type": "DATA_TOP_UP"  # <-- ADD THIS KEY
-}
+        "volume": volume_gb, 
+        "price": total_price, 
+        "plan_type": "data_top_up", 
+        "username": username,
+        "invoice_type": "DATA_TOP_UP"
+    }
     text = _("customer.customer_service.data_purchase_invoice_preview", username=f"`{username}`", volume=volume_gb, price=total_price)
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton(_("keyboards.buttons.confirm_and_get_invoice"), callback_data="confirm_data_purchase_final")],
         [InlineKeyboardButton(_("keyboards.buttons.cancel"), callback_data=f"select_service_{username}")]])
     await update.message.reply_text(text, reply_markup=keyboard, parse_mode=ParseMode.MARKDOWN)
     return CONFIRM_DATA_PURCHASE
+
 
 async def generate_data_purchase_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
@@ -430,21 +388,28 @@ async def generate_data_purchase_invoice(update: Update, context: ContextTypes.D
     user_id = query.from_user.id
     purchase_details = context.user_data.get('purchase_data_details')
     if not purchase_details:
-        purchase_details['invoice_type'] = 'DATA_TOP_UP'
         await query.edit_message_text(_("customer.customer_service.purchase_info_not_found"))
         return ConversationHandler.END
-    price = purchase_details.get('price')
-    invoice_id = await create_pending_invoice(user_id, purchase_details, price)
-    if not invoice_id:
-        await query.edit_message_text(_("customer.customer_service.system_error_retry"))
-        return ConversationHandler.END
+    
     await query.message.delete()
-    invoice_display_details = {"volume": f"+{purchase_details['volume']} GB", "duration": _("customer.customer_service.data_top_up_label"), "price": price}
-    await send_custom_plan_invoice(update, context, invoice_display_details, invoice_id)
+    
+    invoice_display_details = {
+        "type": "data_top_up",
+        "volume": f"+{purchase_details['volume']} GB",
+        "duration": _("customer.customer_service.data_top_up_label"),
+        "price": purchase_details['price'],
+        **purchase_details
+    }
+    
+    invoice = await create_and_send_invoice(context, user_id, invoice_display_details)
+    
+    if not invoice:
+        await context.bot.send_message(chat_id=user_id, text=_("customer.customer_service.system_error_retry"))
+
     context.user_data.clear()
     return ConversationHandler.END
 
-# ----------------- START OF FINAL CORRECTED CODE -----------------
+
 async def toggle_auto_renew(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     
@@ -459,19 +424,16 @@ async def toggle_auto_renew(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
     user_id = update.effective_user.id
     
-    # 1. Update the status in the database first
-    await set_auto_renew_status(user_id, marzban_username, new_status)
+    await crud_marzban_link.set_auto_renew_status(user_id, marzban_username, new_status)
 
-    # 2. Prepare the correct alert text
     if new_status:
         alert_text = _("customer.customer_service.auto_renew_activated_alert")
     else:
         alert_text = _("customer.customer_service.auto_renew_deactivated_alert")
     
-    # 3. Show the confirmation alert to the user
     await query.answer(alert_text, show_alert=True)
     
-    # 4. Refresh the service details panel to show the updated button state
     message_to_edit = query.message
     return await display_service_details(user_id, message_to_edit, context, marzban_username)
-# -----------------  END OF FINAL CORRECTED CODE  -----------------
+
+# --- END OF FILE modules/customer/actions/service.py ---

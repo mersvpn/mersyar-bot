@@ -1,5 +1,4 @@
-# FILE: modules/stats/actions.py (REVISED FOR I18N)
-
+# --- START OF FILE modules/stats/actions.py ---
 import time
 import logging
 import subprocess
@@ -7,13 +6,12 @@ from telegram import Update
 from telegram.ext import ContextTypes
 from telegram.constants import ParseMode
 
-from database.db_manager import get_total_users_count
+from database.crud import user as crud_user
 from shared.auth import admin_only
 
 LOGGER = logging.getLogger(__name__)
 
 def _get_bot_version() -> str:
-    """Fetches the latest Git tag to determine the bot's version automatically."""
     from shared.translator import _
     try:
         git_command = ["git", "describe", "--tags", "--abbrev=0"]
@@ -27,7 +25,6 @@ def _get_bot_version() -> str:
         return _("stats.version_not_available")
 
 async def _calculate_ping(context: ContextTypes.DEFAULT_TYPE) -> float:
-    """Calculates the ping to Telegram API by sending a simple request."""
     start_time = time.monotonic()
     try:
         await context.bot.get_me()
@@ -39,11 +36,10 @@ async def _calculate_ping(context: ContextTypes.DEFAULT_TYPE) -> float:
 
 @admin_only
 async def show_stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Gathers and displays bot statistics to the admin."""
     from shared.translator import _
     message = await update.message.reply_text(_("stats.gathering"))
 
-    total_users = await get_total_users_count()
+    total_users = await crud_user.get_total_users_count()
 
     ping_ms = await _calculate_ping(context)
     ping_text = _("stats.ping_ms", ms=ping_ms) if ping_ms != -1 else _("stats.ping_failed")
@@ -56,3 +52,5 @@ async def show_stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     stats_text += _("stats.ping_to_telegram", ping=ping_text)
 
     await message.edit_text(stats_text, parse_mode=ParseMode.MARKDOWN)
+
+# --- END OF FILE modules/stats/actions.py ---

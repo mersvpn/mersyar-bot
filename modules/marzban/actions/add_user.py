@@ -1,5 +1,4 @@
-# FILE: modules/marzban/actions/add_user.py (VERSION WITH NEW TEST ACCOUNT CONVERSATION)
-
+# --- START OF FILE modules/marzban/actions/add_user.py ---
 import datetime
 import qrcode
 import io
@@ -16,18 +15,19 @@ from telegram.constants import ParseMode
 from telegram.helpers import escape_markdown
 
 from shared.log_channel import send_log
-from shared.callback_types import StartManualInvoice # <-- ADD THIS LINE
-
+from shared.callback_types import StartManualInvoice
 
 from .constants import (
     ADD_USER_USERNAME, ADD_USER_DATALIMIT, ADD_USER_EXPIRE, ADD_USER_CONFIRM,
     GB_IN_BYTES
 )
-from database.db_manager import (
-    load_template_config_db, link_user_to_telegram, save_user_note,
-    add_user_to_managed_list, get_user_test_account_count, increment_user_test_account_count,
-    load_bot_settings
-)
+from database.crud import bot_setting as crud_bot_setting
+from database.crud import user as crud_user
+from database.crud import template_config as crud_template
+from database.crud import bot_managed_user as crud_bot_managed_user
+from database.crud import user_note as crud_user_note
+from .data_manager import link_user_to_telegram
+
 from shared.keyboards import get_user_management_keyboard, get_customer_main_menu_keyboard
 from shared.callbacks import end_conversation_and_show_menu
 from .api import create_user_api, get_user_data, format_user_info_for_customer
@@ -36,10 +36,8 @@ from shared.log_channel import send_log
 
 LOGGER = logging.getLogger(__name__)
 
-# State for the new test account conversation
 GET_TEST_USERNAME = range(10, 11)
 
-# ... (All your existing functions like generate_random_username, create_marzban_user_from_template, add_user_start, etc. remain here)
 def generate_random_username(length=8):
     alphabet = string.ascii_lowercase + string.digits
     return ''.join(secrets.choice(alphabet) for i in range(length))
@@ -47,8 +45,8 @@ def generate_random_username(length=8):
 async def create_marzban_user_from_template(
     data_limit_gb: int, expire_days: int, username: Optional[str] = None, max_ips: Optional[int] = None
 ) -> Optional[Dict[str, Any]]:
-    template_config = await load_template_config_db()
-    if not template_config.get("template_username"):
+    template_config_obj = await crud_template.load_template_config()
+    if not template_config_obj or not template_config_obj.template_username:
         LOGGER.error("[Core Create User] Template user is not configured in the database.")
         return None
 
@@ -59,13 +57,13 @@ async def create_marzban_user_from_template(
     expire_timestamp = (datetime.datetime.now() + datetime.timedelta(days=expire_days)).timestamp() if expire_days > 0 else 0
     expire = int(expire_timestamp)
     
-    proxies_from_template = copy.deepcopy(template_config.get('proxies', {}))
+    proxies_from_template = copy.deepcopy(template_config_obj.proxies or {})
     for proto in ['vless', 'vmess']:
         if proto in proxies_from_template and 'id' in proxies_from_template[proto]:
             del proxies_from_template[proto]['id']
     
     payload = {
-        "inbounds": template_config.get('inbounds', {}), "expire": expire,
+        "inbounds": template_config_obj.inbounds or {}, "expire": expire,
         "data_limit": data_limit, "proxies": proxies_from_template, "status": "active"
     }
 
@@ -96,8 +94,8 @@ async def create_marzban_user_from_template(
 async def add_user_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     from shared.translator import _
     context.user_data.pop('customer_user_id', None)
-    template_config = await load_template_config_db()
-    if not template_config.get("template_username"):
+    template_config = await crud_template.load_template_config()
+    if not template_config or not template_config.template_username:
         await update.message.reply_text(
             _("marzban.marzban_add_user.template_not_set"),
             parse_mode=ParseMode.MARKDOWN, reply_markup=get_user_management_keyboard()
@@ -116,8 +114,8 @@ async def add_user_for_customer_start(update: Update, context: ContextTypes.DEFA
     await query.answer()
     customer_user_id = int(query.data.split('_')[-1])
     context.user_data['customer_user_id'] = customer_user_id
-    template_config = await load_template_config_db()
-    if not template_config.get("template_username"):
+    template_config = await crud_template.load_template_config()
+    if not template_config or not template_config.template_username:
         await query.message.reply_text(_("marzban.marzban_add_user.template_not_set"), parse_mode=ParseMode.MARKDOWN)
         return ConversationHandler.END
     await query.edit_message_text(_("marzban.marzban_add_user.request_approved_creating_for", customer_id=f"`{customer_user_id}`"), parse_mode=ParseMode.MARKDOWN)
@@ -207,12 +205,13 @@ async def add_user_create(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         marzban_username = new_user_data['username']
         normalized_username = normalize_username(marzban_username)
 
-        await add_user_to_managed_list(normalized_username)
-        await save_user_note(normalized_username, {
-            'subscription_duration': user_info['expire_days'], 
-            'subscription_data_limit_gb': user_info['data_limit_gb'],
-            'subscription_price': 0
-        })
+        await crud_bot_managed_user.add_to_managed_list(normalized_username)
+        await crud_user_note.create_or_update_user_note(
+            marzban_username=normalized_username,
+            duration=user_info['expire_days'],
+            data_limit_gb=user_info['data_limit_gb'],
+            price=0
+        )
         
         admin_mention = escape_markdown(admin_user.full_name, version=2)
         safe_username = escape_markdown(marzban_username, version=2)
@@ -225,7 +224,6 @@ async def add_user_create(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         if customer_id:
             await link_user_to_telegram(normalized_username, customer_id)
             
-            # Use the new formatter function
             customer_message = await format_user_info_for_customer(marzban_username)
             subscription_url = new_user_data.get('subscription_url', '')
 
@@ -261,18 +259,15 @@ async def cancel_add_user(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await query.answer()
     return await end_conversation_and_show_menu(update, context)
 
-# =============================================================================
-#  NEW TEST ACCOUNT CONVERSATION
-# =============================================================================
-
 async def start_test_account_conv(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     from shared.translator import _
     
     user_id = update.effective_user.id
     
-    bot_settings = await load_bot_settings()
+    bot_settings = await crud_bot_setting.load_bot_settings()
     test_account_limit = bot_settings.get('test_account_limit', 1)
-    user_test_count = await get_user_test_account_count(user_id)
+    
+    user_test_count = await crud_user.get_user_test_account_count(user_id)
 
     if user_test_count >= test_account_limit:
         await update.message.reply_text(_('marzban.marzban_add_user.test_account_limit_reached'))
@@ -311,13 +306,13 @@ async def get_username_for_test(update: Update, context: ContextTypes.DEFAULT_TY
         LOGGER.error(f"Could not generate a unique test username for base '{base_username}' after 10 tries.")
         return ConversationHandler.END
 
-    bot_settings = await load_bot_settings()
+    bot_settings = await crud_bot_setting.load_bot_settings()
     test_gb = bot_settings.get('test_account_gb', 1)
     test_hours = bot_settings.get('test_account_hours', 3)
     
     new_user_data = await create_marzban_user_from_template(
         data_limit_gb=int(test_gb),
-        expire_days=test_hours / 24, # convert hours to days (float)
+        expire_days=test_hours / 24,
         username=final_username
     )
 
@@ -326,8 +321,9 @@ async def get_username_for_test(update: Update, context: ContextTypes.DEFAULT_TY
         return ConversationHandler.END
 
     await link_user_to_telegram(final_username, user_id)
-    await add_user_to_managed_list(final_username)
-    await increment_user_test_account_count(user_id)
+    await crud_bot_managed_user.add_to_managed_list(final_username)
+    
+    await crud_user.increment_user_test_account_count(user_id)
 
     info_message = await format_user_info_for_customer(final_username)
     
@@ -353,3 +349,5 @@ async def cancel_test_conv(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         reply_markup=await get_customer_main_menu_keyboard(update.effective_user.id)
     )
     return ConversationHandler.END
+
+# --- END OF FILE modules/marzban/actions/add_user.py ---

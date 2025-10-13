@@ -1,5 +1,4 @@
-# FILE: bot.py (REVISED TO ACCEPT PORT FROM CLI ARGUMENT)
-
+# --- START OF FILE bot.py (REVISED) ---
 import logging
 import logging.handlers
 import sys
@@ -7,16 +6,12 @@ import os
 import asyncio
 from modules.broadcaster import handler as broadcaster_handler
 from modules.reminder.actions.jobs import cleanup_expired_test_accounts
-# ✨ NEW: Import argparse to read command-line arguments
 from modules.financials import handler as financials_handler
 from modules.payment import handler as payment_handler
-# ... other imports ...
 from shared.translator import init_translator
 
-# Initialize the translator at the very beginning
 init_translator()
 
-# ... rest of your bot.py file, including the main() function ...
 import argparse
 
 from telegram import Update
@@ -24,7 +19,9 @@ from telegram.ext import Application, ApplicationBuilder, ContextTypes, MessageH
 
 from config import config
 from modules.marzban.actions import api as marzban_api
-from database import db_manager
+# --- MODIFIED IMPORTS ---
+from database import engine as db_engine
+# --- ------------------ ---
 
 LOG_FILE = "bot.log"
 LOGGER = logging.getLogger(__name__)
@@ -37,7 +34,7 @@ def setup_logging():
     file_handler.setLevel(logging.DEBUG)
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setFormatter(log_formatter)
-    console_handler.setLevel(logging.INFO) # Keep console clean, debug logs go to file
+    console_handler.setLevel(logging.INFO)
     root_logger = logging.getLogger()
     root_logger.setLevel(logging.DEBUG)
     root_logger.addHandler(file_handler)
@@ -46,16 +43,11 @@ def setup_logging():
     LOGGER.info("Logging configured successfully.")
 
 async def debug_update_logger(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Logs details of incoming messages and callback queries for debugging."""
-    
-    # مرحله ۱: ابتدا بررسی کن که آیا کاربری در این آپدیت وجود دارد یا نه
     if update.effective_user:
         user_info = f"User(ID:{update.effective_user.id}, Name:'{update.effective_user.full_name}')"
     else:
-        # اگر کاربری وجود نداشت (مثلا آپدیت مربوط به کانال بود)، یک مقدار پیش‌فرض قرار بده
         user_info = "User:N/A (Channel or System Update)"
 
-    # مرحله ۲: حالا با خیال راحت لاگ را ثبت کن
     if update.message and update.message.text:
         text = update.message.text
         char_codes = [ord(c) for c in text]
@@ -65,7 +57,6 @@ async def debug_update_logger(update: Update, context: ContextTypes.DEFAULT_TYPE
         data = update.callback_query.data
         LOGGER.info(f"[DEBUG_LOGGER] Callback from {user_info} | Data: '{data}'")
     
-    # (اختیاری ولی پیشنهاد می‌شود) برای لاگ کردن آپدیت‌های ناشناس
     else:
         LOGGER.info(f"[DEBUG_LOGGER] Received an unhandled update type from {user_info}")
 
@@ -73,20 +64,22 @@ async def heartbeat(context: ContextTypes.DEFAULT_TYPE):
     LOGGER.info("❤️ Heartbeat: Bot is alive and the JobQueue is running.")
 
 async def post_init(application: Application):
-    await db_manager.create_pool()
+    await db_engine.init_db()
+    # await db_manager.create_pool() # This is now removed
     await marzban_api.init_marzban_credentials()
 
 async def post_shutdown(application: Application):
     LOGGER.info("Shutdown signal received. Closing resources...")
     await marzban_api.close_client()
     LOGGER.info("HTTPX client closed gracefully.")
-    await db_manager.close_pool()
-    LOGGER.info("Database pool closed gracefully.")
+    # await db_manager.close_pool() # This is now removed
+    LOGGER.info("Database pool (legacy) is no longer used.")
+    await db_engine.close_db()
+    LOGGER.info("Database engine (SQLAlchemy) closed gracefully.")
 
 def main() -> None:
     setup_logging()
     
-    # ✨ NEW: Argument parser to get the port from the command line
     parser = argparse.ArgumentParser(description="Mersyar Telegram Bot")
     parser.add_argument("--port", type=int, help="Port to run the webhook on.")
     args = parser.parse_args()
@@ -117,12 +110,9 @@ def main() -> None:
     application.add_handler(CallbackQueryHandler(debug_update_logger), group=-1)
     LOGGER.info("Universal debug logger has been activated.")
     
-    # (✨ FIX) Changed the registration order for correct priority.
-    # Group 0 Handlers (Highest Priority - Conversations)
     broadcaster_handler.register(application)
     marzban_handler.register(application)
     
-    # Group 1 Handlers (Lower Priority - General Actions)
     general_handler.register(application)
     financials_handler.register(application)
     reminder_handler.register(application)
@@ -134,19 +124,16 @@ def main() -> None:
     
     if application.job_queue:
         application.job_queue.run_repeating(heartbeat, interval=3600, first=10, name="heartbeat")
-        # Schedule the new cleanup job to run every hour
         application.job_queue.run_repeating(cleanup_expired_test_accounts, interval=3600, first=60, name="cleanup_test_accounts")
         LOGGER.info("❤️ Heartbeat and Test Account Cleanup jobs scheduled to run every hour.")
 
     BOT_DOMAIN = os.getenv("BOT_DOMAIN")
     WEBHOOK_SECRET_TOKEN = os.getenv("WEBHOOK_SECRET_TOKEN")
     
-    # ✨ NEW: Logic to determine the port with priority: CLI > .env > Default
     if args.port:
         PORT = args.port
         LOGGER.info(f"Port {PORT} received from command-line argument.")
     else:
-        # Fallback to .env variable, then to a default
         PORT = int(os.getenv("BOT_PORT", 8081))
         LOGGER.info(f"Port {PORT} loaded from environment or default.")
 
@@ -164,3 +151,5 @@ if __name__ == '__main__':
     except Exception:
         logging.basicConfig()
         logging.getLogger(__name__).critical("A critical error occurred in the main execution block.", exc_info=True)
+
+# --- END OF FILE bot.py (REVISED) ---

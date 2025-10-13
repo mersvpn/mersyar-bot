@@ -9,6 +9,7 @@ from telegram.helpers import escape_markdown
 from shared.log_channel import send_log
 from shared.keyboards import get_back_to_main_menu_keyboard
 
+from database.crud import marzban_link as crud_marzban_link
 from .display import show_user_details_panel
 from .constants import GB_IN_BYTES, DEFAULT_RENEW_DAYS
 from .data_manager import normalize_username
@@ -147,7 +148,7 @@ async def confirm_delete_user(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 async def do_delete_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     from shared.translator import _
-    from database.db_manager import cleanup_marzban_user_data, get_telegram_id_from_marzban_username
+ 
     query = update.callback_query
     admin_user = update.effective_user
     username = query.data.removeprefix('do_delete_')
@@ -155,11 +156,15 @@ async def do_delete_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     
     is_customer_request = "درخواست حذف سرویس" in query.message.text
     await query.edit_message_text(_("marzban_modify_user.deleting_user", username=f"`{username}`"), parse_mode=ParseMode.MARKDOWN)
-    customer_id = await get_telegram_id_from_marzban_username(normalize_username(username))
+    
+  
+    customer_id = await crud_marzban_link.get_telegram_id_from_marzban_username(normalize_username(username))
 
     success, message = await delete_user_api(username)
     if success:
-        await cleanup_marzban_user_data(username)
+
+        await crud_marzban_link.unlink_user_from_telegram(username)
+        
         admin_mention = escape_markdown(admin_user.full_name, version=2)
         safe_username = escape_markdown(username, version=2)
         
@@ -180,8 +185,8 @@ async def do_delete_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 async def renew_user_smart(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     from shared.translator import _
-    from database.db_manager import get_user_note
-    from database.db_manager import get_user_note, get_telegram_id_from_marzban_username
+    from database.crud import get_user_note
+    from database.crud import get_user_note, get_telegram_id_from_marzban_username
 
     query = update.callback_query
     username = query.data.removeprefix('renew_')
@@ -200,7 +205,7 @@ async def renew_user_smart(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         await query.edit_message_text(_("marzban_display.user_not_found"))
         return
 
-    note_data = await get_user_note(normalize_username(username))
+    note_data = await crud_user_note.get_user_note(normalize_username(username))
     
     # Use subscription data if available, otherwise use defaults
     renewal_duration_days = (note_data or {}).get('subscription_duration') or DEFAULT_RENEW_DAYS

@@ -1,5 +1,4 @@
-# FILE: modules/reminder/actions/settings.py (REVISED FOR I18N)
-
+# --- START OF FILE modules/reminder/actions/settings.py ---
 import datetime
 import logging
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
@@ -10,24 +9,27 @@ from telegram.ext import (
 from telegram.constants import ParseMode
 from shared.callbacks import cancel_to_helper_tools
 from . import jobs
+from database.crud import bot_setting as crud_bot_setting
 
 LOGGER = logging.getLogger(__name__)
 
 MENU, SET_TIME, SET_DAYS, SET_DATA, SET_GRACE_PERIOD = range(5)
-DEFAULT_SETTINGS = {'reminder_time': '09:00', 'reminder_days': 3, 'reminder_data_gb': 1, 'auto_delete_grace_days': 7}
 
 async def _build_settings_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     from shared.translator import _
-    from database.db_manager import load_bot_settings
     
-    db_settings = await load_bot_settings()
-    settings = {**DEFAULT_SETTINGS, **db_settings}
+    settings = await crud_bot_setting.load_bot_settings()
+
+    time_val = settings.get('reminder_time', "09:00")
+    days_val = settings.get('reminder_days', 3)
+    data_val = settings.get('reminder_data_gb', 1)
+    grace_val = settings.get('auto_delete_grace_days', 7)
 
     keyboard = [
-        [InlineKeyboardButton(_("reminder_settings.button_time", time=settings['reminder_time']), callback_data="rem_set_time")],
-        [InlineKeyboardButton(_("reminder_settings.button_days_threshold", days=settings['reminder_days']), callback_data="rem_set_days")],
-        [InlineKeyboardButton(_("reminder_settings.button_data_threshold", gb=settings['reminder_data_gb']), callback_data="rem_set_data")],
-        [InlineKeyboardButton(_("reminder_settings.button_grace_period", days=settings['auto_delete_grace_days']), callback_data="rem_set_grace_period")],
+        [InlineKeyboardButton(_("reminder_settings.button_time", time=time_val), callback_data="rem_set_time")],
+        [InlineKeyboardButton(_("reminder_settings.button_days_threshold", days=days_val), callback_data="rem_set_days")],
+        [InlineKeyboardButton(_("reminder_settings.button_data_threshold", gb=data_val), callback_data="rem_set_data")],
+        [InlineKeyboardButton(_("reminder_settings.button_grace_period", days=grace_val), callback_data="rem_set_grace_period")],
         [InlineKeyboardButton(_("reminder_settings.button_back_to_tools"), callback_data="rem_back_to_tools")]
     ]
     text = _("reminder_settings.menu_title")
@@ -53,12 +55,11 @@ async def prompt_for_time(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
 async def process_new_time(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     from shared.translator import _
-    from database.db_manager import save_bot_settings
     
     new_time_str = update.message.text.strip()
     try:
         new_time_obj = datetime.datetime.strptime(new_time_str, '%H:%M').time()
-        await save_bot_settings({'reminder_time': new_time_str})
+        await crud_bot_setting.save_bot_settings({'reminder_time': new_time_str})
         await jobs.schedule_daily_job(context.application, new_time_obj)
         await update.message.reply_text(_("reminder_settings.time_updated_success"))
     except ValueError:
@@ -75,11 +76,10 @@ async def prompt_for_days(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
 async def process_new_days(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     from shared.translator import _
-    from database.db_manager import save_bot_settings
     try:
         days = int(update.message.text)
         if not 1 <= days <= 30: raise ValueError
-        await save_bot_settings({'reminder_days': days})
+        await crud_bot_setting.save_bot_settings({'reminder_days': days})
         await update.message.reply_text(_("reminder_settings.days_updated_success", days=days))
     except (ValueError, TypeError):
         await update.message.reply_text(_("reminder_settings.invalid_days_input"))
@@ -95,11 +95,10 @@ async def prompt_for_data(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
 async def process_new_data(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     from shared.translator import _
-    from database.db_manager import save_bot_settings
     try:
         data_gb = int(update.message.text)
         if not 1 <= data_gb <= 100: raise ValueError
-        await save_bot_settings({'reminder_data_gb': data_gb})
+        await crud_bot_setting.save_bot_settings({'reminder_data_gb': data_gb})
         await update.message.reply_text(_("reminder_settings.data_updated_success", gb=data_gb))
     except (ValueError, TypeError):
         await update.message.reply_text(_("reminder_settings.invalid_data_input"))
@@ -115,11 +114,10 @@ async def prompt_for_grace_period(update: Update, context: ContextTypes.DEFAULT_
 
 async def process_new_grace_period(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     from shared.translator import _
-    from database.db_manager import save_bot_settings
     try:
         days = int(update.message.text)
         if not 0 <= days <= 365: raise ValueError
-        await save_bot_settings({'auto_delete_grace_days': days})
+        await crud_bot_setting.save_bot_settings({'auto_delete_grace_days': days})
         if days > 0:
             await update.message.reply_text(_("reminder_settings.grace_period_updated_success", days=days))
         else:
@@ -148,3 +146,4 @@ reminder_settings_conv = ConversationHandler(
     fallbacks=[CommandHandler('cancel', cancel_to_helper_tools)],
     conversation_timeout=180, per_user=True, per_chat=True
 )
+# --- END OF FILE modules/reminder/actions/settings.py ---

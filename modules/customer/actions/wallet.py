@@ -1,12 +1,12 @@
-# FILE: modules/customer/actions/wallet.py
-
+# --- START OF FILE modules/customer/actions/wallet.py ---
 import logging
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import ContextTypes, ConversationHandler
 from telegram.constants import ParseMode
-from database import db_manager
+
 from shared.translator import _
 from modules.general.actions import send_main_menu
+from database.crud import user as crud_user
 
 LOGGER = logging.getLogger(__name__)
 
@@ -14,7 +14,6 @@ CALLBACK_CHARGE_WALLET = "wallet_charge_start"
 CALLBACK_WALLET_HISTORY = "coming_soon"
 CALLBACK_WALLET_CLOSE = "wallet_close"
 
-# This is now the official state value for the main panel display
 DISPLAY_PANEL = 0
 
 async def show_wallet_panel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -39,8 +38,8 @@ async def show_wallet_panel_as_edit(update: Update, context: ContextTypes.DEFAUL
     )
 
 async def _get_wallet_panel_content(user_id: int):
-    balance = await db_manager.get_user_wallet_balance(user_id)
-    balance = balance if balance is not None else 0.00
+    balance = await crud_user.get_user_wallet_balance(user_id)
+    balance = float(balance) if balance is not None else 0.00
     formatted_balance = f"{int(balance):,}"
 
     text = f"*{_('wallet.panel_title')}*\n\n"
@@ -66,3 +65,5 @@ async def close_wallet_panel(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await send_main_menu(update, context)
     context.user_data.pop('wallet_panel_message', None)
     return ConversationHandler.END
+
+# --- END OF FILE modules/customer/actions/wallet.py ---

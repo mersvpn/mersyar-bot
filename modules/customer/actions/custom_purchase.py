@@ -1,5 +1,4 @@
-# FILE: modules/customer/actions/custom_purchase.py (REVISED FOR I18N)
-
+# --- START OF FILE modules/customer/actions/custom_purchase.py ---
 import logging
 import re
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
@@ -7,8 +6,9 @@ from telegram.ext import ContextTypes, ConversationHandler, CallbackQueryHandler
 from telegram.constants import ParseMode
 
 from . import panel, service, guide
-from database.db_manager import create_pending_invoice, load_pricing_parameters
-from modules.payment.actions.creation import send_custom_plan_invoice
+from database.crud import volumetric_tier as crud_volumetric
+from database.crud import financial_setting as crud_financial
+from modules.payment.actions.creation import create_and_send_invoice
 from shared.keyboards import get_back_to_main_menu_keyboard, get_customer_shop_keyboard
 from modules.marzban.actions.api import get_user_data
 from modules.marzban.actions.data_manager import normalize_username
@@ -25,13 +25,13 @@ CANCEL_BUTTON = InlineKeyboardButton(_("buttons.cancel_custom_plan"), callback_d
 
 
 async def start_custom_purchase(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    pricing_params = await load_pricing_parameters()
+    financial_settings = await crud_financial.load_financial_settings()
+    tiers = await crud_volumetric.get_all_pricing_tiers()
     
-    # (✨ FIX) Determine the target message/chat
     chat_id = update.effective_chat.id
     target_message = update.callback_query.message if update.callback_query else update.message
 
-    if not pricing_params.get("base_daily_price") or not pricing_params.get("tiers"):
+    if not financial_settings or not financial_settings.base_daily_price or not tiers:
         error_text = _("custom_purchase.not_configured")
         if update.callback_query:
             await update.callback_query.answer(error_text, show_alert=True)
@@ -42,7 +42,6 @@ async def start_custom_purchase(update: Update, context: ContextTypes.DEFAULT_TY
     context.user_data.clear()
     text = _("custom_purchase.step1_ask_username")
     
-    # (✨ FIX) Respond based on the type of update
     if update.callback_query:
         await update.callback_query.answer()
         await context.bot.send_message(chat_id=chat_id, text=text, parse_mode=ParseMode.MARKDOWN, reply_markup=get_back_to_main_menu_keyboard())
@@ -50,6 +49,7 @@ async def start_custom_purchase(update: Update, context: ContextTypes.DEFAULT_TY
         await target_message.reply_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=get_back_to_main_menu_keyboard())
 
     return ASK_USERNAME
+
 
 async def get_username_and_ask_volume(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     username_input = update.message.text.strip()
@@ -66,6 +66,7 @@ async def get_username_and_ask_volume(update: Update, context: ContextTypes.DEFA
     await update.message.reply_text(user_message, parse_mode=ParseMode.MARKDOWN)
     return ASK_VOLUME
 
+
 async def get_volume_and_ask_for_duration(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     volume_text = update.message.text.strip()
     try:
@@ -80,6 +81,7 @@ async def get_volume_and_ask_for_duration(update: Update, context: ContextTypes.
     await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN)
     return ASK_DURATION
 
+
 async def get_duration_and_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     duration_text = update.message.text.strip()
     try:
@@ -91,23 +93,22 @@ async def get_duration_and_confirm(update: Update, context: ContextTypes.DEFAULT
     context.user_data['custom_plan']['duration'] = duration
     plan = context.user_data['custom_plan']
     
-    # Pricing logic remains unchanged
-    pricing_params = await load_pricing_parameters()
-    base_daily_price = pricing_params.get("base_daily_price", 0)
-    tiers = pricing_params.get("tiers", [])
+    financial_settings = await crud_financial.load_financial_settings()
+    tiers = await crud_volumetric.get_all_pricing_tiers()
+    base_daily_price = financial_settings.base_daily_price or 0
     base_fee = duration * base_daily_price
     data_fee = 0
     remaining_volume = plan['volume']
     last_tier_limit = 0
-    for tier in sorted(tiers, key=lambda x: x['volume_limit_gb']):
-        tier_limit, tier_price = tier['volume_limit_gb'], tier['price_per_gb']
+    for tier in tiers:
+        tier_limit, tier_price = tier.volume_limit_gb, tier.price_per_gb
         volume_in_this_tier = max(0, min(remaining_volume, tier_limit - last_tier_limit))
         data_fee += volume_in_this_tier * tier_price
         remaining_volume -= volume_in_this_tier
         last_tier_limit = tier_limit
         if remaining_volume <= 0: break
     if remaining_volume > 0 and tiers:
-        last_tier_price = sorted(tiers, key=lambda x: x['volume_limit_gb'])[-1]['price_per_gb']
+        last_tier_price = tiers[-1].price_per_gb
         data_fee += remaining_volume * last_tier_price
     raw_price = base_fee + data_fee
     total_price = round(raw_price / 5000) * 5000
@@ -123,25 +124,40 @@ async def get_duration_and_confirm(update: Update, context: ContextTypes.DEFAULT
     await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.MARKDOWN)
     return CONFIRM_PLAN
 
+
 async def generate_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    from database.crud import user_note as crud_user_note # Import the necessary CRUD module
+    
     query = update.callback_query
     await query.edit_message_text(_("customer_service.generating_invoice"))
     user_id = query.from_user.id
     plan_details = context.user_data.get('custom_plan')
-    plan_details['invoice_type'] = 'NEW_USER_CUSTOM'
-    if not plan_details:
+    
+    if not plan_details or 'price' not in plan_details:
         await query.edit_message_text(_("errors.plan_info_not_found"))
         return ConversationHandler.END
-    price = plan_details.get('price')
-    invoice_id = await create_pending_invoice(user_id, plan_details, price)
-    if not invoice_id:
-        await query.edit_message_text(_("customer_service.system_error_retry"))
-        context.user_data.clear()
-        return ConversationHandler.END
+    
+    # Step 1: Save the chosen plan details to user_note BEFORE creating the invoice
+    await crud_user_note.create_or_update_user_note(
+        marzban_username=plan_details['username'],
+        duration=plan_details['duration'],
+        data_limit_gb=plan_details['volume'],
+        price=plan_details['price']
+    )
+    
+    # Step 2: Add the correct invoice_type for the approval process
+    plan_details['invoice_type'] = 'NEW_USER_CUSTOM'
+    
+    # Step 3: Delete the previous message and send the invoice
     await query.message.delete()
-    await send_custom_plan_invoice(update, context, plan_details, invoice_id)
+    invoice = await create_and_send_invoice(context, user_id, plan_details)
+    
+    if not invoice:
+        await context.bot.send_message(chat_id=user_id, text=_("customer_service.system_error_retry"))
+    
     context.user_data.clear()
     return ConversationHandler.END
+# --- END OF REVISED FUNCTION ---
 
 
 async def cancel_custom_purchase(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -150,7 +166,6 @@ async def cancel_custom_purchase(update: Update, context: ContextTypes.DEFAULT_T
     await query.edit_message_text(_("custom_purchase.plan_cancelled"), reply_markup=None)
     context.user_data.clear()
 
-    # (✨ BUG FIX) Create a more complete DummyUpdate object with 'effective_chat'.
     class DummyUpdate:
         def __init__(self, original_update):
             self.message = original_update.effective_message
@@ -160,8 +175,6 @@ async def cancel_custom_purchase(update: Update, context: ContextTypes.DEFAULT_T
     await panel.show_customer_panel(DummyUpdate(update), context)
     return ConversationHandler.END
 
-# The rerouting logic and handlers remain the same, as they rely on button texts
-# which are now being translated correctly via keyboards.py.
 
 async def end_conv_and_reroute(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     text = update.message.text
@@ -180,9 +193,8 @@ async def end_conv_and_reroute(update: Update, context: ContextTypes.DEFAULT_TYP
     
     return ConversationHandler.END
 
-# Dynamically create the regex from translated button texts
-MAIN_MENU_REGEX = f'^({_("keyboards.customer_main_menu.shop")}|{_("keyboards.customer_main_menu.my_services")}|{_("keyboards.customer_main_menu.connection_guide")}|{_("keyboards.general.back_to_main_menu")})$'
 
+MAIN_MENU_REGEX = f'^({_("keyboards.customer_main_menu.shop")}|{_("keyboards.customer_main_menu.my_services")}|{_("keyboards.customer_main_menu.connection_guide")}|{_("keyboards.general.back_to_main_menu")})$'
 IGNORE_MAIN_MENU_FILTER = filters.TEXT & ~filters.COMMAND & ~filters.Regex(MAIN_MENU_REGEX)
 
 custom_purchase_conv = ConversationHandler(
@@ -199,3 +211,5 @@ custom_purchase_conv = ConversationHandler(
     ],
     conversation_timeout=600,
 )
+
+# --- END OF FILE modules/customer/actions/custom_purchase.py ---

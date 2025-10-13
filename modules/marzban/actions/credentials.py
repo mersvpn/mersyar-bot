@@ -1,26 +1,30 @@
-# FILE: modules/marzban/actions/credentials.py (REVISED FOR I18N)
-
+# --- START OF FILE modules/marzban/actions/credentials.py ---
 import logging
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import ContextTypes, ConversationHandler, MessageHandler, CallbackQueryHandler, CommandHandler, filters
 from telegram.constants import ParseMode
 from shared.callbacks import end_conversation_and_show_menu
 from shared.translator import _
-from .data_manager import load_marzban_credentials, save_marzban_credentials
-from .api import get_marzban_token
+from database.crud import marzban_credential as crud_credential
+from .api import get_marzban_token, init_marzban_credentials as refresh_api_credentials
 
 
 LOGGER = logging.getLogger(__name__)
 GET_URL, GET_USERNAME, GET_PASSWORD, CONFIRM = range(4)
 
 async def start_set_credentials(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    creds = await load_marzban_credentials()
+    creds_obj = await crud_credential.load_marzban_credentials()
     not_set_str = _("marzban_credentials.not_set")
     
     current_info = _("marzban_credentials.current_settings_title")
-    current_info += f"{_('marzban_credentials.url_label')} `{creds.get('base_url', not_set_str)}`\n"
-    current_info += f"{_('marzban_credentials.username_label')} `{creds.get('username', not_set_str)}`\n"
-    current_info += f"{_('marzban_credentials.password_label')} `{'*' * 8 if creds.get('password') else not_set_str}`\n\n---"
+    
+    base_url = creds_obj.base_url if creds_obj else not_set_str
+    username = creds_obj.username if creds_obj else not_set_str
+    password_display = '********' if creds_obj and creds_obj.password else not_set_str
+    
+    current_info += f"{_('marzban_credentials.url_label')} `{base_url}`\n"
+    current_info += f"{_('marzban_credentials.username_label')} `{username}`\n"
+    current_info += f"{_('marzban_credentials.password_label')} `{password_display}`\n\n---"
     
     await update.message.reply_text(
         f"{current_info}" + _("marzban_credentials.step1_ask_url"),
@@ -67,8 +71,10 @@ async def save_and_test_creds(update: Update, context: ContextTypes.DEFAULT_TYPE
         await query.edit_message_text(_("marzban_credentials.creds_not_found_error"))
         return await end_conversation_and_show_menu(update, context)
     
-    await save_marzban_credentials(new_creds)
+    await crud_credential.save_marzban_credentials(new_creds)
     await query.edit_message_text(_("marzban_credentials.creds_saved_testing"))
+    
+    await refresh_api_credentials()
     
     token = await get_marzban_token()
     if token:
@@ -93,3 +99,5 @@ credential_conv = ConversationHandler(
     fallbacks=[CommandHandler('cancel', end_conversation_and_show_menu)],
     conversation_timeout=600
 )
+
+# --- END OF FILE modules/marzban/actions/credentials.py ---

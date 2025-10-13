@@ -1,17 +1,19 @@
-# FILE: modules/broadcaster/actions/main.py (FINAL VERSION - ALL FIXES INCLUDED)
+# --- START OF FILE modules/broadcaster/actions/main.py (REVISED) ---
 
 import logging
-import uuid
 import asyncio
 import html
-from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton, CallbackQuery
+from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import ContextTypes, ConversationHandler
 from telegram.constants import ParseMode
 from telegram.error import TelegramError
 
 from shared.translator import _
 from shared.keyboards import get_broadcaster_menu_keyboard, get_message_builder_cancel_keyboard, get_deeplink_targets_keyboard
-from database.db_manager import save_broadcast_job, get_broadcast_job, delete_broadcast_job, get_all_user_ids
+# --- MODIFIED IMPORTS ---
+from database.crud import broadcast as crud_broadcast
+from database.crud import user as crud_user
+# --- ------------------ ---
 
 LOGGER = logging.getLogger(__name__)
 
@@ -95,7 +97,6 @@ async def _send_or_edit_builder_menu(update: Update, context: ContextTypes.DEFAU
 
 async def start_message_builder(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data.clear()
-    # (✨ FINAL FIX) Set a flag to indicate we are in builder mode.
     context.user_data['in_builder_mode'] = True
     
     _get_builder_data(context)
@@ -160,13 +161,7 @@ async def prompt_for_deeplink_target(update: Update, context: ContextTypes.DEFAU
     await update.callback_query.edit_message_text(_("broadcaster.builder.prompt_deeplink_target"), reply_markup=get_deeplink_targets_keyboard())
     return AWAITING_BUTTON_TARGET_MENU
 
-# FILE: modules/broadcaster/actions/main.py
-
 async def process_button_target(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    # --- DIAGNOSTIC LOG START ---
-    LOGGER.info(f"[DIAGNOSTIC] Broadcaster's 'process_button_target' triggered for data: {update.callback_query.data if update.callback_query else 'N/A'}")
-    # --- DIAGNOSTIC LOG END ---
-
     builder_data = _get_builder_data(context)
     target_data = update.message.text if update.message else update.callback_query.data
     builder_data['temp_button_target'] = {'url': target_data} if target_data.startswith("http") else {'callback_data': target_data}
@@ -243,12 +238,24 @@ async def prompt_for_target_type(update: Update, context: ContextTypes.DEFAULT_T
         return await schedule_broadcast(update, context)
 
 async def schedule_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE, target_user_ids: list = None) -> int:
+    """Schedules the broadcast job by passing data directly to the job context."""
     builder_data = _get_builder_data(context)
-    job_id = str(uuid.uuid4())
-    await save_broadcast_job(job_id, builder_data['text'], builder_data['photo_id'], builder_data['buttons'], target_user_ids)
-    context.job_queue.run_once(send_broadcast_message_job, 1, data={"job_id": job_id, "admin_id": update.effective_chat.id}, name=f"broadcast_{job_id}")
+    
+    # --- ✨ SQLAlchemy Integration: No more db_manager ✨ ---
+    job_data = {
+        "admin_id": update.effective_chat.id,
+        "message_content": {
+            "text": builder_data.get('text'),
+            "photo_id": builder_data.get('photo_id'),
+            "buttons": builder_data.get('buttons', [])
+        },
+        "target_user_ids": target_user_ids
+    }
+    context.job_queue.run_once(send_broadcast_message_job, 1, data=job_data, name=f"broadcast_{update.effective_chat.id}")
+    
     if update.callback_query:
         await update.callback_query.message.delete()
+        
     return await cancel_builder(update, context)
 
 async def process_single_user_send(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -259,11 +266,8 @@ async def process_single_user_send(update: Update, context: ContextTypes.DEFAULT
         await update.message.reply_text(_("broadcaster.builder.errors.invalid_user_id"))
         return AWAITING_SINGLE_USER_ID
 
-# FILE: modules/broadcaster/actions/main.py
-
 async def cancel_builder(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Cleans up user_data and returns to the main broadcast menu."""
-    # (✨ FINAL FIX) Ensure the flag is cleared on exit.
     context.user_data.clear()
     
     query = update.callback_query
@@ -287,20 +291,27 @@ async def show_broadcast_menu(update: Update, context: ContextTypes.DEFAULT_TYPE
     await update.message.reply_text(_("broadcaster.main_menu_prompt"), reply_markup=keyboard)
 
 async def send_broadcast_message_job(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Executes the broadcast, then logs the result to the database."""
     job_data = context.job.data
-    job_id = job_data.get("job_id")
     admin_id = job_data.get("admin_id")
-    LOGGER.info(f"Starting broadcast job: {job_id}")
-    job_info = await get_broadcast_job(job_id)
-    if not job_info:
-        LOGGER.error(f"Job {job_id} failed: data not found in database.")
-        await context.bot.send_message(admin_id, _("broadcaster.errors.job_not_found", job_id=job_id))
-        return
+    message_content = job_data.get("message_content", {})
+    target_user_ids = job_data.get("target_user_ids", [])
 
-    text, photo_id, buttons, target_user_ids = job_info.get("text"), job_info.get("photo_id"), job_info.get("buttons", []), job_info.get("target_user_ids", [])
+    LOGGER.info(f"Starting broadcast job for admin {admin_id}")
+    
+    text = message_content.get("text")
+    photo_id = message_content.get("photo_id")
+    buttons = message_content.get("buttons", [])
     reply_markup = _build_reply_markup_from_data({'buttons': buttons})
+
     if not target_user_ids:
-        target_user_ids = await get_all_user_ids()
+        target_user_ids = await crud_user.get_all_user_ids()
+
+    if not target_user_ids:
+        LOGGER.warning("Broadcast job stopped: No target users found.")
+        await context.bot.send_message(admin_id, _("broadcaster.errors.no_users_found"))
+        return
+        
     total, success, failure = len(target_user_ids), 0, 0
 
     for user_id in target_user_ids:
@@ -315,9 +326,19 @@ async def send_broadcast_message_job(context: ContextTypes.DEFAULT_TYPE) -> None
             LOGGER.warning(f"Broadcast failed for user {user_id}: {e}")
         await asyncio.sleep(0.1)
 
-    await delete_broadcast_job(job_id)
-    report = _("broadcaster.job_report", job_id=job_id, total=total, success=success, failure=failure)
+    # --- ✨ SQLAlchemy Integration: Log the final result ✨ ---
+    await crud_broadcast.log_broadcast(
+        admin_id=admin_id,
+        message_content=message_content,
+        success_count=success,
+        failure_count=failure
+    )
+    # --- ---------------------------------------------------- ---
+
+    report = _("broadcaster.job_report", total=total, success=success, failure=failure)
     await context.bot.send_message(admin_id, report, parse_mode=ParseMode.HTML)
     from shared.keyboards import get_admin_main_menu_keyboard
     await context.bot.send_message(chat_id=admin_id, text=_("broadcaster.back_to_main"), reply_markup=get_admin_main_menu_keyboard())
-    LOGGER.info(f"Job {job_id} finished. Success: {success}, Failure: {failure}")
+    LOGGER.info(f"Job for admin {admin_id} finished. Success: {success}, Failure: {failure}")
+
+# --- END OF FILE modules/broadcaster/actions/main.py (REVISED) ---

@@ -1,5 +1,4 @@
-# FILE: modules/financials/actions/volumetric_plans_admin.py (REVISED FOR I18N and BUG FIX)
-
+# --- START OF FILE modules/financials/actions/volumetric_plans_admin.py ---
 import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -8,10 +7,8 @@ from telegram.ext import (
 )
 from telegram.constants import ParseMode
 
-from database.db_manager import (
-    load_pricing_parameters, save_base_daily_price, add_pricing_tier,
-    delete_pricing_tier, get_pricing_tier_by_id, update_pricing_tier
-)
+from database.crud import volumetric_tier as crud_volumetric
+from database.crud import financial_setting as crud_financial
 from .settings import show_plan_management_menu
 from shared.callbacks import end_conversation_and_show_menu
 
@@ -26,9 +23,9 @@ async def manage_volumetric_plans_menu(update: Update, context: ContextTypes.DEF
     query = update.callback_query
     await query.answer()
 
-    pricing_params = await load_pricing_parameters()
-    base_price = pricing_params.get('base_daily_price')
-    tiers = sorted(pricing_params.get('tiers', []), key=lambda x: x['volume_limit_gb'])
+    financial_settings = await crud_financial.load_financial_settings()
+    base_price = financial_settings.base_daily_price if financial_settings else None
+    tiers = await crud_volumetric.get_all_pricing_tiers()
 
     text = _("financials_volumetric.menu_title")
     keyboard_rows = []
@@ -43,11 +40,11 @@ async def manage_volumetric_plans_menu(update: Update, context: ContextTypes.DEF
         text += _("financials_volumetric.no_tiers_defined")
     else:
         for tier in tiers:
-            tier_text = _("financials_volumetric.tier_list_item", limit=tier['volume_limit_gb'], price=f"{tier['price_per_gb']:,}")
-            keyboard_rows.append([InlineKeyboardButton(tier_text, callback_data=f"vol_noop_{tier['id']}")])
+            tier_text = _("financials_volumetric.tier_list_item", limit=tier.volume_limit_gb, price=f"{tier.price_per_gb:,}")
+            keyboard_rows.append([InlineKeyboardButton(tier_text, callback_data=f"vol_noop_{tier.id}")])
             action_buttons = [
-                InlineKeyboardButton(_("financials_volumetric.button_edit"), callback_data=f"vol_edit_tier_{tier['id']}"),
-                InlineKeyboardButton(_("financials_volumetric.button_delete"), callback_data=f"vol_delete_tier_{tier['id']}")
+                InlineKeyboardButton(_("financials_volumetric.button_edit"), callback_data=f"vol_edit_tier_{tier.id}"),
+                InlineKeyboardButton(_("financials_volumetric.button_delete"), callback_data=f"vol_delete_tier_{tier.id}")
             ]
             keyboard_rows.append(action_buttons)
     
@@ -74,12 +71,9 @@ async def save_new_base_price(update: Update, context: ContextTypes.DEFAULT_TYPE
         await update.message.reply_text(_("financials_volumetric.invalid_positive_number"))
         return GET_BASE_PRICE
     
-    await save_base_daily_price(price)
+    await crud_financial.save_financial_settings({'base_daily_price': price})
     await update.message.reply_text(_("financials_volumetric.base_price_updated_success", price=_("financials_volumetric.price_toman", price=price)))
     
-    # ✨✨✨ BUG FIX HERE ✨✨✨
-    # Instead of creating a dummy update, we can use the existing `update` object
-    # to send a new message that looks like the menu. This is safer.
     await show_plan_management_menu(update, context)
     return ConversationHandler.END
 
@@ -94,7 +88,7 @@ async def start_add_tier(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 async def get_tier_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     from shared.translator import _
-    context.user_data['new_tier']['name'] = update.message.text.strip()
+    context.user_data['new_tier']['tier_name'] = update.message.text.strip()
     text = _("financials_volumetric.step2_ask_limit")
     await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN)
     return GET_TIER_LIMIT
@@ -108,7 +102,7 @@ async def get_tier_limit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await update.message.reply_text(_("financials_volumetric.invalid_limit"))
         return GET_TIER_LIMIT
     
-    context.user_data['new_tier']['limit'] = limit
+    context.user_data['new_tier']['volume_limit_gb'] = limit
     text = _("financials_volumetric.step3_ask_price")
     await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN)
     return GET_TIER_PRICE
@@ -122,13 +116,13 @@ async def get_tier_price_and_confirm(update: Update, context: ContextTypes.DEFAU
         await update.message.reply_text(_("financials_unlimited.invalid_price"))
         return GET_TIER_PRICE
 
-    context.user_data['new_tier']['price'] = price
+    context.user_data['new_tier']['price_per_gb'] = price
     tier_data = context.user_data['new_tier']
     
     text = _("financials_volumetric.confirm_prompt_title")
-    text += _("financials_volumetric.confirm_name", name=tier_data['name'])
-    text += _("financials_volumetric.confirm_limit", limit=tier_data['limit'])
-    text += _("financials_volumetric.confirm_price", price=f"{tier_data['price']:,}")
+    text += _("financials_volumetric.confirm_name", name=tier_data['tier_name'])
+    text += _("financials_volumetric.confirm_limit", limit=tier_data['volume_limit_gb'])
+    text += _("financials_volumetric.confirm_price", price=f"{tier_data['price_per_gb']:,}")
     text += _("financials_volumetric.confirm_prompt_question")
 
     keyboard = [[
@@ -144,7 +138,7 @@ async def save_new_tier(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     await query.answer(_("financials_volumetric.saving"))
     tier_data = context.user_data.pop('new_tier', {})
     
-    await add_pricing_tier(tier_name=tier_data['name'], volume_limit_gb=tier_data['limit'], price_per_gb=tier_data['price'])
+    await crud_volumetric.add_pricing_tier(tier_data)
     await query.edit_message_text(_("financials_volumetric.add_success"))
     await manage_volumetric_plans_menu(update, context)
     return ConversationHandler.END
@@ -162,16 +156,21 @@ async def start_edit_tier(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     from shared.translator import _
     query = update.callback_query
     tier_id = int(query.data.split('_')[-1])
-    tier = await get_pricing_tier_by_id(tier_id)
+    tier = await crud_volumetric.get_pricing_tier_by_id(tier_id)
     if not tier:
         await query.answer(_("financials_unlimited.plan_not_found"), show_alert=True)
         return ConversationHandler.END
 
-    context.user_data['edit_tier'] = tier
+    context.user_data['edit_tier'] = {
+        'id': tier.id,
+        'tier_name': tier.tier_name,
+        'volume_limit_gb': tier.volume_limit_gb,
+        'price_per_gb': tier.price_per_gb
+    }
     await query.answer()
     
-    text = _("financials_volumetric.edit_tier_title", name=tier['tier_name'])
-    text += _("financials_volumetric.current_value", value=tier['tier_name'])
+    text = _("financials_volumetric.edit_tier_title", name=tier.tier_name)
+    text += _("financials_volumetric.current_value", value=tier.tier_name)
     text += _("financials_volumetric.step1_ask_new_name")
     
     await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN)
@@ -241,14 +240,10 @@ async def save_edited_tier(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         await query.edit_message_text(_("financials_volumetric.error_tier_info_lost"))
         return ConversationHandler.END
 
-    # ✨✨✨ KEY FIX HERE ✨✨✨
-    # Instead of using **tier_data which includes the 'id' key,
-    # we pass the arguments manually with the correct names.
-    await update_pricing_tier(
-        tier_id=tier_data['id'],
-        tier_name=tier_data['tier_name'],
-        volume_limit_gb=tier_data['volume_limit_gb'],
-        price_per_gb=tier_data['price_per_gb']
+    tier_id = tier_data.pop('id')
+    await crud_volumetric.update_pricing_tier(
+        tier_id=tier_id,
+        update_data=tier_data
     )
     
     await query.edit_message_text(_("financials_volumetric.edit_success"))
@@ -268,12 +263,12 @@ async def confirm_delete_tier(update: Update, context: ContextTypes.DEFAULT_TYPE
     from shared.translator import _
     query = update.callback_query
     tier_id = int(query.data.split('_')[-1])
-    tier = await get_pricing_tier_by_id(tier_id)
+    tier = await crud_volumetric.get_pricing_tier_by_id(tier_id)
     if not tier:
         await query.answer(_("financials_unlimited.plan_not_found"), show_alert=True)
         return
 
-    text = _("financials_volumetric.delete_confirm_prompt", name=tier['tier_name'])
+    text = _("financials_volumetric.delete_confirm_prompt", name=tier.tier_name)
     keyboard = [[
         InlineKeyboardButton(_("financials_unlimited.button_confirm_delete"), callback_data=f"vol_do_delete_tier_{tier_id}"),
         InlineKeyboardButton(_("financials_unlimited.button_cancel_delete"), callback_data="admin_manage_volumetric")
@@ -286,7 +281,7 @@ async def execute_delete_tier(update: Update, context: ContextTypes.DEFAULT_TYPE
     query = update.callback_query
     tier_id = int(query.data.split('_')[-1])
     await query.answer(_("financials_volumetric.deleting"))
-    await delete_pricing_tier(tier_id)
+    await crud_volumetric.delete_pricing_tier(tier_id)
     await query.edit_message_text(_("financials_volumetric.delete_success"))
     await manage_volumetric_plans_menu(update, context)
 
@@ -321,3 +316,4 @@ edit_tier_conv = ConversationHandler(
     },
     fallbacks=[CommandHandler('cancel', end_conversation_and_show_menu)], conversation_timeout=600
 )
+# --- END OF FILE modules/financials/actions/volumetric_plans_admin.py ---
