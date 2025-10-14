@@ -25,7 +25,7 @@ async def show_gift_management_menu(update: Update, context: ContextTypes.DEFAUL
     await query.answer()
 
     settings = await crud_bot_setting.load_bot_settings()
-    welcome_amount = settings.welcome_gift_amount if settings else 0
+    welcome_amount = settings.get('welcome_gift_amount', 0) if settings else 0
     
     if welcome_amount > 0:
         amount_str = _("financials_gift.welcome_gift_amount_set", amount=f"{welcome_amount:,}")
@@ -53,7 +53,7 @@ async def save_welcome_gift(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         await update.message.reply_text(_("financials_gift.invalid_amount"))
         return GET_WELCOME_AMOUNT
 
-    await crud_bot_setting.save_bot_settings(welcome_gift_amount=amount)
+    await crud_bot_setting.save_bot_settings({'welcome_gift_amount': amount})
     
     if amount > 0:
         feedback = _("financials_gift.welcome_gift_save_success", amount=f"{amount:,}")

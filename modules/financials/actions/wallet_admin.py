@@ -24,7 +24,7 @@ async def show_wallet_settings_menu(update: Update, context: ContextTypes.DEFAUL
 
     settings = await crud_bot_setting.load_bot_settings()
     
-    amounts_db = settings.wallet_predefined_amounts if settings else None
+    amounts_db = settings.get('wallet_predefined_amounts') if settings else None
     amounts = amounts_db if amounts_db is not None else [50000, 100000, 250000, 500000]
     
     amounts_str = ", ".join([f"{a:,}" for a in amounts]) if amounts else _("financials_settings.not_set", default="تنظیم نشده")
@@ -82,7 +82,7 @@ async def save_new_amounts(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             await update.message.reply_text(_("financials_settings.invalid_amounts_format"))
             return EDITING_AMOUNTS
 
-    await crud_bot_setting.save_bot_settings(wallet_predefined_amounts=new_amounts)
+    await crud_bot_setting.save_bot_settings({'wallet_predefined_amounts': new_amounts})
     
     try:
         await update.message.delete()

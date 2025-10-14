@@ -38,14 +38,21 @@ async def _cleanup_test_account_job(context: ContextTypes.DEFAULT_TYPE):
     
     try:
         success, message = await marzban_api.delete_user_api(marzban_username)
-        if success:
-            LOGGER.info(f"Successfully deleted test account '{marzban_username}' from Marzban panel.")
+        
+        # --- KEY CHANGE: Handle "User not found" as a success case for cleanup ---
+        # If deletion was successful OR the user was already gone (404), we proceed with DB cleanup.
+        if success or ("User not found" in message):
+            if not success:
+                LOGGER.warning(f"Test account '{marzban_username}' was already deleted from Marzban panel. Proceeding with DB cleanup.")
+            else:
+                LOGGER.info(f"Successfully deleted test account '{marzban_username}' from Marzban panel.")
             
-            # --- FIX: Use correct crud functions for cleanup ---
+            # Perform DB cleanup in both cases
             await crud_marzban_link.delete_marzban_link(marzban_username)
             await crud_user_note.delete_user_note(marzban_username)
             await crud_bot_managed_user.remove_from_managed_list(marzban_username)
             
+            # Notify the user that the account is expired and cleaned up
             keyboard = get_connection_guide_keyboard(is_for_test_account_expired=True)
             await context.bot.send_message(
                 chat_id=chat_id,
@@ -54,6 +61,7 @@ async def _cleanup_test_account_job(context: ContextTypes.DEFAULT_TYPE):
                 reply_markup=keyboard
             )
         else:
+            # This block now only runs for REAL API errors (e.g., connection issues)
             LOGGER.error(f"Failed to delete expired test account '{marzban_username}' from Marzban. API Error: {message}")
             await context.bot.send_message(
                 chat_id=chat_id,

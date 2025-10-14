@@ -143,8 +143,8 @@ async def list_users_with_subscriptions(update: Update, context: ContextTypes.DE
         
     marzban_usernames = {normalize_username(u['username']) for u in marzban_users if u.get('username')}
     valid_notes = sorted(
-        [note for note in all_notes_obj if normalize_username(note.marzban_username) in marzban_usernames],
-        key=lambda x: x.marzban_username.lower()
+        [note for note in all_notes_obj if normalize_username(note.username) in marzban_usernames],
+        key=lambda x: x.username.lower()
     )
 
     if not valid_notes:
@@ -157,10 +157,10 @@ async def list_users_with_subscriptions(update: Update, context: ContextTypes.DE
     keyboard_rows = []
     it = iter(page_notes)
     for note1 in it:
-        row = [InlineKeyboardButton(_("marzban.marzban_note.button_user_prefix", username=note1.marzban_username), callback_data=f"user_details_{note1.marzban_username}_subs_{page}")]
+        row = [InlineKeyboardButton(_("marzban.marzban_note.button_user_prefix", username=note1.username), callback_data=f"user_details_{note1.username}_subs_{page}")]
         try:
             note2 = next(it)
-            row.append(InlineKeyboardButton(_("marzban.marzban_note.button_user_prefix", username=note2.marzban_username), callback_data=f"user_details_{note2.marzban_username}_subs_{page}"))
+            row.append(InlineKeyboardButton(_("marzban.marzban_note.button_user_prefix", username=note2.username), callback_data=f"user_details_{note2.username}_subs_{page}"))
         except StopIteration:
             pass
         keyboard_rows.append(row)
@@ -177,7 +177,7 @@ async def list_users_with_subscriptions(update: Update, context: ContextTypes.DE
     for note in page_notes:
         price = note.subscription_price
         line = _("marzban.marzban_note.subscription_list_item", 
-                username=note.marzban_username,
+                username=note.username,
                 duration=note.subscription_duration or undefined_str,
                 datalimit=note.subscription_data_limit_gb or undefined_str,
                 price=f"{price:,}" if price is not None else undefined_str)
