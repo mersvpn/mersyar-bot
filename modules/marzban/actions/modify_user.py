@@ -10,6 +10,7 @@ from shared.log_channel import send_log
 from shared.keyboards import get_back_to_main_menu_keyboard
 
 from database.crud import marzban_link as crud_marzban_link
+from database.crud import user_note as crud_user_note
 from .display import show_user_details_panel
 from .constants import GB_IN_BYTES, DEFAULT_RENEW_DAYS
 from .data_manager import normalize_username
@@ -152,18 +153,20 @@ async def do_delete_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     query = update.callback_query
     admin_user = update.effective_user
     username = query.data.removeprefix('do_delete_')
+    normalized_username_str = normalize_username(username)
     await query.answer()
     
     is_customer_request = "درخواست حذف سرویس" in query.message.text
     await query.edit_message_text(_("marzban_modify_user.deleting_user", username=f"`{username}`"), parse_mode=ParseMode.MARKDOWN)
     
-  
-    customer_id = await crud_marzban_link.get_telegram_id_from_marzban_username(normalize_username(username))
+    # --- FIX 1: Use the correct function name ---
+    customer_id = await crud_marzban_link.get_telegram_id_by_marzban_username(normalized_username_str)
 
     success, message = await delete_user_api(username)
     if success:
-
-        await crud_marzban_link.unlink_user_from_telegram(username)
+        # --- FIX 2: Use the correct function name and also delete the user_note ---
+        await crud_marzban_link.delete_marzban_link(normalized_username_str)
+        await crud_user_note.delete_user_note(normalized_username_str)
         
         admin_mention = escape_markdown(admin_user.full_name, version=2)
         safe_username = escape_markdown(username, version=2)
@@ -186,40 +189,34 @@ async def do_delete_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 async def renew_user_smart(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     from shared.translator import _
     from .display import show_user_details_panel
-    from database.crud import user_note as crud_user_note
-    from database.crud import marzban_link as crud_marzban_link
 
     query = update.callback_query
     username = query.data.removeprefix('renew_')
+    normalized_username_str = normalize_username(username)
     admin_user = update.effective_user
     
-    # Provide immediate feedback to the admin
     await query.answer(_("marzban_modify_user.renewing_user", username=username))
     await query.edit_message_text(
         _("marzban_modify_user.renew_in_progress", username=f"`{username}`"), 
         parse_mode=ParseMode.MARKDOWN
     )
 
-    # --- Step 1: Get User and Subscription Data ---
     user_data = await get_user_data(username)
     if not user_data:
         await query.edit_message_text(_("marzban_display.user_not_found"))
         return
 
-    note_data = await crud_user_note.get_user_note(normalize_username(username))
+    # --- FIX 3: Correctly import and use the function ---
+    note_data = await crud_user_note.get_user_note(normalized_username_str)
     
-    # Use subscription data if available, otherwise use defaults
     renewal_duration_days = note_data.subscription_duration if note_data and note_data.subscription_duration else DEFAULT_RENEW_DAYS
     data_limit_gb = note_data.subscription_data_limit_gb if note_data and note_data.subscription_data_limit_gb is not None else (user_data.get('data_limit') or 0) / GB_IN_BYTES
     
-    # --- Step 2: Perform Renewal in Marzban Panel ---
-    # 2a. Reset Traffic
     success_reset, message_reset = await reset_user_traffic_api(username)
     if not success_reset:
         await query.edit_message_text(_("marzban_modify_user.renew_error_reset_traffic", error=f"`{message_reset}`"), parse_mode=ParseMode.MARKDOWN)
         return
         
-    # 2b. Modify User (Extend expiry, set data limit)
     start_date = datetime.datetime.fromtimestamp(max(user_data.get('expire') or 0, datetime.datetime.now().timestamp()))
     new_expire_date = start_date + datetime.timedelta(days=renewal_duration_days)
     payload_to_modify = {
@@ -233,7 +230,6 @@ async def renew_user_smart(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         await query.edit_message_text(_("marzban_modify_user.renew_error_modify", error=f"`{message_modify}`"), parse_mode=ParseMode.MARKDOWN)
         return
         
-    # --- Step 3: Log the successful renewal ---
     admin_mention = escape_markdown(admin_user.full_name, version=2)
     safe_username = escape_markdown(username, version=2)
     log_message = _("marzban_modify_user.log_renew_title")
@@ -243,10 +239,8 @@ async def renew_user_smart(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     log_message += _("marzban_modify_user.log_deleted_by", admin_mention=admin_mention)
     await send_log(context.bot, log_message, parse_mode=ParseMode.MARKDOWN_V2)
 
-    # --- Step 4: Show Final Success Message to Admin ---
-    # This will refresh the user details panel with the new info
-    # --- Step 4: Notify the customer (if linked) ---
-    customer_id = await crud_marzban_link.get_telegram_id_by_marzban_username(normalize_username(username))
+    # --- FIX 4: Use the correct function name ---
+    customer_id = await crud_marzban_link.get_telegram_id_by_marzban_username(normalized_username_str)
     customer_notified = False
     if customer_id:
         try:
@@ -261,11 +255,9 @@ async def renew_user_smart(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         except Exception as e:
             LOGGER.error(f"User {username} renewed, but failed to notify customer {customer_id}: {e}")
 
-    # --- Step 5: Show Final Success Message to Admin ---
     if customer_notified:
         success_message = _("marzban_modify_user.renew_successful_admin_and_customer", username=f"`{username}`")
     else:
-        # This will be shown if customer is not linked or if sending message to them failed
         success_message = _("marzban_modify_user.renew_successful_admin_only", username=f"`{username}`")
     
     await show_user_details_panel(

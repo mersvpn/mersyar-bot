@@ -25,6 +25,7 @@ async def create_or_update_user_note(
     duration: Optional[int] = None,
     data_limit_gb: Optional[int] = None,
     note: Optional[str] = None,
+    is_test_account: Optional[bool] = None,  # <--- این خط اضافه شده
 ) -> Optional[UserNote]:
     """
     Creates a new user note or updates an existing one with new details.
@@ -46,6 +47,8 @@ async def create_or_update_user_note(
                 db_note.subscription_data_limit_gb = data_limit_gb
             if note is not None:
                 db_note.note = note
+            if is_test_account is not None:  # <--- این سه خط اضافه شده
+                db_note.is_test_account = is_test_account
 
             await session.commit()
             await session.refresh(db_note)

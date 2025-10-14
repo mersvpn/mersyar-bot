@@ -1,26 +1,28 @@
-# --- START OF FILE modules/customer/actions/test_account.py ---
+# FILE: modules/customer/actions/test_account.py (FINAL, FULLY CORRECTED VERSION)
+
 import logging
 import qrcode
 import io
 import html
-import secrets
-import string
 import re
 import datetime
 from telegram import Update
 from telegram.ext import ContextTypes, ConversationHandler
 from telegram.constants import ParseMode
 
+# --- CORRECTED IMPORTS ---
 from database.crud import bot_setting as crud_bot_setting
 from database.crud import user as crud_user
 from database.crud import user_note as crud_user_note
+from database.crud import marzban_link as crud_marzban_link
+from database.crud import bot_managed_user as crud_bot_managed_user
 from modules.marzban.actions.add_user import create_marzban_user_from_template
 from modules.marzban.actions import api as marzban_api
-from modules.marzban.actions.data_manager import link_user_to_telegram, add_user_to_managed_list, cleanup_marzban_user_data, is_user_admin
 from shared.translator import _
 from shared.log_channel import send_log
 from shared.callbacks import end_conversation_and_show_menu
 from shared.keyboards import get_connection_guide_keyboard
+from shared.auth import is_user_admin
 
 LOGGER = logging.getLogger(__name__)
 
@@ -38,7 +40,11 @@ async def _cleanup_test_account_job(context: ContextTypes.DEFAULT_TYPE):
         success, message = await marzban_api.delete_user_api(marzban_username)
         if success:
             LOGGER.info(f"Successfully deleted test account '{marzban_username}' from Marzban panel.")
-            await cleanup_marzban_user_data(marzban_username)
+            
+            # --- FIX: Use correct crud functions for cleanup ---
+            await crud_marzban_link.delete_marzban_link(marzban_username)
+            await crud_user_note.delete_user_note(marzban_username)
+            await crud_bot_managed_user.remove_from_managed_list(marzban_username)
             
             keyboard = get_connection_guide_keyboard(is_for_test_account_expired=True)
             await context.bot.send_message(
@@ -82,6 +88,7 @@ async def handle_test_account_request(update: Update, context: ContextTypes.DEFA
         if query.message:
             await query.message.delete()
 
+    # --- FIX: Direct call to is_user_admin ---
     user_is_admin = await is_user_admin(user.id)
 
     if not user_is_admin:
@@ -147,18 +154,20 @@ async def get_username_and_create_account(update: Update, context: ContextTypes.
     marzban_username = new_user_data['username']
     sub_link = new_user_data.get("subscription_url", "N/A")
     all_links = new_user_data.get("links", [])
-    
     expire_timestamp = new_user_data.get('expire')
 
+    # --- FIX: Use correct crud functions ---
     await crud_user.increment_user_test_account_count(user.id)
-    await link_user_to_telegram(marzban_username, user.id)
-    await add_user_to_managed_list(marzban_username)
-    await crud_user_note.save_user_note(marzban_username, {
-        'subscription_duration': round(days_from_hours, 2),
-        'subscription_data_limit_gb': gb,
-        'subscription_price': 0,
-        'is_test_account': True
-    })
+    await crud_marzban_link.create_or_update_link(marzban_username, user.id)
+    await crud_bot_managed_user.add_to_managed_list(marzban_username)
+    
+    await crud_user_note.create_or_update_user_note(
+        marzban_username=marzban_username,
+        duration=round(days_from_hours, 2),
+        data_limit_gb=gb,
+        price=0,
+        is_test_account=True
+    )
     
     if expire_timestamp and context.job_queue:
         expire_datetime = datetime.datetime.fromtimestamp(expire_timestamp)
@@ -215,6 +224,7 @@ async def get_username_and_create_account(update: Update, context: ContextTypes.
         links_message_text += links_str
         await update.message.reply_text(text=links_message_text, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
 
+    # --- FIX: Direct call to is_user_admin ---
     user_is_admin = await is_user_admin(user.id)
     admin_flag = " (Admin)" if user_is_admin else ""
     log_message = (
@@ -235,5 +245,3 @@ async def get_username_and_create_account(update: Update, context: ContextTypes.
     )
     
     return ConversationHandler.END
-
-# --- END OF FILE modules/customer/actions/test_account.py ---

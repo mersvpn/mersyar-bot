@@ -129,3 +129,8 @@ def ensure_channel_membership(func):
     return wrapped
 
 # --- END OF FILE shared/auth.py (FINAL FIX) ---
+
+async def is_user_admin(user_id: int) -> bool:
+    """Checks if a user ID belongs to an admin."""
+    # This function can be async to keep consistency, even though it does no IO.
+    return user_id in config.AUTHORIZED_USER_IDS
