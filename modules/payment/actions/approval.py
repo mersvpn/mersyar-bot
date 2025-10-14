@@ -157,8 +157,18 @@ async def _approve_renewal(context: ContextTypes.DEFAULT_TYPE, invoice: PendingI
     invoice_id = invoice.invoice_id
     
     username = plan_details.get('username')
+    # --- ✨ FIX: Read duration and volume from plan_details, with fallback to user_note ---
+    note_data = await crud_user_note.get_user_note(username)
     renewal_days = plan_details.get('duration')
-    data_limit_gb = plan_details.get('volume', 0)
+    if renewal_days is None and note_data:
+        renewal_days = note_data.subscription_duration
+
+    data_limit_gb = plan_details.get('volume')
+    if data_limit_gb is None and note_data:
+        data_limit_gb = note_data.subscription_data_limit_gb
+    
+    data_limit_gb = data_limit_gb or 0 # Ensure it's not None
+    # --- END OF FIX ---
     price = invoice.price
 
     if not all([username, renewal_days is not None, data_limit_gb is not None]):

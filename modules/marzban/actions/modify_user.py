@@ -185,8 +185,9 @@ async def do_delete_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 async def renew_user_smart(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     from shared.translator import _
-    from database.crud import get_user_note
-    from database.crud import get_user_note, get_telegram_id_from_marzban_username
+    from .display import show_user_details_panel
+    from database.crud import user_note as crud_user_note
+    from database.crud import marzban_link as crud_marzban_link
 
     query = update.callback_query
     username = query.data.removeprefix('renew_')
@@ -208,8 +209,8 @@ async def renew_user_smart(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     note_data = await crud_user_note.get_user_note(normalize_username(username))
     
     # Use subscription data if available, otherwise use defaults
-    renewal_duration_days = (note_data or {}).get('subscription_duration') or DEFAULT_RENEW_DAYS
-    data_limit_gb = (note_data or {}).get('subscription_data_limit_gb', (user_data.get('data_limit') or 0) / GB_IN_BYTES)
+    renewal_duration_days = note_data.subscription_duration if note_data and note_data.subscription_duration else DEFAULT_RENEW_DAYS
+    data_limit_gb = note_data.subscription_data_limit_gb if note_data and note_data.subscription_data_limit_gb is not None else (user_data.get('data_limit') or 0) / GB_IN_BYTES
     
     # --- Step 2: Perform Renewal in Marzban Panel ---
     # 2a. Reset Traffic
@@ -245,7 +246,7 @@ async def renew_user_smart(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     # --- Step 4: Show Final Success Message to Admin ---
     # This will refresh the user details panel with the new info
     # --- Step 4: Notify the customer (if linked) ---
-    customer_id = await get_telegram_id_from_marzban_username(normalize_username(username))
+    customer_id = await crud_marzban_link.get_telegram_id_by_marzban_username(normalize_username(username))
     customer_notified = False
     if customer_id:
         try:

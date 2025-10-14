@@ -57,6 +57,7 @@ async def start_manual_invoice_conv(update: Update, context: ContextTypes.DEFAUL
     )
     return GET_MANUAL_PRICE
 
+# --- START OF REVISED FUNCTION ---
 async def process_manual_price_and_send(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     payment_info = context.user_data.get('payment_info')
     if not payment_info:
@@ -77,13 +78,13 @@ async def process_manual_price_and_send(update: Update, context: ContextTypes.DE
         await update.message.reply_text(_("financials_payment.error_financials_not_set"), parse_mode=ParseMode.MARKDOWN)
         return ConversationHandler.END
 
-    # Step 1: Update the user_note with the new price first. This becomes the source of truth.
+    # Step 1: Update the user_note with the new price.
     await crud_user_note.create_or_update_user_note(
         marzban_username=marzban_username,
         price=price_int
     )
 
-    # Step 2: Now, read the updated (or existing) note to build the invoice
+    # Step 2: Read the note (which now includes the price) to get all details.
     user_note = await crud_user_note.get_user_note(marzban_username)
     if not user_note:
         LOGGER.error(f"Failed to read user_note for {marzban_username} immediately after saving.")
@@ -93,19 +94,20 @@ async def process_manual_price_and_send(update: Update, context: ContextTypes.DE
     duration = user_note.subscription_duration or 0
     volume = user_note.subscription_data_limit_gb or 0
 
-    # Step 3: Create plan_details with consistent keys for the approval function
+    # Step 3: Create plan_details with a consistent, simple invoice type.
     plan_details = {
-        'invoice_type': 'MANUAL',
+        'invoice_type': 'MANUAL_INVOICE', # Use a single type for all manual invoices
         'username': marzban_username,
-        'renewal_days': duration,
-        'data_limit_gb': volume,
+        'duration': duration,
+        'volume': volume,
         'price': price_int
     }
 
     invoice = await crud_invoice.create_pending_invoice({
         'user_id': customer_id,
         'plan_details': plan_details,
-        'price': price_int
+        'price': price_int,
+        'from_wallet_amount': 0
     })
 
     if not invoice:
@@ -139,6 +141,7 @@ async def process_manual_price_and_send(update: Update, context: ContextTypes.DE
     context.user_data.clear()
     await update.message.reply_text(_("financials_payment.back_to_main_menu"), reply_markup=get_admin_main_menu_keyboard())
     return ConversationHandler.END
+# --- END OF REVISED FUNCTION ---
 
 async def cancel_manual_invoice_conv(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await update.message.reply_text(_("financials_payment.manual_invoice_cancelled"), reply_markup=get_admin_main_menu_keyboard())

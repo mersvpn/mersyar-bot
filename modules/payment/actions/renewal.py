@@ -29,6 +29,8 @@ async def send_renewal_invoice_to_user(context: ContextTypes.DEFAULT_TYPE, user_
         plan_details = {
             'invoice_type': 'RENEWAL',
             'username': username,
+            'duration': renewal_days,      # <-- این خط اضافه شد
+            'volume': data_limit_gb,       # <-- این خط اضافه شد
             'price': price
         }
         
