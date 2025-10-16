@@ -221,20 +221,25 @@ async def get_test_account_settings_keyboard() -> InlineKeyboardMarkup:
     ]
     return InlineKeyboardMarkup(keyboard)
 
-def get_connection_guide_keyboard() -> InlineKeyboardMarkup:
+def get_connection_guide_keyboard(is_for_test_account_expired: bool = False) -> InlineKeyboardMarkup:
     """
-    Creates an inline keyboard with a single button to show connection guides.
+    Creates an inline keyboard.
+    If `is_for_test_account_expired` is True, it shows a "Buy Subscription" button.
+    Otherwise, it shows a "Connection Guides" button.
     """
-    keyboard = [
-        [
-            InlineKeyboardButton(
-                _("keyboards.inline_keyboards.general.connection_guide"), 
-                callback_data="show_connection_guides"
-            )
-        ]
-    ]
+    if is_for_test_account_expired:
+        button = InlineKeyboardButton(
+            _("general.buy_subscription_button"), 
+            callback_data="customer_show_shop"
+        )
+    else:
+        button = InlineKeyboardButton(
+            _("keyboards.inline_keyboards.general.connection_guide"), 
+            callback_data="show_connection_guides"
+        )
+        
+    keyboard = [[button]]
     return InlineKeyboardMarkup(keyboard)
-
 
 def get_cancel_keyboard() -> ReplyKeyboardMarkup:
     """Creates a standard cancel/back keyboard for conversations."""
