@@ -21,3 +21,5 @@ jdatetime
 qrcode
 Pillow
 aiofiles
+
+pytz==2024.1
