@@ -120,18 +120,22 @@ def register(app: Application):
         per_message=False
     )
     
+    # --- START: Replace this block in modules/customer/handler.py ---
     manual_purchase_conv = ConversationHandler(
-        entry_points=[MessageHandler(filters.Regex(f'^{re.escape(_("keyboards.customer_shop.assisted_purchase"))}$'), purchase.start_purchase)],
+        entry_points=[MessageHandler(filters.Regex(f'^{re.escape(_("keyboards.customer_shop.assisted_purchase"))}$'), purchase.start_purchase_conversation)],
         states={
-            purchase.CONFIRM_PURCHASE: [
-                CallbackQueryHandler(purchase.confirm_purchase, pattern='^confirm_purchase_request$'),
-                CallbackQueryHandler(purchase.back_to_shop_menu, pattern='^back_to_shop_menu$')
+            purchase.GET_REQUEST_MESSAGE: [
+                MessageHandler(IGNORE_MAIN_MENU_FILTER, purchase.handle_request_message)
             ]
         },
-        fallbacks=unified_fallback,
-        conversation_timeout=300,
+        fallbacks=[
+            CallbackQueryHandler(end_conversation_and_show_menu, pattern='^cancel_conv$'),
+            *unified_fallback
+        ],
+        conversation_timeout=600, # Increased timeout for user to type
         per_message=False
     )
+# --- END: Replace this block in modules/customer/handler.py ---
     
     receipt_conv = ConversationHandler(
         entry_points=[

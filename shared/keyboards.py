@@ -230,7 +230,7 @@ def get_connection_guide_keyboard(is_for_test_account_expired: bool = False) -> 
     if is_for_test_account_expired:
         button = InlineKeyboardButton(
             _("general.buy_subscription_button"), 
-            callback_data="customer_show_shop"
+            callback_data="customer_shop"
         )
     else:
         button = InlineKeyboardButton(

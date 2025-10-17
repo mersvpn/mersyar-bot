@@ -29,40 +29,50 @@ LOGGER = logging.getLogger(__name__)
 ASK_USERNAME = 0
 
 
+# --- START: Replace this function in modules/customer/actions/test_account.py ---
+
 async def _cleanup_test_account_job(context: ContextTypes.DEFAULT_TYPE):
+    """
+    This job runs exactly when a test account expires.
+    It notifies the user and then deletes the account.
+    """
     job = context.job
     marzban_username = job.data['marzban_username']
     chat_id = job.data['chat_id']
     
-    LOGGER.info(f"Job triggered: Cleaning up expired test account '{marzban_username}' for user {chat_id}.")
+    LOGGER.info(f"Job triggered: Notifying user {chat_id} about expired test account '{marzban_username}'.")
     
     try:
+        # Step 1: Notify the user that their test is over and encourage purchase.
+        # We use a special keyboard for this notification.
+        keyboard = get_connection_guide_keyboard(is_for_test_account_expired=True)
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=_("customer.test_account.account_expired_notification", username=f"<code>{marzban_username}</code>"),
+            parse_mode=ParseMode.HTML,
+            reply_markup=keyboard
+        )
+        LOGGER.info(f"Successfully sent expiration notice to user {chat_id}.")
+
+        # Step 2: Now, attempt to delete the user from Marzban.
         success, message = await marzban_api.delete_user_api(marzban_username)
         
-        # --- KEY CHANGE: Handle "User not found" as a success case for cleanup ---
-        # If deletion was successful OR the user was already gone (404), we proceed with DB cleanup.
+        # If deletion was successful OR the user was already gone (404), we clean up the database.
         if success or ("User not found" in message):
             if not success:
                 LOGGER.warning(f"Test account '{marzban_username}' was already deleted from Marzban panel. Proceeding with DB cleanup.")
             else:
                 LOGGER.info(f"Successfully deleted test account '{marzban_username}' from Marzban panel.")
             
-            # Perform DB cleanup in both cases
+            # Step 3: Clean up all associated data from our bot's database.
             await crud_marzban_link.delete_marzban_link(marzban_username)
             await crud_user_note.delete_user_note(marzban_username)
             await crud_bot_managed_user.remove_from_managed_list(marzban_username)
-            
-            # Notify the user that the account is expired and cleaned up
-            keyboard = get_connection_guide_keyboard(is_for_test_account_expired=True)
-            await context.bot.send_message(
-                chat_id=chat_id,
-                text=_("customer.test_account.account_expired_notification"),
-                parse_mode=ParseMode.HTML,
-                reply_markup=keyboard
-            )
+            LOGGER.info(f"Database cleanup for '{marzban_username}' completed.")
         else:
-            # This block now only runs for REAL API errors (e.g., connection issues)
+            # This block only runs for REAL API errors (e.g., connection issues).
             LOGGER.error(f"Failed to delete expired test account '{marzban_username}' from Marzban. API Error: {message}")
+            # We still send a message, but it's a slightly different one indicating a potential issue.
             await context.bot.send_message(
                 chat_id=chat_id,
                 text=_("customer.test_account.account_expired_notification_api_fail"),
@@ -72,6 +82,7 @@ async def _cleanup_test_account_job(context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         LOGGER.error(f"Critical error in _cleanup_test_account_job for user {marzban_username}: {e}", exc_info=True)
 
+# --- END: Replace this function ---
 
 async def handle_test_account_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user = update.effective_user
@@ -114,6 +125,13 @@ async def handle_test_account_request(update: Update, context: ContextTypes.DEFA
     await reply(_("customer.test_account.prompt_for_username"))
     return ASK_USERNAME
 
+
+# --- START: Replace this function in modules/customer/actions/test_account.py ---
+
+# ✨ NEW IMPORT at the top of the file
+import pytz
+
+# ... (other imports)
 
 async def get_username_and_create_account(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user = update.effective_user
@@ -164,7 +182,6 @@ async def get_username_and_create_account(update: Update, context: ContextTypes.
     all_links = new_user_data.get("links", [])
     expire_timestamp = new_user_data.get('expire')
 
-    # --- FIX: Use correct crud functions ---
     await crud_user.increment_user_test_account_count(user.id)
     await crud_marzban_link.create_or_update_link(marzban_username, user.id)
     await crud_bot_managed_user.add_to_managed_list(marzban_username)
@@ -177,23 +194,40 @@ async def get_username_and_create_account(update: Update, context: ContextTypes.
         is_test_account=True
     )
     
+    # --- ✨ TIMEZONE FIX APPLIED HERE ✨ ---
     if expire_timestamp and context.job_queue:
-        expire_datetime = datetime.datetime.fromtimestamp(expire_timestamp)
+        # 1. Create a "naive" datetime object from the timestamp
+        naive_expire_datetime = datetime.datetime.fromtimestamp(expire_timestamp)
+        
+        # 2. Localize it to Tehran timezone
+        try:
+            tehran_tz = pytz.timezone("Asia/Tehran")
+            local_expire_datetime = tehran_tz.localize(naive_expire_datetime)
+        except pytz.UnknownTimeZoneError:
+            LOGGER.error("Timezone 'Asia/Tehran' not found. Defaulting to naive time. Please install 'pytz'.")
+            local_expire_datetime = naive_expire_datetime
+            
+        # 3. Convert the localized time to UTC (which is what JobQueue expects)
+        utc_expire_datetime = local_expire_datetime.astimezone(pytz.utc)
+
         job_data = {
             'marzban_username': marzban_username,
             'chat_id': update.effective_chat.id
         }
+        
+        # 4. Schedule the job using the UTC-converted datetime
         context.job_queue.run_once(
             _cleanup_test_account_job,
-            when=expire_datetime,
+            when=utc_expire_datetime,  # Use the UTC-converted time
             data=job_data,
             name=f"cleanup_test_{marzban_username}"
         )
-        LOGGER.info(f"Scheduled one-shot cleanup job for test account '{marzban_username}' at {expire_datetime}")
+        LOGGER.info(f"Scheduled one-shot cleanup job for test account '{marzban_username}' at {local_expire_datetime} (Tehran Time) / {utc_expire_datetime} (UTC)")
     else:
         LOGGER.warning(f"Could not schedule cleanup job for '{marzban_username}'. Expire timestamp or job_queue not found.")
+    # --- ✨ END OF TIMEZONE FIX ✨ ---
 
-    caption_text = _("customer.test_account.success_v2", hours=hours, gb=gb)
+    caption_text = _("customer.test_account.success_v2", hours=hours, gb=gb, username=f"<code>{html.escape(marzban_username)}</code>")
     caption_text += f"\n\n<code>{html.escape(sub_link)}</code>"
     
     reply_markup = get_connection_guide_keyboard()
@@ -232,7 +266,6 @@ async def get_username_and_create_account(update: Update, context: ContextTypes.
         links_message_text += links_str
         await update.message.reply_text(text=links_message_text, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
 
-    # --- FIX: Direct call to is_user_admin ---
     user_is_admin = await is_user_admin(user.id)
     admin_flag = " (Admin)" if user_is_admin else ""
     log_message = (
@@ -253,3 +286,5 @@ async def get_username_and_create_account(update: Update, context: ContextTypes.
     )
     
     return ConversationHandler.END
+
+# --- END: Replace this function in modules/customer/actions/test_account.py ---

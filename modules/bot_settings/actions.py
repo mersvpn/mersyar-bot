@@ -303,6 +303,8 @@ async def prompt_for_limit(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     return await prompt_for_value(update, context, 'test_account_limit', "bot_settings.test_account_v2.prompt_for_limit")
 
 
+# --- START: Replace this function in modules/bot_settings/actions.py ---
+
 async def process_and_save_value(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     value_text = update.message.text.strip()
     setting_key = context.user_data.get('setting_to_change')
@@ -311,9 +313,15 @@ async def process_and_save_value(update: Update, context: ContextTypes.DEFAULT_T
         return await back_to_management_menu(update, context)
 
     try:
-        value = float(value_text) if setting_key == 'test_account_gb' else int(value_text)
+        # ✨ FIX: Allow both 'hours' and 'gb' to be float values
+        if setting_key in ['test_account_hours', 'test_account_gb']:
+            value = float(value_text)
+        else:
+            value = int(value_text)
+            
         if value <= 0:
             raise ValueError("Value must be positive.")
+            
     except (ValueError, TypeError):
         await update.message.reply_text(_("bot_settings.test_account_v2.invalid_number"))
         if setting_key == 'test_account_hours': return GET_HOURS
@@ -330,6 +338,8 @@ async def process_and_save_value(update: Update, context: ContextTypes.DEFAULT_T
     context.user_data.clear()
     
     return await start_test_account_settings(update, context, should_delete_trigger_message=False)
+
+# --- END: Replace this function ---
 
 
 async def back_to_management_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
