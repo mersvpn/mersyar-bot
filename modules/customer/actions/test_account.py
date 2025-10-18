@@ -184,42 +184,41 @@ async def get_username_and_create_account(update: Update, context: ContextTypes.
         is_test_account=True
     )
     
-    # --- (✨ FIX START) TIMEZONE CORRECTION ---
+# --- (✨ FINAL FIX - PLATFORM INDEPENDENT) ---
     if expire_timestamp and context.job_queue:
         try:
-            # 1. Assume the timestamp from Marzban is based on Tehran time.
-            # Create a "naive" datetime object from it first.
-            naive_expire_dt = datetime.datetime.fromtimestamp(expire_timestamp)
-            
-            # 2. Get the Tehran timezone object.
-            tehran_tz = pytz.timezone("Asia/Tehran")
-            
-            # 3. Localize the naive datetime, making it "aware" of the Tehran timezone.
-            tehran_aware_dt = tehran_tz.localize(naive_expire_dt)
-            
-            # 4. Convert this Tehran-aware time to UTC. APScheduler works best with UTC.
-            utc_expire_dt = tehran_aware_dt.astimezone(pytz.utc)
+            # 1. Convert the timestamp directly to a naive UTC datetime object.
+            # This method is independent of the server's local timezone.
+            # APScheduler correctly interprets naive datetimes as being in the scheduler's timezone (which is UTC by default).
+            cleanup_time_utc = datetime.datetime.utcfromtimestamp(expire_timestamp)
             
             job_data = {
                 'marzban_username': marzban_username,
                 'chat_id': update.effective_chat.id
             }
             
-            # 5. Schedule the job using the correctly converted UTC datetime.
+            # 2. Schedule the job using the reliable UTC datetime.
             context.job_queue.run_once(
                 _cleanup_test_account_job,
-                when=utc_expire_dt,
+                when=cleanup_time_utc,
                 data=job_data,
                 name=f"cleanup_test_{marzban_username}"
             )
-            LOGGER.info(f"Scheduled one-shot cleanup job for test account '{marzban_username}' at {tehran_aware_dt} (Tehran) / {utc_expire_dt} (UTC)")
+            
+            # For logging purposes, let's show the local time as well
+            try:
+                tehran_tz = pytz.timezone("Asia/Tehran")
+                local_time = cleanup_time_utc.replace(tzinfo=pytz.utc).astimezone(tehran_tz)
+                LOGGER.info(f"Scheduled cleanup for '{marzban_username}' at {local_time.strftime('%Y-%m-%d %H:%M:%S %Z')} (Tehran) / {cleanup_time_utc.strftime('%Y-%m-%d %H:%M:%S UTC')}")
+            except pytz.UnknownTimeZoneError:
+                 LOGGER.info(f"Scheduled cleanup for '{marzban_username}' at {cleanup_time_utc.strftime('%Y-%m-%d %H:%M:%S UTC')}")
 
-        except (pytz.UnknownTimeZoneError, Exception) as e:
-            LOGGER.error(f"CRITICAL: Failed to schedule cleanup job for '{marzban_username}' due to a timezone error: {e}", exc_info=True)
-            # As a fallback, we log this critical error. The hourly cleanup job will eventually get this user.
+        except Exception as e:
+            LOGGER.error(f"CRITICAL: Failed to schedule cleanup job for '{marzban_username}': {e}", exc_info=True)
+            
     elif not context.job_queue:
         LOGGER.warning(f"JobQueue not available. Cannot schedule cleanup for '{marzban_username}'.")
-    # --- (✨ FIX END) ---
+    # --- (✨ END OF FIX) ---
 
     caption_text = _("customer.test_account.success_v2", hours=hours, gb=gb, username=f"<code>{html.escape(marzban_username)}</code>")
     caption_text += f"\n\n<code>{html.escape(sub_link)}</code>"
