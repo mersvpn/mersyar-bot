@@ -1,4 +1,4 @@
-# FILE: modules/customer/handler.py (FINAL VERSION WITH GATEKEEPER - FULL FILE)
+# FILE: modules/customer/handler.py (FINAL, FULLY CORRECTED VERSION)
 
 import logging
 import re
@@ -7,7 +7,6 @@ from telegram.ext import (
     Application, ConversationHandler, MessageHandler,
     CallbackQueryHandler, filters, CommandHandler, ContextTypes
 )
-# We need BaseFilter for type hinting and inheritance
 from telegram.ext.filters import BaseFilter
 
 from shared.translator import _
@@ -27,20 +26,14 @@ from shared.callback_types import SendReceipt
 
 LOGGER = logging.getLogger(__name__)
 
-# This global variable will hold the application instance after registration
 application: Application = None
 
-# --- (✨ FINAL FIX - GATEKEEPER APPROACH) ---
 class NotInBuilderMode(BaseFilter):
     def filter(self, update: Update) -> bool:
-        """
-        This filter will pass (return True) only if 'in_builder_mode' is NOT in user_data.
-        """
         global application
         if not application:
             LOGGER.warning("Application context not available for NotInBuilderMode filter.")
-            return True # Fail open if app context is missing
-
+            return True
         context = ContextTypes.DEFAULT_TYPE.from_update(update, application)
         if context:
             return not context.user_data.get('in_builder_mode', False)
@@ -49,21 +42,13 @@ class NotInBuilderMode(BaseFilter):
 not_in_builder_mode_filter = NotInBuilderMode()
 
 def _gatekeeper(handler_func, filter_instance):
-    """
-    A wrapper function that acts as a gatekeeper.
-    It runs the filter first and only calls the actual handler if the filter passes.
-    """
     async def wrapped_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if filter_instance.filter(update):
-            # If the filter passes, call the original handler function
             return await handler_func(update, context)
         else:
-            # If the filter fails, log it for debugging and do nothing.
             LOGGER.info(f"[GATEKEEPER] Blocked handler '{handler_func.__name__}' because user is in builder mode.")
             pass
     return wrapped_handler
-# --- END OF FIX ---
-
 
 MAIN_MENU_REGEX = r'^(🛍️فــــــــــروشـــــــــــگاه|📊ســــــــرویس‌های من|📱 راهــــــــــنمای اتصال|🔙 بازگشت به منوی اصلی)$'
 IGNORE_MAIN_MENU_FILTER = filters.TEXT & ~filters.COMMAND & ~filters.Regex(MAIN_MENU_REGEX)
@@ -120,7 +105,6 @@ def register(app: Application):
         per_message=False
     )
     
-    # --- START: Replace this block in modules/customer/handler.py ---
     manual_purchase_conv = ConversationHandler(
         entry_points=[MessageHandler(filters.Regex(f'^{re.escape(_("keyboards.customer_shop.assisted_purchase"))}$'), purchase.start_purchase_conversation)],
         states={
@@ -132,10 +116,9 @@ def register(app: Application):
             CallbackQueryHandler(end_conversation_and_show_menu, pattern='^cancel_conv$'),
             *unified_fallback
         ],
-        conversation_timeout=600, # Increased timeout for user to type
+        conversation_timeout=600,
         per_message=False
     )
-# --- END: Replace this block in modules/customer/handler.py ---
     
     receipt_conv = ConversationHandler(
         entry_points=[
@@ -157,14 +140,14 @@ def register(app: Application):
         per_message=False
     )
 
-# FILE: modules/customer/handler.py
-
     custom_purchase_conv = ConversationHandler(
         entry_points=[
-            # Entry point for users clicking the ReplyKeyboard button
-            MessageHandler(filters.Regex(f'^{re.escape(_("keyboards.customer_shop.custom_volume_plan"))}$'), custom_purchase_actions.start_custom_purchase),
-            
-            # (✨ BUG FIX) Add an entry point for users clicking the deeplink button
+            # (✨ FIX) Handler for the ReplyKeyboard button, which sends text
+            MessageHandler(
+                filters.Regex(f'^{re.escape(_("keyboards.customer_shop.custom_volume_plan"))}$'), 
+                custom_purchase_actions.start_custom_purchase
+            ),
+            # Handler for the inline deeplink button
             CallbackQueryHandler(
                 _gatekeeper(custom_purchase_actions.start_custom_purchase, not_in_builder_mode_filter), 
                 pattern=r'^shop_custom_volume$'
@@ -184,15 +167,14 @@ def register(app: Application):
         per_message=False
     )
 
-# FILE: modules/customer/handler.py
-
     unlimited_purchase_conv = ConversationHandler(
         entry_points=[
-            # Entry point for users clicking the ReplyKeyboard button
-            MessageHandler(filters.Regex(f'^{re.escape(_("keyboards.customer_shop.unlimited_volume_plan"))}$'), unlimited_purchase_actions.start_unlimited_purchase),
-            
-            # (✨ BUG FIX) Add an entry point for users clicking the deeplink button
-            # We need to reuse the gatekeeper to prevent it from firing inside the builder
+            # (✨ FIX) Handler for the ReplyKeyboard button, which sends text
+            MessageHandler(
+                filters.Regex(f'^{re.escape(_("keyboards.customer_shop.unlimited_volume_plan"))}$'), 
+                unlimited_purchase_actions.start_unlimited_purchase
+            ),
+            # Handler for the inline deeplink button
             CallbackQueryHandler(
                 _gatekeeper(unlimited_purchase_actions.start_unlimited_purchase, not_in_builder_mode_filter), 
                 pattern=r'^shop_unlimited_volume$'
@@ -273,17 +255,13 @@ def register(app: Application):
     app.add_handler(MessageHandler(filters.Regex(f'^{re.escape(_("keyboards.general.back_to_main_menu"))}$'), start), group=1)
     app.add_handler(CallbackQueryHandler(renewal.handle_renewal_request, pattern=r'^customer_renew_request_'), group=1)
     
-    # --- Main Menu Targets (Deeplinks) ---
     app.add_handler(CallbackQueryHandler(_gatekeeper(panel.show_customer_panel, not_in_builder_mode_filter), pattern=r'^customer_shop$'), group=1)
     app.add_handler(CallbackQueryHandler(_gatekeeper(service.handle_my_service, not_in_builder_mode_filter), pattern=r'^customer_my_services$'), group=1)
     app.add_handler(CallbackQueryHandler(_gatekeeper(guide.show_guides_to_customer, not_in_builder_mode_filter), pattern=r'^customer_guides$'), group=1)
     app.add_handler(CallbackQueryHandler(_gatekeeper(test_account_actions.handle_test_account_request, not_in_builder_mode_filter), pattern=r'^customer_test_account$'), group=1)
 
-    # --- Shop Sub-targets (Deeplinks that start conversations) ---
-
     if config.SUPPORT_USERNAME:
         app.add_handler(MessageHandler(filters.Regex(f'^{re.escape(_("keyboards.customer_main_menu.support"))}$'), purchase.handle_support_button), group=1)
-        # These are safe and don't need the filter
         app.add_handler(CallbackQueryHandler(guide.send_guide_content_to_customer, pattern=r'^customer_show_guide_'), group=1)
         app.add_handler(CallbackQueryHandler(guide.show_guides_to_customer, pattern=r'^customer_back_to_guides$'), group=1)
         app.add_handler(CallbackQueryHandler(guide.close_guide_menu, pattern=r'^close_guide_menu$'), group=1)

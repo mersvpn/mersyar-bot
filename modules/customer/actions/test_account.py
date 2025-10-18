@@ -6,11 +6,11 @@ import io
 import html
 import re
 import datetime
+import pytz  # (✨ NEW) Import pytz for timezone handling
 from telegram import Update
 from telegram.ext import ContextTypes, ConversationHandler
 from telegram.constants import ParseMode
 
-# --- CORRECTED IMPORTS ---
 from database.crud import bot_setting as crud_bot_setting
 from database.crud import user as crud_user
 from database.crud import user_note as crud_user_note
@@ -28,8 +28,6 @@ LOGGER = logging.getLogger(__name__)
 
 ASK_USERNAME = 0
 
-
-# --- START: Replace this function in modules/customer/actions/test_account.py ---
 
 async def _cleanup_test_account_job(context: ContextTypes.DEFAULT_TYPE):
     """
@@ -82,7 +80,6 @@ async def _cleanup_test_account_job(context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         LOGGER.error(f"Critical error in _cleanup_test_account_job for user {marzban_username}: {e}", exc_info=True)
 
-# --- END: Replace this function ---
 
 async def handle_test_account_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user = update.effective_user
@@ -91,6 +88,8 @@ async def handle_test_account_request(update: Update, context: ContextTypes.DEFA
 
     async def reply(text):
         if query:
+            # Make sure to answer the query to remove the loading icon
+            await query.answer()
             await context.bot.send_message(chat_id, text)
         else:
             await update.message.reply_text(text)
@@ -102,12 +101,10 @@ async def handle_test_account_request(update: Update, context: ContextTypes.DEFA
         await reply(_("customer.test_account.not_available"))
         return ConversationHandler.END
 
-    if query:
-        await query.answer()
-        if query.message:
-            await query.message.delete()
+    if query and query.message:
+        # If it's a callback query, we might want to delete the message it came from
+        await query.message.delete()
 
-    # --- FIX: Direct call to is_user_admin ---
     user_is_admin = await is_user_admin(user.id)
 
     if not user_is_admin:
@@ -125,13 +122,6 @@ async def handle_test_account_request(update: Update, context: ContextTypes.DEFA
     await reply(_("customer.test_account.prompt_for_username"))
     return ASK_USERNAME
 
-
-# --- START: Replace this function in modules/customer/actions/test_account.py ---
-
-# ✨ NEW IMPORT at the top of the file
-import pytz
-
-# ... (other imports)
 
 async def get_username_and_create_account(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user = update.effective_user
@@ -194,38 +184,42 @@ async def get_username_and_create_account(update: Update, context: ContextTypes.
         is_test_account=True
     )
     
-    # --- ✨ TIMEZONE FIX APPLIED HERE ✨ ---
+    # --- (✨ FIX START) TIMEZONE CORRECTION ---
     if expire_timestamp and context.job_queue:
-        # 1. Create a "naive" datetime object from the timestamp
-        naive_expire_datetime = datetime.datetime.fromtimestamp(expire_timestamp)
-        
-        # 2. Localize it to Tehran timezone
         try:
-            tehran_tz = pytz.timezone("Asia/Tehran")
-            local_expire_datetime = tehran_tz.localize(naive_expire_datetime)
-        except pytz.UnknownTimeZoneError:
-            LOGGER.error("Timezone 'Asia/Tehran' not found. Defaulting to naive time. Please install 'pytz'.")
-            local_expire_datetime = naive_expire_datetime
+            # 1. Assume the timestamp from Marzban is based on Tehran time.
+            # Create a "naive" datetime object from it first.
+            naive_expire_dt = datetime.datetime.fromtimestamp(expire_timestamp)
             
-        # 3. Convert the localized time to UTC (which is what JobQueue expects)
-        utc_expire_datetime = local_expire_datetime.astimezone(pytz.utc)
+            # 2. Get the Tehran timezone object.
+            tehran_tz = pytz.timezone("Asia/Tehran")
+            
+            # 3. Localize the naive datetime, making it "aware" of the Tehran timezone.
+            tehran_aware_dt = tehran_tz.localize(naive_expire_dt)
+            
+            # 4. Convert this Tehran-aware time to UTC. APScheduler works best with UTC.
+            utc_expire_dt = tehran_aware_dt.astimezone(pytz.utc)
+            
+            job_data = {
+                'marzban_username': marzban_username,
+                'chat_id': update.effective_chat.id
+            }
+            
+            # 5. Schedule the job using the correctly converted UTC datetime.
+            context.job_queue.run_once(
+                _cleanup_test_account_job,
+                when=utc_expire_dt,
+                data=job_data,
+                name=f"cleanup_test_{marzban_username}"
+            )
+            LOGGER.info(f"Scheduled one-shot cleanup job for test account '{marzban_username}' at {tehran_aware_dt} (Tehran) / {utc_expire_dt} (UTC)")
 
-        job_data = {
-            'marzban_username': marzban_username,
-            'chat_id': update.effective_chat.id
-        }
-        
-        # 4. Schedule the job using the UTC-converted datetime
-        context.job_queue.run_once(
-            _cleanup_test_account_job,
-            when=utc_expire_datetime,  # Use the UTC-converted time
-            data=job_data,
-            name=f"cleanup_test_{marzban_username}"
-        )
-        LOGGER.info(f"Scheduled one-shot cleanup job for test account '{marzban_username}' at {local_expire_datetime} (Tehran Time) / {utc_expire_datetime} (UTC)")
-    else:
-        LOGGER.warning(f"Could not schedule cleanup job for '{marzban_username}'. Expire timestamp or job_queue not found.")
-    # --- ✨ END OF TIMEZONE FIX ✨ ---
+        except (pytz.UnknownTimeZoneError, Exception) as e:
+            LOGGER.error(f"CRITICAL: Failed to schedule cleanup job for '{marzban_username}' due to a timezone error: {e}", exc_info=True)
+            # As a fallback, we log this critical error. The hourly cleanup job will eventually get this user.
+    elif not context.job_queue:
+        LOGGER.warning(f"JobQueue not available. Cannot schedule cleanup for '{marzban_username}'.")
+    # --- (✨ FIX END) ---
 
     caption_text = _("customer.test_account.success_v2", hours=hours, gb=gb, username=f"<code>{html.escape(marzban_username)}</code>")
     caption_text += f"\n\n<code>{html.escape(sub_link)}</code>"
@@ -286,5 +280,3 @@ async def get_username_and_create_account(update: Update, context: ContextTypes.
     )
     
     return ConversationHandler.END
-
-# --- END: Replace this function in modules/customer/actions/test_account.py ---
