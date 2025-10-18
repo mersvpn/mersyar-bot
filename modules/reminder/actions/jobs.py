@@ -322,6 +322,9 @@ async def schedule_daily_job(application: Application, time_obj: datetime.time):
     LOGGER.info(f"Daily job (reminders & cleanup) scheduled for {job_time.strftime('%H:%M')} Tehran time.")
 
 
+# FILE: modules/reminder/actions/jobs.py
+# START: Replace the entire cleanup_expired_test_accounts function with this one
+
 async def cleanup_expired_test_accounts(context: ContextTypes.DEFAULT_TYPE) -> None:
     from shared.translator import _
     
@@ -345,25 +348,16 @@ async def cleanup_expired_test_accounts(context: ContextTypes.DEFAULT_TYPE) -> N
         
         user_data = await get_user_data(username)
         
+        # Scenario 1: User is in our DB but not in Marzban panel (ghost user)
         if not user_data:
             LOGGER.warning(f"Test account '{username}' found in DB but not in Marzban. Cleaning up DB records.")
             await cleanup_marzban_user_data(username)
-            if telegram_user_id:
-                try:
-                    await context.bot.send_message(
-                        chat_id=telegram_user_id,
-                        text=_("customer.test_account.account_expired_notification_no_panel"),
-                        parse_mode=ParseMode.HTML,
-                        reply_markup=InlineKeyboardMarkup([[
-                            InlineKeyboardButton(_("general.buy_subscription_button"), callback_data="customer_show_shop")
-                        ]])
-                    )
-                except Exception as e:
-                    LOGGER.warning(f"Failed to send cleanup notification to user {telegram_user_id} for ghost test account {username}: {e}")
+            # (✨ FIX) No message is sent to the user in this silent cleanup job.
             continue
             
         expire_ts = user_data.get('expire', 0)
         
+        # Scenario 2: User exists and their expiration time has passed
         if expire_ts and expire_ts < datetime.datetime.now().timestamp():
             LOGGER.info(f"Test account '{username}' has expired. Deleting now...")
             
@@ -373,21 +367,14 @@ async def cleanup_expired_test_accounts(context: ContextTypes.DEFAULT_TYPE) -> N
                 deleted_users_count += 1
                 LOGGER.info(f"Successfully deleted expired test account '{username}'.")
                 
-                if telegram_user_id:
-                    try:
-                        await context.bot.send_message(
-                            chat_id=telegram_user_id,
-                            text=_("customer.test_account.account_expired_notification"),
-                            parse_mode=ParseMode.HTML,
-                            reply_markup=InlineKeyboardMarkup([[
-                                InlineKeyboardButton(_("general.buy_subscription_button"), callback_data="customer_show_shop")
-                            ]])
-                        )
-                    except Exception as e:
-                        LOGGER.warning(f"Failed to send expiration notification to user {telegram_user_id} for test account {username}: {e}")
+                # (✨ FIX) The block that sent a message to the user has been completely removed.
+                # The primary job (_cleanup_test_account_job) is responsible for notifying the user.
+                # This hourly job only cleans up silently.
+                
             else:
                 LOGGER.error(f"Failed to delete expired test account '{username}' from Marzban. API Error: {message}")
                 
+    # This part remains to notify the ADMIN via the log channel.
     if deleted_users_count > 0:
         log_message = _("reminder_jobs.test_account_cleanup_report", count=deleted_users_count)
         await send_log(context.bot, log_message)
@@ -395,4 +382,4 @@ async def cleanup_expired_test_accounts(context: ContextTypes.DEFAULT_TYPE) -> N
     else:
         LOGGER.info("Test account cleanup job finished. No accounts were expired.")
 
-# --- END OF FILE modules/reminder/actions/jobs.py ---
+# END: Replace the entire cleanup_expired_test_accounts function with this one

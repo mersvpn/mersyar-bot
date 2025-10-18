@@ -74,6 +74,7 @@ def register(app: Application):
                 CallbackQueryHandler(service.handle_service_page_change, pattern=r'^page_(fwd|back)_')
             ],
             service.DISPLAY_SERVICE: [
+
                 CallbackQueryHandler(service.choose_service, pattern=r'^select_service_'),
                 CallbackQueryHandler(renewal.handle_renewal_request, pattern=r'^customer_renew_request_'),
                 CallbackQueryHandler(service.confirm_reset_subscription, pattern=r'^customer_reset_sub_'),

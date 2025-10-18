@@ -25,62 +25,6 @@ CHOOSE_SERVICE, DISPLAY_SERVICE, CONFIRM_RESET_SUB, CONFIRM_DELETE = range(4)
 PROMPT_FOR_DATA_AMOUNT, CONFIRM_DATA_PURCHASE = range(4, 6)
 ITEMS_PER_PAGE = 8
 
-async def _fetch_and_display_services(context: ContextTypes.DEFAULT_TYPE, user_id: int, loading_message):
-    try:
-        linked_usernames_raw = await crud_marzban_link.get_linked_marzban_usernames(user_id)
-        if not linked_usernames_raw:
-            await loading_message.edit_text(_("customer.customer_service.no_service_linked"))
-            return
-
-        tasks = [get_user_data(username) for username in linked_usernames_raw]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-
-        valid_linked_accounts = []
-        dead_links_to_cleanup = []
-
-        for i, result in enumerate(results):
-            username_raw = linked_usernames_raw[i]
-            if isinstance(result, dict) and "error" not in result and result is not None:
-                valid_linked_accounts.append(result)
-            else:
-                dead_links_to_cleanup.append(normalize_username(username_raw))
-                if not isinstance(result, Exception):
-                    LOGGER.warning(f"Failed to get data for user '{username_raw}': {result}")
-
-        if dead_links_to_cleanup:
-            LOGGER.info(f"Cleaning up {len(dead_links_to_cleanup)} dead links for user {user_id}: {dead_links_to_cleanup}")
-            cleanup_tasks = [crud_marzban_link.delete_marzban_link(dead_username) for dead_username in dead_links_to_cleanup]
-            await asyncio.gather(*cleanup_tasks)
-        
-        is_test_tasks = [crud_user_note.get_user_note(acc['username']) for acc in valid_linked_accounts]
-        is_test_results = await asyncio.gather(*is_test_tasks)
-        
-        final_accounts_to_show = [acc for i, acc in enumerate(valid_linked_accounts) if not (is_test_results[i] and is_test_results[i].is_test_account)]
-        
-        if not final_accounts_to_show:
-            await loading_message.edit_text(_("customer.customer_service.no_valid_service_found"))
-            return
-        
-        if len(final_accounts_to_show) == 1:
-            original_username = final_accounts_to_show[0]['username']
-            await display_service_details(user_id, loading_message, context, original_username)
-        else:
-            sorted_services = sorted(final_accounts_to_show, key=lambda u: u['username'].lower())
-            context.user_data['services_list'] = sorted_services
-            reply_markup = await _build_paginated_service_keyboard(sorted_services, page=0)
-            await loading_message.edit_text(_("customer.customer_service.multiple_services_prompt"), reply_markup=reply_markup)
-
-    except asyncio.CancelledError:
-        LOGGER.info(f"Service loading for user {user_id} was cancelled by the user.")
-    except Exception as e:
-        LOGGER.error(f"An error occurred while fetching services for user {user_id}: {e}", exc_info=True)
-        try:
-            await loading_message.edit_text(_("customer.customer_service.panel_connection_error"))
-        except Exception:
-            pass
-    finally:
-        context.user_data.pop('service_loader_task', None)
-
 
 async def _build_paginated_service_keyboard(services: list, page: int = 0) -> InlineKeyboardMarkup:
     start_index = page * ITEMS_PER_PAGE
@@ -120,24 +64,66 @@ async def handle_service_page_change(update: Update, context: ContextTypes.DEFAU
     return CHOOSE_SERVICE
 
 
+# (✨ FINAL REPLACEMENT for handle_my_service)
 async def handle_my_service(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user_id = update.effective_user.id
-    chat_id = update.effective_chat.id
-
-    if update.callback_query:
-        await update.callback_query.answer()
-        await update.callback_query.message.delete()
-        loading_message = await context.bot.send_message(chat_id, _("customer.customer_service.loading"))
+    query = update.callback_query
+    
+    if query:
+        await query.answer()
+        await query.message.delete()
+        loading_message = await context.bot.send_message(user_id, _("customer.customer_service.loading"))
     else:
         loading_message = await update.message.reply_text(_("customer.customer_service.loading"))
 
-    task = asyncio.create_task(
-        _fetch_and_display_services(context=context, user_id=user_id, loading_message=loading_message)
-    )
-    
-    context.user_data['service_loader_task'] = task
-    
-    return CHOOSE_SERVICE
+    try:
+        linked_usernames_raw = await crud_marzban_link.get_linked_marzban_usernames(user_id)
+        if not linked_usernames_raw:
+            await loading_message.edit_text(_("customer.customer_service.no_service_linked"))
+            return ConversationHandler.END
+
+        tasks = [get_user_data(username) for username in linked_usernames_raw]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        valid_accounts, dead_links = [], []
+        for i, res in enumerate(results):
+            if isinstance(res, dict) and "error" not in res and res is not None:
+                valid_accounts.append(res)
+            else:
+                dead_links.append(normalize_username(linked_usernames_raw[i]))
+        
+        if dead_links:
+            LOGGER.info(f"Cleaning up {len(dead_links)} dead links for user {user_id}: {dead_links}")
+            await asyncio.gather(*[crud_marzban_link.delete_marzban_link(d) for d in dead_links])
+        
+        if not valid_accounts:
+            await loading_message.edit_text(_("customer.customer_service.no_valid_service_found"))
+            return ConversationHandler.END
+
+        note_tasks = [crud_user_note.get_user_note(acc['username']) for acc in valid_accounts]
+        notes = await asyncio.gather(*note_tasks)
+        
+        final_accounts = [acc for i, acc in enumerate(valid_accounts) if not (notes[i] and notes[i].is_test_account)]
+        
+        if not final_accounts:
+            await loading_message.edit_text(_("customer.customer_service.no_valid_service_found"))
+            return ConversationHandler.END
+        
+        # If only one service exists, display it directly and set the state.
+        if len(final_accounts) == 1:
+            return await display_service_details(user_id, loading_message, context, final_accounts[0]['username'])
+        # If multiple services exist, show the list and set the state.
+        else:
+            sorted_services = sorted(final_accounts, key=lambda u: u['username'].lower())
+            context.user_data['services_list'] = sorted_services
+            reply_markup = await _build_paginated_service_keyboard(sorted_services, page=0)
+            await loading_message.edit_text(_("customer.customer_service.multiple_services_prompt"), reply_markup=reply_markup)
+            return CHOOSE_SERVICE
+
+    except Exception as e:
+        LOGGER.error(f"Error in handle_my_service for user {user_id}: {e}", exc_info=True)
+        await loading_message.edit_text(_("customer.customer_service.panel_connection_error"))
+        return ConversationHandler.END
 
 
 async def display_service_details(user_id: int, message_to_edit, context: ContextTypes.DEFAULT_TYPE, marzban_username: str) -> int:
@@ -223,13 +209,15 @@ async def display_service_details(user_id: int, message_to_edit, context: Contex
     return DISPLAY_SERVICE
 
 
+# (✨ FINAL REPLACEMENT for choose_service)
 async def choose_service(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()
     marzban_username = query.data.split('select_service_')[-1]
     user_id = query.from_user.id
-    message_to_edit = query.message
-    return await display_service_details(user_id, message_to_edit, context, marzban_username)
+    
+    # This directly returns the next state from the called function.
+    return await display_service_details(user_id, query.message, context, marzban_username)
 
 
 async def back_to_main_menu_customer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
