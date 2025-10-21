@@ -292,65 +292,27 @@ RUN LATEST_TAG=$(wget -qO- "https://api.github.com/repos/${GITHUB_USER}/${GITHUB
     tar -xzf latest_release.tar.gz --strip-components=1 && \
     rm latest_release.tar.gz
 RUN pip install --no-cache-dir -r requirements.txt
+COPY entrypoint.sh /usr/local/bin/
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 CMD ["python", "bot.py"]
 EOF
 
-    info "-> Creating docker-compose.yml with healthchecks..."
-    cat << 'EOF' > docker-compose.yml
-services:
-  bot:
-    build: .
-    container_name: mersyar-bot
-    restart: unless-stopped
-    ports:
-      - "127.0.0.1:8081:8081"
-    env_file:
-      - .env
-    networks:
-      - mersyar-net
-    depends_on:
-      db:
-        condition: service_healthy
-  db:
-    image: mysql:8.0
-    container_name: mersyar-db
-    restart: unless-stopped
-    environment:
-      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}
-      MYSQL_DATABASE: ${DB_NAME}
-      MYSQL_USER: ${DB_USER}
-      MYSQL_PASSWORD: ${DB_PASSWORD}
-    volumes:
-      - mysql_data:/var/lib/mysql
-    networks:
-      - mersyar-net
-    healthcheck:
-      test: ["CMD", "mysqladmin" ,"ping", "-h", "localhost", "-u", "root", "-p${DB_ROOT_PASSWORD}"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 30s
-  phpmyadmin:
-    image: phpmyadmin/phpmyadmin
-    container_name: mersyar-pma
-    restart: unless-stopped
-    environment:
-      PMA_HOST: db
-      PMA_PORT: 3306
-      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}
-    ports:
-      - "127.0.0.1:8082:80"
-    networks:
-      - mersyar-net
-    depends_on:
-      db:
-        condition: service_healthy
-networks:
-  mersyar-net:
-    driver: bridge
-volumes:
-  mysql_data:
+    info "-> Creating entrypoint.sh script..."
+    cat << 'EOF' > entrypoint.sh
+#!/bin/sh
+set -e
+
+echo "Entrypoint: Waiting for database to be fully available..."
+sleep 3
+
+echo "Entrypoint: Running database migrations..."
+alembic upgrade head
+
+echo "Entrypoint: Migrations complete. Starting bot..."
+exec "$@"
 EOF
+    chmod +x entrypoint.sh
+    info "-> entrypoint.sh created and made executable."
 
     # --- 4. Build and Run Docker Containers ---
     info "[4/7] Building and starting Docker containers... (This may take a few minutes)"

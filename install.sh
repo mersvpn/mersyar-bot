@@ -181,6 +181,16 @@ fi
 
 # --- 9. Finalizing ---
 info "[9/9] Finalizing..."
+
+# --- START OF NEW SECTION ---
+info "-> Running initial database migration..."
+cd "$PROJECT_DIR"
+source venv/bin/activate
+alembic upgrade head
+deactivate
+success "-> Database migrated to the latest version."
+# --- END OF NEW SECTION ---
+
 systemctl daemon-reload
 systemctl enable $SERVICE_NAME
 systemctl restart $SERVICE_NAME
