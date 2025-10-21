@@ -163,8 +163,10 @@
     "payment_info_sent_to_customer": "✅ کاربر تمدید شد و پیام پرداخت برای مشتری (ID: {customer_id}) ارسال گردید.",
     "renew_in_progress": "⏳ در حال تمدید سرویس `{username}`...",
     "renew_successful_admin_only": "✅ سرویس `{username}` با موفقیت تمدید شد. در صورت نیاز، می‌توانید صورتحساب را به صورت دستی برای مشتری ارسال کنید.",
-            "customer_renew_notification": "✅ کاربر گرامی، سرویس شما با نام کاربری `{username}` توسط پشتیبانی برای مدت **{days} روز** و با حجم **{gb} گیگابایت** با موفقیت تمدید شد.",
-        "renew_successful_admin_and_customer": "✅ سرویس `{username}` تمدید شد و پیام اطلاع‌رسانی برای مشتری ارسال گردید."
+    "customer_renew_notification": "✅ کاربر گرامی، سرویس شما با نام کاربری `{username}` توسط پشتیبانی برای مدت **{days} روز** و با حجم **{gb} گیگابایت** با موفقیت تمدید شد.",
+    "renew_successful_admin_and_customer": "✅ سرویس `{username}` تمدید شد و پیام اطلاع‌رسانی برای مشتری ارسال گردید.",
+    "customer_add_days_notification": "✅ کاربر گرامی، {days} روز به اعتبار سرویس شما افزوده شد.",
+    "customer_add_data_notification": "✅ کاربر گرامی، {gb} گیگابایت به حجم سرویس شما افزوده شد."
   },
     "marzban_search": {
     "prompt": "لطفاً قسمتی از نام کاربری مورد نظر را برای جستجو وارد کنید:\n(برای لغو /cancel)",

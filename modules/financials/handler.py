@@ -1,12 +1,11 @@
-# FILE: modules/financials/handler.py
+# FILE: modules/financials/handler.py (REVISED TO BREAK CIRCULAR DEPENDENCY)
 
 import logging
 from telegram.ext import (
     Application, CallbackQueryHandler, MessageHandler, 
-    filters, ConversationHandler,CommandHandler
+    filters, ConversationHandler, CommandHandler
 )
-from shared.translator import _ # <-- Import _ for regex matching
-# ... (بقیه import های شما) ...
+from shared.translator import _
 from .actions.settings import (
     card_settings_conv,
     plan_name_settings_conv,
@@ -19,11 +18,12 @@ from .actions import (
     unlimited_plans_admin, 
     volumetric_plans_admin, 
     wallet_admin, 
-    balance_management,gift
+    balance_management,
+    gift
 )
-from shared.callbacks import show_coming_soon, main_menu_fallback, end_conversation_and_show_menu
-
-from shared.auth import ADMIN_CONV_FALLBACKS
+# --- FIX: Import the function, not the constant ---
+from shared.callbacks import show_coming_soon, end_conversation_and_show_menu, admin_fallback_reroute
+from shared.auth import get_admin_fallbacks # <--- KEY CHANGE
 
 LOGGER = logging.getLogger(__name__)
 
@@ -33,49 +33,41 @@ def register(application: Application):
     """
     LOGGER.info("Registering financials settings module handlers...")
     
-    # --- Extend other Conversation Handlers with Shared Fallbacks ---
-    card_settings_conv.fallbacks.extend(ADMIN_CONV_FALLBACKS)
-    plan_name_settings_conv.fallbacks.extend(ADMIN_CONV_FALLBACKS)
-    unlimited_plans_admin.add_unlimited_plan_conv.fallbacks.extend(ADMIN_CONV_FALLBACKS)
-    volumetric_plans_admin.edit_base_price_conv.fallbacks.extend(ADMIN_CONV_FALLBACKS)
-    volumetric_plans_admin.add_tier_conv.fallbacks.extend(ADMIN_CONV_FALLBACKS)
-    volumetric_plans_admin.edit_tier_conv.fallbacks.extend(ADMIN_CONV_FALLBACKS)
-    wallet_admin.edit_amounts_conv.fallbacks.extend(ADMIN_CONV_FALLBACKS)
+    # --- FIX: Call the function at runtime to get the fallbacks ---
+    admin_fallbacks = get_admin_fallbacks()
 
-    # --- ✨ REVISED AND STABILIZED CONVERSATION HANDLER ✨ ---
+    # --- Extend other Conversation Handlers with Shared Fallbacks ---
+    card_settings_conv.fallbacks.extend(admin_fallbacks)
+    plan_name_settings_conv.fallbacks.extend(admin_fallbacks)
+    unlimited_plans_admin.add_unlimited_plan_conv.fallbacks.extend(admin_fallbacks)
+    volumetric_plans_admin.edit_base_price_conv.fallbacks.extend(admin_fallbacks)
+    volumetric_plans_admin.add_tier_conv.fallbacks.extend(admin_fallbacks)
+    volumetric_plans_admin.edit_tier_conv.fallbacks.extend(admin_fallbacks)
+    wallet_admin.edit_amounts_conv.fallbacks.extend(admin_fallbacks)
+
+    # --- Conversation Handler for Balance Management ---
     balance_management_conv = ConversationHandler(
         entry_points=[
             CallbackQueryHandler(balance_management.start_balance_management, pattern='^admin_manage_balance$')
         ],
         states={
             balance_management.GET_USER_ID: [
-                # Handler for the custom back button
                 MessageHandler(filters.Regex(f'^{_("keyboards.financials.balance_management_back_button")}$'), balance_management.end_management_and_show_financial_menu),
-                # Handler for the user ID
                 MessageHandler(filters.TEXT & ~filters.COMMAND, balance_management.process_user_id),
             ],
             balance_management.SHOW_USER_BALANCE: [
                 CallbackQueryHandler(balance_management.prompt_for_amount, pattern=r'^balance_')
             ],
             balance_management.GET_AMOUNT: [
-                # This now returns to GET_USER_ID to ask for the next user
                 MessageHandler(filters.TEXT & ~filters.COMMAND, balance_management.process_amount),
-                 # This is a new inline button to go back from amount entry to the user menu
                 CallbackQueryHandler(balance_management.show_user_balance_menu, pattern=r'^back_to_user_menu_from_amount$')
             ],
         },
-        fallbacks=[
-            # This handles clicks on other main menu buttons during the conversation
-            MessageHandler(filters.Regex(f'^{_("keyboards.admin_main_menu.user_management")}$|^{_("keyboards.admin_main_menu.settings_and_tools")}$'), main_menu_fallback),
-            # General fallbacks from auth module
-            *ADMIN_CONV_FALLBACKS
-        ],
-    
-        # Per-message basis allows for more flexible conversation flow
-     
+        # --- FIX: Use the runtime-generated fallbacks ---
+        fallbacks=get_admin_fallbacks(),
     )
 
-        # (✨ NEW) Conversation for setting the welcome gift
+    # --- Conversation Handlers for Gift Management ---
     welcome_gift_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(gift.prompt_for_welcome_gift, pattern='^admin_gift_set_welcome$')],
         states={
@@ -88,7 +80,6 @@ def register(application: Application):
         }
     )
 
-    # (✨ NEW) Conversation for sending the universal gift
     universal_gift_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(gift.prompt_for_universal_gift, pattern='^admin_gift_send_universal$')],
         states={
@@ -102,7 +93,6 @@ def register(application: Application):
         }
     )
 
-    # (✨ NEW) Main conversation handler for the gift management menu
     gift_management_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(gift.show_gift_management_menu, pattern='^admin_gift_management$')],
         states={
@@ -114,7 +104,7 @@ def register(application: Application):
         },
         fallbacks=[CommandHandler('cancel', end_conversation_and_show_menu)],
         conversation_timeout=600,
-        allow_reentry=True  # (✨ FIX) Add this line
+        allow_reentry=True
     )
 
     # --- Register ALL Conversation Handlers ---
@@ -128,8 +118,11 @@ def register(application: Application):
     application.add_handler(balance_management_conv)
     application.add_handler(gift_management_conv)
 
+    # --- Register Standalone Handlers ---
+    financial_settings_btn = f'^{_("keyboards.settings_and_tools.financial_settings")}$'
+    
     standalone_handlers = [
-        MessageHandler(filters.Regex('^💰 تنظیمات مالی$'), show_financial_menu),
+        MessageHandler(filters.Regex(financial_settings_btn), show_financial_menu),
         CallbackQueryHandler(show_payment_methods_menu, pattern=r'^show_payment_methods$'),
         CallbackQueryHandler(show_plan_management_menu, pattern=r'^show_plan_management$'),
         CallbackQueryHandler(wallet_admin.show_wallet_settings_menu, pattern=r'^admin_wallet_settings$'),

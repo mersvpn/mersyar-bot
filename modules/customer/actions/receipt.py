@@ -143,12 +143,13 @@ async def handle_receipt_photo(update: Update, context: ContextTypes.DEFAULT_TYP
         duration = plan_details.get('renewal_days') or plan_details.get('duration', 'N/A')
         caption += _("customer.receipt.admin_caption_plan_service", username=username, volume=volume, duration=duration)
 
-    # Add financial details section
-    caption += _("customer.receipt.admin_caption_financial_details_title")
-    caption += _("customer.receipt.admin_caption_financial_total", price=f"{total_price:,.0f}")
-    if paid_from_wallet > 0:
-        caption += _("customer.receipt.admin_caption_financial_wallet", amount=f"{paid_from_wallet:,.0f}")
-    caption += _("customer.receipt.admin_caption_financial_payable", amount=f"{payable_amount:,.0f}")
+    # Add financial details section only if it's NOT a wallet charge
+    if plan_details.get('invoice_type') != 'WALLET_CHARGE':
+        caption += _("customer.receipt.admin_caption_financial_details_title")
+        caption += _("customer.receipt.admin_caption_financial_total", price=f"{total_price:,.0f}")
+        if paid_from_wallet > 0:
+            caption += _("customer.receipt.admin_caption_financial_wallet", amount=f"{paid_from_wallet:,.0f}")
+        caption += _("customer.receipt.admin_caption_financial_payable", amount=f"{payable_amount:,.0f}")
 
     caption += _("customer.receipt.admin_caption_footer")
         

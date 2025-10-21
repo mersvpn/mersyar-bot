@@ -84,6 +84,18 @@ async def do_add_days(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     success_msg = _("marzban_modify_user.success_add_days", days=days_to_add) if success else _("marzban_modify_user.error_add_days", error=message)
     await show_user_details_panel(context=context, **modify_info, success_message=success_msg)
     
+    # --- START OF NEW CODE ---
+    # Notify the customer if the operation was successful and the user is linked
+    if success:
+        normalized_username = normalize_username(username)
+        customer_id = await crud_marzban_link.get_telegram_id_by_marzban_username(normalized_username)
+        if customer_id:
+            try:
+                notification_text = _("marzban_modify_user.customer_add_days_notification", days=days_to_add)
+                await context.bot.send_message(chat_id=customer_id, text=notification_text)
+            except Exception as e:
+                LOGGER.warning(f"Failed to send 'add days' notification to customer {customer_id} for user {username}: {e}")
+    
     context.user_data.pop('modify_user_info', None)
     return ConversationHandler.END
 
@@ -116,6 +128,19 @@ async def do_add_data(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     success, message = await modify_user_api(username, {"data_limit": new_data_limit})
     success_msg = _("marzban_modify_user.success_add_data", gb=gb_to_add) if success else _("marzban_modify_user.error_add_data", error=message)
     await show_user_details_panel(context=context, **modify_info, success_message=success_msg)
+
+    # --- START OF NEW CODE ---
+    # Notify the customer if the operation was successful and the user is linked
+    if success:
+        normalized_username = normalize_username(username)
+        customer_id = await crud_marzban_link.get_telegram_id_by_marzban_username(normalized_username)
+        if customer_id:
+            try:
+                notification_text = _("marzban_modify_user.customer_add_data_notification", gb=gb_to_add)
+                await context.bot.send_message(chat_id=customer_id, text=notification_text)
+            except Exception as e:
+                LOGGER.warning(f"Failed to send 'add data' notification to customer {customer_id} for user {username}: {e}")
+
     context.user_data.pop('modify_user_info', None)
     return ConversationHandler.END
 

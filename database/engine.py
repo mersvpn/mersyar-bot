@@ -1,4 +1,5 @@
-# --- START OF FILE database/engine.py (REVISED FOR WINDOWS) ---
+# FILE: database/engine.py (FINAL, CORRECTED VERSION FOR YOUR STRUCTURE)
+
 import logging
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
@@ -10,7 +11,10 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 
-from .db_config import db_config
+# --- START OF CHANGES ---
+# 1. Import the new function instead of the old class instance
+from .db_config import get_database_url
+# --- END OF CHANGES ---
 
 LOGGER = logging.getLogger(__name__)
 
@@ -22,20 +26,16 @@ async def init_db() -> None:
     """Initializes the database engine and session maker."""
     global _engine, _async_session_maker
 
-    if not db_config.is_configured():
-        LOGGER.warning("Database is not configured. Skipping SQLAlchemy engine creation.")
-        return
-
     if _engine:
         LOGGER.info("Database engine is already initialized.")
         return
 
-    db_url = (
-        f"mysql+aiomysql://{db_config.DB_USER}:{db_config.DB_PASSWORD}@" # <--- تغییر اصلی اینجاست
-        f"{db_config.DB_HOST}/{db_config.DB_NAME}?charset=utf8mb4"
-    )
-
     try:
+        # --- START OF CHANGES ---
+        # 2. Call the function to get the database URL
+        db_url = get_database_url()
+        # --- END OF CHANGES ---
+
         _engine = create_async_engine(
             db_url,
             pool_recycle=3600,
@@ -49,6 +49,12 @@ async def init_db() -> None:
             expire_on_commit=False,
         )
         LOGGER.info("SQLAlchemy async engine and session maker created successfully.")
+    
+    except ValueError as ve:
+        # This will catch the error from get_database_url if .env is not configured
+        LOGGER.warning(f"Skipping SQLAlchemy engine creation: {ve}")
+        _engine = None
+        _async_session_maker = None
     except Exception as e:
         LOGGER.critical(f"Failed to create SQLAlchemy engine: {e}", exc_info=True)
         _engine = None
@@ -68,7 +74,10 @@ async def close_db() -> None:
 async def get_session() -> AsyncGenerator[AsyncSession, None]:
     """Provides a transactional database session."""
     if _async_session_maker is None:
-        raise ConnectionError("Database session maker is not initialized. Call init_db() first.")
+        # Re-try initialization if the first attempt (at startup) failed
+        await init_db()
+        if _async_session_maker is None:
+            raise ConnectionError("Database session maker is not initialized and failed to re-initialize.")
 
     async with _async_session_maker() as session:
         try:
@@ -78,5 +87,3 @@ async def get_session() -> AsyncGenerator[AsyncSession, None]:
             raise
         finally:
             await session.close()
-
-# --- END OF FILE database/engine.py (REVISED FOR WINDOWS) ---

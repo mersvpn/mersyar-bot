@@ -8,7 +8,7 @@ from shared.translator import _
 # --- MODIFIED IMPORT ---
 from database.crud import bot_setting as crud_bot_setting
 # --- ----------------- ---
-
+from math import ceil
 # =============================================================================
 #  ReplyKeyboardMarkup Section
 # =============================================================================
@@ -323,3 +323,68 @@ def get_deeplink_targets_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(keyboard)
 
 # --- END OF FILE shared/keyboards.py (REVISED AND COMPLETE) ---
+
+# FILE: shared/keyboards.py (ADD THIS FUNCTION TO THE END)
+
+from math import ceil
+
+def build_paginated_keyboard(
+    items: list,
+    page: int,
+    items_per_page: int,
+    item_text_formatter: callable,
+    item_callback_formatter: callable,
+    page_callback_prefix: str,
+    extra_buttons: list = None
+) -> InlineKeyboardMarkup:
+    """
+    A generic function to build a paginated inline keyboard.
+
+    Args:
+        items (list): The full list of items to paginate.
+        page (int): The current page number (1-based).
+        items_per_page (int): Number of items to show per page.
+        item_text_formatter (callable): A function that takes an item and returns the text for its button.
+        item_callback_formatter (callable): A function that takes an item and returns the callback data for its button.
+        page_callback_prefix (str): The prefix for page navigation callbacks (e.g., 'show_users_page_all').
+        extra_buttons (list, optional): A list of extra InlineKeyboardButton rows to add at the end.
+
+    Returns:
+        InlineKeyboardMarkup: The generated paginated keyboard.
+    """
+    total_pages = ceil(len(items) / items_per_page)
+    page = max(1, min(page, total_pages))  # Ensure page is within valid range
+    start_index = (page - 1) * items_per_page
+    page_items = items[start_index : start_index + items_per_page]
+    
+    keyboard = []
+    
+    # Create rows with 2 items each
+    it = iter(page_items)
+    for item1 in it:
+        row = [InlineKeyboardButton(item_text_formatter(item1), callback_data=item_callback_formatter(item1))]
+        try:
+            item2 = next(it)
+            row.append(InlineKeyboardButton(item_text_formatter(item2), callback_data=item_callback_formatter(item2)))
+        except StopIteration:
+            pass
+        keyboard.append(row)
+
+    # Navigation row
+    nav_row = []
+    if page > 1:
+        nav_row.append(InlineKeyboardButton(_("keyboards.buttons.pagination_prev"), callback_data=f"{page_callback_prefix}_{page - 1}"))
+    if total_pages > 1:
+        nav_row.append(InlineKeyboardButton(_("keyboards.buttons.pagination_page", current=page, total=total_pages), callback_data="noop"))
+    if page < total_pages:
+        nav_row.append(InlineKeyboardButton(_("keyboards.buttons.pagination_next"), callback_data=f"{page_callback_prefix}_{page + 1}"))
+
+    if nav_row:
+        keyboard.append(nav_row)
+
+    # Add any extra buttons provided
+    if extra_buttons:
+        for btn_row in extra_buttons:
+            keyboard.append(btn_row)
+            
+    return InlineKeyboardMarkup(keyboard)

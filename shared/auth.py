@@ -1,28 +1,19 @@
-# --- START OF FILE shared/auth.py (FINAL FIX) ---
-
-# FILE: shared/auth.py (FINAL VERSION WITH FORCED JOIN DECORATOR)
+# FILE: shared/auth.py (REVISED TO BREAK CIRCULAR DEPENDENCY)
 
 from functools import wraps
 import logging
 from telegram import Update
 from telegram.ext import ContextTypes, ConversationHandler, MessageHandler, filters, CommandHandler
-from telegram import error
+from telegram import error, InlineKeyboardButton, InlineKeyboardMarkup
 from config import config
-from shared.translator import _ # Import translator
-# --- MODIFIED IMPORTS ---
-# from database.crud import bot_setting as crud_bot_setting # <--- این خط را حذف یا کامنت کنید
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.error import BadRequest, Forbidden
-# --- ------------------ ---
+from shared.translator import _
 
 LOGGER = logging.getLogger(__name__)
-
 
 async def is_admin(user_id: int) -> bool:
     """A simple, reusable check if a user is an admin."""
     return user_id in config.AUTHORIZED_USER_IDS
 
-# ... (بقیه توابع admin_only و get_admin_fallbacks بدون تغییر باقی می‌مانند) ...
 def admin_only(func):
     @wraps(func)
     async def wrapped(update: Update, context: ContextTypes.DEFAULT_TYPE, *args, **kwargs):
@@ -49,26 +40,34 @@ def admin_only_conv(func):
         return await func(update, context, *args, **kwargs)
     return wrapped
 
-
 def get_admin_fallbacks():
+    """
+    Returns a list of fallback handlers for admin conversations.
+    This function should be called at RUNTIME, not import time.
+    """
     from shared.callbacks import admin_fallback_reroute, end_conversation_and_show_menu
+    
+    # Translate keys only when the function is called
     admin_menu_buttons = [
-        _("keyboards.admin_main_menu.user_management"),
+        _("keyboards.admin_main_menu.manage_users"),
         _("keyboards.admin_main_menu.settings_and_tools"),
-        _("keyboards.admin_main_menu.notes_management"),
+        _("keyboards.admin_main_menu.daily_notes"), # Corrected key
         _("keyboards.admin_main_menu.send_message"),
         _("keyboards.admin_main_menu.customer_panel_view"),
         _("keyboards.admin_main_menu.guides_settings")
     ]
+    
+    # Filter out any potential None values if a key is missing, although it shouldn't happen now
     valid_buttons = [btn for btn in admin_menu_buttons if btn]
-    ADMIN_MAIN_MENU_REGEX = r'^(' + '|'.join(valid_buttons) + r')$'
+    admin_main_menu_filter = filters.Text(valid_buttons)
+
     return [
-        MessageHandler(filters.Regex(ADMIN_MAIN_MENU_REGEX), admin_fallback_reroute),
+        MessageHandler(admin_main_menu_filter, admin_fallback_reroute),
         CommandHandler('cancel', end_conversation_and_show_menu)
     ]
 
-ADMIN_CONV_FALLBACKS = get_admin_fallbacks()
-
+# The problematic constant has been removed.
+# ADMIN_CONV_FALLBACKS = get_admin_fallbacks() # <--- THIS LINE IS DELETED
 
 def _create_join_channel_keyboard(channel_username: str) -> InlineKeyboardMarkup:
     keyboard = [
@@ -80,9 +79,7 @@ def _create_join_channel_keyboard(channel_username: str) -> InlineKeyboardMarkup
 def ensure_channel_membership(func):
     @wraps(func)
     async def wrapped(update: Update, context: ContextTypes.DEFAULT_TYPE, *args, **kwargs):
-        # --- ✨ FINAL FIX: Local Import to break circular dependency ✨ ---
         from database.crud import bot_setting as crud_bot_setting
-        # --- -------------------------------------------------------- ---
         user = update.effective_user
         if not user:
             return
@@ -104,11 +101,9 @@ def ensure_channel_membership(func):
 
         try:
             member = await context.bot.get_chat_member(chat_id=f"@{channel_username}", user_id=user.id)
-            
             if member.status in ['member', 'administrator', 'creator']:
                 return await func(update, context, *args, **kwargs)
-
-        except (BadRequest, Forbidden) as e:
+        except (error.BadRequest, error.Forbidden) as e:
             LOGGER.error(f"Error checking membership for @{channel_username}: {e}. Disabling check temporarily for this user.")
             return await func(update, context, *args, **kwargs)
 
@@ -128,9 +123,5 @@ def ensure_channel_membership(func):
 
     return wrapped
 
-# --- END OF FILE shared/auth.py (FINAL FIX) ---
-
 async def is_user_admin(user_id: int) -> bool:
-    """Checks if a user ID belongs to an admin."""
-    # This function can be async to keep consistency, even though it does no IO.
     return user_id in config.AUTHORIZED_USER_IDS

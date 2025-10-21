@@ -9,6 +9,7 @@ httpx[http2]
 
 # ===== Database Connector =====
 SQLAlchemy>=2.0
+alembic==1.13.1
 aiomysql
 # Required by aiomysql for modern MySQL authentication
 cryptography
@@ -23,3 +24,4 @@ Pillow
 aiofiles
 
 pytz==2024.1
+PyMySQL
