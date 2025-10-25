@@ -1,0 +1,19 @@
+
+{
+"wallet_renewal_success": "✅ تمدید با کیف پول (فاکتور #{invoice_id})\nیوزرنیم: {username}\nمبلغ: {price} تومان\nمشتری: {customer_name} (ID: {customer_id})\nموجودی جدید: {new_balance} تومان",
+"wallet_generic_payment_success": "✅ پرداخت با کیف پول (فاکتور #{invoice_id})\nمبلغ: {price} تومان\nمشتری: {customer_name} (ID: {customer_id})\nموجودی جدید: {new_balance} تومان",
+"new_user_approved": "✅ سرویس جدید تایید شد (فاکتور #{invoice_id})\nیوزرنیم: {username}\nحجم: {volume} | مدت: {duration} روز\nمبلغ: {price} تومان\nمشتری: (ID: {customer_id})\nتوسط: {admin_name}",
+"renewal_approved": "✅ تمدید سرویس تایید شد (فاکتور #{invoice_id})\nیوزرنیم: {username}\nحجم: {volume} | مدت: {duration} روز\nمبلغ: {price} تومان\nمشتری: (ID: {customer_id})\nتوسط: {admin_name}",
+"manual_invoice_approved": "✅ فاکتور دستی تایید شد (فاکتور #{invoice_id})\nیوزرنیم: {username}\nمبلغ: {price} تومان\nمشتری: (ID: {customer_id})\nتوسط: {admin_name}",
+"data_top_up_approved": "✅ افزایش حجم تایید شد (فاکتور #{invoice_id})\nیوزرنیم: {username}\nحجم اضافه: {gb} گیگابایت\nمبلغ: {price} تومان\nمشتری: (ID: {customer_id})\nتوسط: {admin_name}",
+"wallet_charge_approved": "✅ شارژ کیف پول تایید شد (فاکتور #{invoice_id})\nمبلغ: {amount} تومان\nمشتری: (ID: {customer_id})\nتوسط: {admin_name}",
+"payment_rejected": "❌ پرداخت رد شد (فاکتور #{invoice_id})\nمشتری: (ID: {customer_id})\nتوسط: {admin_name}",
+"test_account_created": "⏳ اکانت تست ساخته شد\nیوزرنیم: {username}\nحجم: {volume}GB | مدت: {duration} ساعت\nبرای کاربر: {user_id}",
+"user_deleted_by_admin": "🗑 کاربر حذف شد\nیوزرنیم: {username}\nتوسط ادمین: {admin_name}",
+"user_reset_by_admin": "🔄 لینک کاربر بازسازی شد\nیوزرنیم: {username}\nتوسط ادمین: {admin_name}",
+"bot_restarted": "🚀 ربات مجددا راه‌اندازی شد.",
+"daily_job_start": "⏰ اجرای جاب روزانه شروع شد.",
+"daily_job_end": "✅ اجرای جاب روزانه با موفقیت به پایان رسید.",
+"broadcast_started": "📣 ارسال پیام همگانی آغاز شد...",
+"broadcast_completed": "✅ پیام همگانی به {success_count} کاربر ارسال شد.\n{failed_count} ناموفق."
+}
