@@ -3,6 +3,7 @@
 import logging
 from decimal import Decimal
 from typing import List, Optional
+from datetime import datetime
 
 from sqlalchemy import select, func
 from sqlalchemy.orm import selectinload
@@ -142,5 +143,54 @@ async def get_total_users_count() -> int:
     async with get_session() as session:
         result = await session.execute(select(func.count(User.user_id)))
         return result.scalar_one()
+    
+async def update_user_note(user_id: int, note: Optional[str]) -> bool:
+    async with get_session() as session:
+        try:
+            result = await session.execute(
+                select(User).where(User.user_id == user_id)
+            )
+            user = result.scalar_one_or_none()
+            if user:
+                user.admin_note = note
+                await session.commit()
+                return True
+            return False
+        except Exception as e:
+            await session.rollback()
+            LOGGER.error(f"Failed to update user note for {user_id}: {e}")
+            return False
+
+async def update_last_activity(user_id: int) -> bool:
+    async with get_session() as session:
+        try:
+            result = await session.execute(
+                select(User).where(User.user_id == user_id)
+            )
+            user = result.scalar_one_or_none()
+            if user:
+                user.last_activity = datetime.now()
+                await session.commit()
+                return True
+            return False
+        except Exception as e:
+            await session.rollback()
+            LOGGER.error(f"Failed to update last activity for {user_id}: {e}")
+            return False
+
+async def get_user_with_relations(user_id: int) -> Optional[User]:
+    async with get_session() as session:
+        try:
+            result = await session.execute(
+                select(User)
+                .options(selectinload(User.marzban_links))
+                .options(selectinload(User.pending_invoices))
+                .where(User.user_id == user_id)
+            )
+            return result.scalar_one_or_none()
+        except Exception as e:
+            LOGGER.error(f"Failed to get user with relations: {e}")
+            return None
+
 
 # --- END OF FILE database/crud/user.py ---

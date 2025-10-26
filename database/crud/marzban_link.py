@@ -102,5 +102,17 @@ async def get_all_auto_renew_links() -> List[MarzbanTelegramLink]:
         stmt = select(MarzbanTelegramLink).where(MarzbanTelegramLink.auto_renew == True)
         result = await session.execute(stmt)
         return list(result.scalars().all())
+    
+async def get_links_by_telegram_id(telegram_id: int):
+    async with get_session() as session:
+        try:
+            result = await session.execute(
+                 select(MarzbanTelegramLink).where(MarzbanTelegramLink.telegram_user_id == telegram_id)
+            )
+            return result.scalars().all()
+        except Exception as e:
+            LOGGER.error(f"Failed to get links by telegram_id {telegram_id}: {e}")
+            return []
+
 
 # --- END OF FILE database/crud/marzban_link.py (REVISED) ---

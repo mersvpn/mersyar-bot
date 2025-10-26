@@ -18,10 +18,13 @@ def get_admin_main_menu_keyboard() -> ReplyKeyboardMarkup:
         # --- FIX: All keys now use the 'keyboards.' namespace ---
         [KeyboardButton(_("keyboards.admin_main_menu.user_management"))],
         [KeyboardButton(_("keyboards.admin_main_menu.notes_management")), KeyboardButton(_("keyboards.admin_main_menu.settings_and_tools"))],
+        [KeyboardButton(_("keyboards.admin_main_menu.customer_info"))],
         [KeyboardButton(_("keyboards.admin_main_menu.send_message")), KeyboardButton(_("keyboards.admin_main_menu.customer_panel_view"))],
         [KeyboardButton(_("keyboards.admin_main_menu.guides_settings"))]
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+
+
 
 def get_user_management_keyboard() -> ReplyKeyboardMarkup:
     keyboard = [

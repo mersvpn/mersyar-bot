@@ -4,6 +4,15 @@ from __future__ import annotations
 from datetime import datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING, List, Optional
+from sqlalchemy import (
+    BigInteger,
+    Boolean,
+    DECIMAL,
+    Integer,
+    String,
+    TIMESTAMP,
+    Text,
+)
 
 from sqlalchemy import (
     BigInteger,
@@ -40,6 +49,9 @@ class User(Base):
     test_accounts_received: Mapped[int] = mapped_column(
         Integer, nullable=False, default=0
     )
+    admin_note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    last_activity: Mapped[Optional[datetime]] = mapped_column(TIMESTAMP, nullable=True)
+
 
     # Relationships
     marzban_links: Mapped[List["MarzbanTelegramLink"]] = relationship(

@@ -8,14 +8,18 @@ from modules.broadcaster import handler as broadcaster_handler
 from modules.reminder.actions.jobs import cleanup_expired_test_accounts
 from modules.financials import handler as financials_handler
 from modules.payment import handler as payment_handler
+from modules.user_info import handler as user_info_handler
+from database.crud import user as crud_user
+
 from shared.translator import init_translator
+
 
 init_translator()
 
 import argparse
 
 from telegram import Update
-from telegram.ext import Application, ApplicationBuilder, ContextTypes, MessageHandler, CallbackQueryHandler, filters
+from telegram.ext import Application, ApplicationBuilder, ContextTypes, MessageHandler, CallbackQueryHandler, filters,TypeHandler
 
 from config import config
 from modules.marzban.actions import api as marzban_api
@@ -63,10 +67,38 @@ async def debug_update_logger(update: Update, context: ContextTypes.DEFAULT_TYPE
 async def heartbeat(context: ContextTypes.DEFAULT_TYPE):
     LOGGER.info("❤️ Heartbeat: Bot is alive and the JobQueue is running.")
 
+async def update_user_activity(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if isinstance(update, Update) and update.effective_user:
+        user_id = update.effective_user.id
+        try:
+            await crud_user.update_last_activity(user_id)
+        except Exception as e:
+            LOGGER.error(f"Failed to update last activity for {user_id}: {e}")
+
+
 async def post_init(application: Application):
     await db_engine.init_db()
     # await db_manager.create_pool() # This is now removed
     await marzban_api.init_marzban_credentials()
+
+    from modules.general import handler as general_handler
+    from modules.marzban import handler as marzban_handler
+    from modules.customer import handler as customer_handler
+    from modules.bot_settings import handler as bot_settings_handler
+    from modules.reminder import handler as reminder_handler
+    from modules.guides import handler as guides_handler
+    general_handler.register(application)
+    marzban_handler.register(application)
+    customer_handler.register(application)
+    bot_settings_handler.register(application)
+    reminder_handler.register(application)
+    guides_handler.register(application)
+    financials_handler.register(application)
+    payment_handler.register(application)
+    broadcaster_handler.register(application)
+    user_info_handler.register(application)
+    application.add_handler(TypeHandler(Update, update_user_activity), group=-1)
+
 
 async def post_shutdown(application: Application):
     LOGGER.info("Shutdown signal received. Closing resources...")

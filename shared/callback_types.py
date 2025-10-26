@@ -98,3 +98,40 @@ class StartManualInvoice(CallbackData):
 
     def to_string(self) -> str:
         return f"{self.PREFIX}:{self.customer_id}:{self.username}"
+    
+class UserInfoCallback(CallbackData):
+    PREFIX = "ui"
+    
+    def __init__(self, action: str, user_id: Optional[int] = None, param: Optional[str] = None):
+        self.action = action
+        self.user_id = user_id
+        self.param = param
+    
+    def to_string(self) -> str:
+        parts = [self.PREFIX, self.action]
+        if self.user_id is not None:
+            parts.append(str(self.user_id))
+        if self.param:
+            parts.append(self.param)
+        return ":".join(parts)
+    
+    @classmethod
+    def from_string(cls, data: str) -> Optional["UserInfoCallback"]:
+        parts = data.split(":")
+        if len(parts) < 2 or parts[0] != cls.PREFIX:
+            return None
+        action = parts[1]
+        user_id = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else None
+        param = parts[3] if len(parts) > 3 else None
+        return cls(action=action, user_id=user_id, param=param)
+
+    
+    @classmethod
+    def from_str(cls, data: str) -> Optional["UserInfoCallback"]:
+        parts = data.split(":")
+        if len(parts) < 2 or parts[0] != cls.PREFIX:
+            return None
+        action = parts[1]
+        user_id = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else None
+        param = parts[3] if len(parts) > 3 else None
+        return cls(action=action, user_id=user_id, param=param)
